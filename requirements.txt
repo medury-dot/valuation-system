@@ -1,0 +1,27 @@
+# Core Dependencies
+pandas>=2.0.0
+numpy>=1.24.0
+PyYAML>=6.0
+
+# Database
+pymysql>=1.1.0
+chromadb>=0.4.0
+gspread>=5.12.0
+
+# Web & API
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+
+# LLM & AI
+openai>=1.0.0
+
+# Utilities
+python-dotenv>=1.0.0
+openpyxl>=3.1.0
+
+# Email
+smtplib  # built-in
+
+# Testing
+pytest>=7.4.0
+pytest-cov>=4.1.0
