@@ -1,0 +1,288 @@
+# =============================================================================
+# Sector Configuration for Agentic Valuation System
+# =============================================================================
+# Each sector defines:
+#   - Primary and secondary valuation methods
+#   - Key financial metrics to track
+#   - Peer set (auto-selected by market cap, can be overridden)
+#   - Driver categories (demand, cost, porter's forces, regulatory)
+#   - Terminal margin and ROCE convergence ranges
+# =============================================================================
+
+sectors:
+
+  # ---------------------------------------------------------------------------
+  # SPECIALTY CHEMICALS (Pilot Sector #1)
+  # ---------------------------------------------------------------------------
+  specialty_chemicals:
+    csv_sector_name: "Chemicals"
+    csv_industry_filter: null  # All chemicals sub-industries
+    is_active: true
+
+    valuation_methods:
+      primary: "EV/EBITDA"
+      secondary: "DCF"
+      blend_weights:
+        dcf: 0.60
+        relative: 0.30
+        monte_carlo: 0.10
+
+    key_metrics:
+      - ebitda_margin
+      - roce
+      - roe
+      - r_and_d_pct
+      - export_pct
+      - capacity_utilization
+
+    terminal_assumptions:
+      margin_range: [0.18, 0.25]
+      roce_convergence: 0.20
+      reinvestment_rate: 0.35
+
+    demand_drivers:
+      - name: volume_growth
+        metric: "YoY %"
+        weight: 0.12
+        impact: revenue_growth
+      - name: china_plus_one
+        metric: "Intensity"
+        weight: 0.10
+        impact: market_share
+      - name: pharma_api_demand
+        metric: "Growth %"
+        weight: 0.08
+        impact: end_market
+      - name: agrochem_demand
+        metric: "Cycle"
+        weight: 0.06
+        impact: revenue_volatility
+      - name: pricing_power
+        metric: "Elasticity"
+        weight: 0.08
+        impact: margin
+
+    cost_drivers:
+      - name: crude_oil
+        metric: "$/bbl"
+        weight: 0.10
+        impact: rm_cost
+        sensitivity: -0.5
+      - name: natural_gas
+        metric: "$/mmbtu"
+        weight: 0.06
+        impact: power_cost
+      - name: operating_leverage
+        metric: "Fixed/Variable"
+        weight: 0.04
+        impact: margin_sensitivity
+      - name: fx_on_costs
+        metric: "Net Impact"
+        weight: 0.05
+        impact: margin_hedge
+
+    porter_forces:
+      entry_barriers:
+        value: HIGH
+        drivers: ["capex_intensity", "regulatory_barriers", "scale_economies"]
+        impact: roce_sustainability
+      supplier_power:
+        value: LOW
+        drivers: ["input_concentration", "commodity_linkage"]
+        impact: cost_stability
+      buyer_power:
+        value: MODERATE
+        drivers: ["customer_concentration", "contract_type"]
+        impact: pricing_pressure
+      substitutes:
+        value: LOW
+        drivers: ["technology_risk", "product_obsolescence"]
+        impact: terminal_value
+      rivalry:
+        value: CONSOLIDATING
+        drivers: ["capacity_additions", "pricing_discipline", "fragmentation"]
+        impact: margin_expansion
+
+    regulatory_drivers:
+      - name: pli_scheme
+        weight: 0.04
+        impact: capex_subsidy
+      - name: eu_reach_compliance
+        weight: 0.03
+        impact: competitive_moat
+      - name: fda_approval_rate
+        weight: 0.03
+        impact: market_access
+      - name: environmental_capex
+        weight: 0.03
+        impact: reinvestment_burden
+
+    sector_specific_drivers:
+      - name: order_book
+        metric: "Rs Cr"
+        source: filings
+        frequency: quarterly
+      - name: capacity_utilization
+        metric: "%"
+        source: filings
+        frequency: quarterly
+      - name: r_and_d_pipeline
+        metric: "count"
+        source: filings
+        frequency: annual
+
+  # ---------------------------------------------------------------------------
+  # AUTOMOBILES (Pilot Sector #2)
+  # ---------------------------------------------------------------------------
+  automobiles:
+    csv_sector_name: "Automobile & Ancillaries"
+    csv_industry_filter: null
+    is_active: true
+
+    valuation_methods:
+      primary: "P/E"
+      secondary: "EV/EBITDA"
+      blend_weights:
+        dcf: 0.60
+        relative: 0.30
+        monte_carlo: 0.10
+
+    key_metrics:
+      - volume_growth
+      - realization
+      - ebitda_per_unit
+      - market_share
+      - export_pct
+
+    terminal_assumptions:
+      margin_range: [0.12, 0.18]
+      roce_convergence: 0.25
+      reinvestment_rate: 0.30
+
+    demand_drivers:
+      - name: industry_volume
+        metric: "YoY %"
+        weight: 0.12
+        impact: revenue_growth
+      - name: rural_demand
+        metric: "Index"
+        weight: 0.08
+        impact: volume_uplift
+      - name: urban_demand
+        metric: "Index"
+        weight: 0.06
+        impact: volume
+      - name: export_growth
+        metric: "YoY %"
+        weight: 0.06
+        impact: diversification
+      - name: pricing_power
+        metric: "Realization Growth %"
+        weight: 0.08
+        impact: asp_margin
+      - name: premium_mix
+        metric: "% of Sales"
+        weight: 0.06
+        impact: asp_margin
+
+    cost_drivers:
+      - name: steel_prices
+        metric: "Rs/kg"
+        weight: 0.08
+        impact: rm_cost
+        sensitivity: -0.3
+      - name: aluminum_prices
+        metric: "$/MT"
+        weight: 0.04
+        impact: rm_cost
+      - name: semiconductor_supply
+        metric: "Index"
+        weight: 0.04
+        impact: production
+      - name: battery_costs
+        metric: "$/kWh"
+        weight: 0.06
+        impact: ev_profitability
+      - name: operating_leverage
+        metric: "Fixed/Variable"
+        weight: 0.04
+        impact: margin_sensitivity
+
+    porter_forces:
+      entry_barriers:
+        value: HIGH
+        drivers: ["capex_per_unit", "brand_premium", "distribution_network"]
+        impact: roce_protection
+      supplier_power:
+        value: MODERATE
+        drivers: ["component_localization", "vendor_consolidation"]
+        impact: cost_control
+      buyer_power:
+        value: HIGH
+        drivers: ["price_sensitivity", "financing_dependence"]
+        impact: discounting_risk
+      substitutes:
+        value: MODERATE
+        drivers: ["ev_transition_timeline", "used_vehicle_market"]
+        impact: terminal_value
+      rivalry:
+        value: INTENSE
+        drivers: ["market_share_stability", "capacity_utilization", "new_model_intensity"]
+        impact: pricing_discipline
+
+    regulatory_drivers:
+      - name: emission_norms
+        weight: 0.04
+        impact: compliance_capex
+      - name: fame_subsidies
+        weight: 0.03
+        impact: ev_demand
+      - name: scrappage_policy
+        weight: 0.02
+        impact: replacement_demand
+      - name: interest_rates
+        weight: 0.05
+        impact: financing_cost
+
+    sector_specific_drivers:
+      - name: monthly_sales_units
+        metric: "units"
+        source: siam
+        frequency: monthly
+      - name: market_share
+        metric: "%"
+        source: siam
+        frequency: monthly
+      - name: new_model_launches
+        metric: "count"
+        source: announcements
+        frequency: event_driven
+
+  # ---------------------------------------------------------------------------
+  # FUTURE SECTORS (inactive until enabled)
+  # ---------------------------------------------------------------------------
+  fmcg:
+    csv_sector_name: "FMCG"
+    is_active: false
+
+  nbfc:
+    csv_sector_name: "Finance"
+    csv_industry_filter: "NBFC"
+    is_active: false
+
+  pharma:
+    csv_sector_name: "Healthcare"
+    is_active: false
+
+  it_services:
+    csv_sector_name: "IT"
+    is_active: false
+
+# =============================================================================
+# Hierarchical Driver Weights
+# =============================================================================
+driver_hierarchy:
+  macro_weight: 0.20
+  sector_weight: 0.55
+  company_weight: 0.25
+  principle: "Macro sets the ceiling and floor. Sectors determine the value. Companies decide who wins."

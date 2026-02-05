@@ -1,0 +1,251 @@
+# =============================================================================
+# Company Watchlist for Agentic Valuation System
+# =============================================================================
+# Each company defines:
+#   - Identification (CSV name, NSE/BSE codes)
+#   - Company-specific alpha drivers
+#   - Overrides for sector defaults
+#   - Key thesis points
+# =============================================================================
+
+companies:
+
+  # ---------------------------------------------------------------------------
+  # AETHER INDUSTRIES (Pilot Company #1 - Specialty Chemicals)
+  # ---------------------------------------------------------------------------
+  aether_industries:
+    csv_name: "Aether Industries Ltd."
+    nse_symbol: "AETHER"
+    bse_code: "543534"
+    sector: specialty_chemicals
+    is_active: true
+
+    alpha_thesis:
+      bull: "China+1 beneficiary with proven R&D, CRAMS scaling, strong IP moat"
+      bear: "Limited track record, customer concentration, valuation premium"
+      key_moat: "R&D capability + regulatory compliance (REACH/FDA)"
+
+    alpha_drivers:
+      market_share:
+        - name: share_trajectory
+          metric: "YoY Δ"
+          weight: 0.06
+        - name: segment_leadership
+          metric: "Position"
+          weight: 0.05
+
+      mgmt_quality:
+        - name: capital_allocation
+          metric: "Score /10"
+          weight: 0.06
+        - name: r_and_d_intensity
+          metric: "% of Sales"
+          weight: 0.05
+        - name: execution_track_record
+          metric: "Rating"
+          weight: 0.04
+
+      capex:
+        - name: expansion_plans
+          metric: "Rs Cr"
+          weight: 0.05
+        - name: execution_risk
+          metric: "Status"
+          weight: 0.04
+        - name: roi_on_past_capex
+          metric: "%"
+          weight: 0.04
+
+      geographic_mix:
+        - name: export_pct
+          metric: "% Revenue"
+          weight: 0.04
+        - name: fx_exposure
+          metric: "Net Impact"
+          weight: 0.03
+
+      product_mix:
+        - name: crams_pct
+          metric: "% Revenue"
+          weight: 0.05
+        - name: new_molecule_pipeline
+          metric: "Count"
+          weight: 0.04
+        - name: customer_stickiness
+          metric: "Avg Tenure (yrs)"
+          weight: 0.03
+
+      balance_sheet:
+        - name: net_debt_ebitda
+          metric: "Ratio"
+          weight: 0.04
+        - name: interest_coverage
+          metric: "Ratio"
+          weight: 0.02
+
+      governance:
+        - name: promoter_holding
+          metric: "%"
+          weight: 0.03
+        - name: pledge_pct
+          metric: "%"
+          weight: 0.02
+        - name: related_party_risk
+          metric: "Score"
+          weight: 0.02
+
+      key_personnel:
+        - name: ceo_cfo_stability
+          metric: "Tenure"
+          weight: 0.02
+        - name: key_scientist_exits
+          metric: "Count"
+          weight: 0.02
+
+      litigation:
+        - name: pending_cases
+          metric: "Count"
+          weight: 0.01
+        - name: regulatory_actions
+          metric: "Status"
+          weight: 0.02
+
+    sector_specific_overrides:
+      order_book_visibility: true
+      fda_monitoring: true
+
+  # ---------------------------------------------------------------------------
+  # EICHER MOTORS (Pilot Company #2 - Automobiles)
+  # ---------------------------------------------------------------------------
+  eicher_motors:
+    csv_name: "Eicher Motors Ltd."
+    nse_symbol: "EICHERMOT"
+    bse_code: "505200"
+    sector: automobiles
+    is_active: true
+
+    alpha_thesis:
+      bull: "Dominant premium 2W franchise, export growth 25%+ CAGR, CV cycle upturn via VECV"
+      bear: "EV transition risk, premium valuation, cyclical CV business"
+      key_moat: "Brand + premium positioning + distribution network"
+
+    alpha_drivers:
+      market_share:
+        - name: premium_2w_share
+          metric: "%"
+          weight: 0.08
+        - name: share_trajectory
+          metric: "YoY Δ"
+          weight: 0.04
+
+      mgmt_quality:
+        - name: capital_allocation
+          metric: "Score /10"
+          weight: 0.06
+        - name: brand_building
+          metric: "Score"
+          weight: 0.05
+        - name: cost_discipline
+          metric: "OPM Trend"
+          weight: 0.04
+
+      capex:
+        - name: new_model_pipeline
+          metric: "Count"
+          weight: 0.06
+        - name: capacity_expansion
+          metric: "Status"
+          weight: 0.03
+        - name: ev_readiness
+          metric: "Rating"
+          weight: 0.03
+
+      geographic_mix:
+        - name: export_pct
+          metric: "% Revenue"
+          weight: 0.05
+        - name: export_growth
+          metric: "YoY %"
+          weight: 0.04
+        - name: key_markets
+          metric: "Focus"
+          weight: 0.03
+
+      product_mix:
+        - name: premium_mix
+          metric: "% Units"
+          weight: 0.05
+        - name: accessories_spares_pct
+          metric: "% Revenue"
+          weight: 0.03
+
+      balance_sheet:
+        - name: cash_position
+          metric: "Rs Cr"
+          weight: 0.04
+        - name: dividend_yield
+          metric: "%"
+          weight: 0.02
+
+      governance:
+        - name: promoter_holding
+          metric: "%"
+          weight: 0.03
+        - name: board_quality
+          metric: "Rating"
+          weight: 0.02
+
+      key_personnel:
+        - name: ceo_stability
+          metric: "Tenure"
+          weight: 0.02
+
+      litigation:
+        - name: pending_cases
+          metric: "Count"
+          weight: 0.01
+
+      # Eicher-specific: VECV Joint Venture
+      vecv_jv:
+        - name: cv_cycle_position
+          metric: "Stage"
+          weight: 0.04
+        - name: jv_profitability
+          metric: "OPM %"
+          weight: 0.03
+
+    sector_specific_overrides:
+      monthly_sales_tracking: true
+      market_share_source: "SIAM"
+
+# =============================================================================
+# Social Media Content Configuration
+# =============================================================================
+social_media:
+  enabled: true
+  platforms:
+    twitter:
+      enabled: true
+      frequency: daily
+      max_posts_per_day: 3
+      post_time: "08:00"  # IST, before market open
+      content_types:
+        - sector_insight
+        - company_highlight
+        - driver_change
+        - contrarian_view
+        - macro_linkage
+      tone: "Professional equity researcher, data-driven, thought-provoking"
+      style_guidelines:
+        - "Lead with the insight, not the data"
+        - "Use specific numbers when possible"
+        - "End with a question or perspective"
+        - "No stock recommendations or price targets"
+        - "Include relevant hashtags"
+      example_templates:
+        - "Specialty chemicals margins expanding despite crude at $75. Why? China+1 is structural, not cyclical. Companies with REACH compliance are gaining share at higher margins. The moat deepens. #SpecChem #India"
+        - "Eicher's premium 2W market share hit 28% - but the real story is exports at 25% CAGR. When does international become the bigger growth driver? #EicherMotors #2Wheelers"
+        - "Everyone's watching GDP for growth signals. But IIP Chemical Index just hit a 3-year high. The sector-level data tells a different story. #IndiaChemicals"
+    linkedin:
+      enabled: false
+      frequency: weekly

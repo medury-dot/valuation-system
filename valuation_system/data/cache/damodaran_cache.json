@@ -1,0 +1,12 @@
+{
+  "india_erp": {
+    "data": {
+      "mature_market_erp": 0.046,
+      "source": "damodaran_scraped",
+      "last_updated": "2026-02-05T13:15:23.419754",
+      "india_total_erp": 0.0708,
+      "india_country_risk_premium": 0.024800000000000003
+    },
+    "cached_at": "2026-02-05T13:15:23.419834"
+  }
+}

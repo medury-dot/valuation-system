@@ -1,0 +1,329 @@
+-- =============================================================================
+-- Agentic Equity Valuation System - MySQL Schema
+-- Database: rag (shared with RAGApp)
+-- All tables prefixed with vs_ (valuation system)
+--
+-- COMPANY MASTER: Uses mssdb.kbapp_marketscrip (single source of truth)
+--   - company_id in all vs_* tables = marketscrip_id from mssdb.kbapp_marketscrip
+--   - No FOREIGN KEY constraints (cross-database FKs not supported in MySQL)
+--   - Company lookups: SELECT * FROM mssdb.kbapp_marketscrip WHERE symbol = 'EICHERMOT'
+-- =============================================================================
+
+-- 2. VALUATIONS (Individual valuation runs)
+-- company_id = mssdb.kbapp_marketscrip.marketscrip_id
+CREATE TABLE IF NOT EXISTS vs_valuations (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    company_id INT NOT NULL COMMENT 'mssdb.kbapp_marketscrip.marketscrip_id',
+    valuation_date DATE NOT NULL,
+    method ENUM('DCF', 'RELATIVE', 'BLENDED') NOT NULL,
+    scenario ENUM('BULL', 'BASE', 'BEAR'),
+    intrinsic_value DECIMAL(15,2),
+    cmp DECIMAL(15,2),
+    upside_pct DECIMAL(8,2),
+    confidence_score DECIMAL(5,2),
+    key_assumptions JSON,
+    driver_snapshot JSON,
+    model_version VARCHAR(50),
+    created_by ENUM('AGENT', 'PM_OVERRIDE') DEFAULT 'AGENT',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_company_date (company_id, valuation_date)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 3. VALUATION SNAPSHOTS (Point-in-time complete state)
+CREATE TABLE IF NOT EXISTS vs_valuation_snapshots (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    company_id INT NOT NULL COMMENT 'mssdb.kbapp_marketscrip.marketscrip_id',
+    snapshot_date DATE NOT NULL,
+    snapshot_type ENUM('DAILY', 'WEEKLY', 'EVENT_TRIGGERED', 'PM_OVERRIDE') DEFAULT 'DAILY',
+
+    -- Valuation outputs
+    intrinsic_value_dcf DECIMAL(15,2),
+    intrinsic_value_relative DECIMAL(15,2),
+    intrinsic_value_blended DECIMAL(15,2),
+    cmp DECIMAL(15,2),
+    upside_pct DECIMAL(8,2),
+
+    -- Scenario values
+    dcf_bull DECIMAL(15,2),
+    dcf_base DECIMAL(15,2),
+    dcf_bear DECIMAL(15,2),
+
+    -- Key assumptions (JSON)
+    dcf_assumptions JSON,
+    macro_drivers_snapshot JSON,
+    sector_drivers_snapshot JSON,
+    company_drivers_snapshot JSON,
+
+    -- Context
+    sector_outlook_score DECIMAL(5,2),
+    sector_outlook_label VARCHAR(20),
+    confidence_score DECIMAL(5,2),
+    peer_multiples_snapshot JSON,
+
+    model_version VARCHAR(50),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    INDEX idx_company_date (company_id, snapshot_date)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 4. DRIVERS (Current state)
+CREATE TABLE IF NOT EXISTS vs_drivers (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    driver_level ENUM('MACRO', 'SECTOR', 'COMPANY') NOT NULL,
+    driver_category VARCHAR(50),
+    driver_name VARCHAR(100) NOT NULL,
+    sector VARCHAR(100),
+    company_id INT COMMENT 'mssdb.kbapp_marketscrip.marketscrip_id',
+    current_value TEXT,
+    weight DECIMAL(5,4),
+    impact_direction ENUM('POSITIVE', 'NEGATIVE', 'NEUTRAL'),
+    trend ENUM('UP', 'DOWN', 'STABLE'),
+    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    updated_by VARCHAR(50),
+    INDEX idx_level_sector (driver_level, sector),
+    UNIQUE KEY uk_driver (driver_level, driver_name, sector, company_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 5. DRIVER CHANGELOG (Every change tracked)
+CREATE TABLE IF NOT EXISTS vs_driver_changelog (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    change_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    driver_level ENUM('MACRO', 'SECTOR', 'COMPANY'),
+    driver_category VARCHAR(50),
+    driver_name VARCHAR(100),
+    sector VARCHAR(100),
+    company_id INT COMMENT 'mssdb.kbapp_marketscrip.marketscrip_id',
+    old_value TEXT,
+    new_value TEXT,
+    old_weight DECIMAL(5,4),
+    new_weight DECIMAL(5,4),
+    change_reason TEXT,
+    triggered_by ENUM('NEWS_EVENT', 'MACRO_UPDATE', 'PM_OVERRIDE', 'SCHEDULED_REFRESH', 'AGENT_ANALYSIS'),
+    source_event_id INT,
+    estimated_valuation_impact_pct DECIMAL(8,2),
+    INDEX idx_timestamp (change_timestamp),
+    INDEX idx_driver (driver_level, driver_name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 6. NEWS EVENTS (Classified news)
+CREATE TABLE IF NOT EXISTS vs_news_events (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    company_id INT COMMENT 'mssdb.kbapp_marketscrip.marketscrip_id',
+    sector VARCHAR(100),
+    event_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    source VARCHAR(100),
+    headline VARCHAR(500),
+    summary TEXT,
+    category ENUM('REGULATORY', 'MANAGEMENT', 'PRODUCT', 'MA', 'MACRO', 'COMPETITOR', 'GOVERNANCE'),
+    severity ENUM('CRITICAL', 'HIGH', 'MEDIUM', 'LOW'),
+    valuation_impact_pct DECIMAL(8,2),
+    chromadb_doc_id VARCHAR(100),
+    processed BOOLEAN DEFAULT FALSE,
+    INDEX idx_severity_date (severity, event_date),
+    INDEX idx_company (company_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 7. EVENT TIMELINE (All events with document links)
+CREATE TABLE IF NOT EXISTS vs_event_timeline (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    event_date DATE,
+    event_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    event_type ENUM('NEWS', 'EARNINGS', 'MANAGEMENT_CHANGE', 'REGULATORY',
+                    'POLICY', 'MACRO', 'SECTOR_DEVELOPMENT', 'COMPETITOR', 'VALUATION_UPDATE'),
+    scope ENUM('MACRO', 'SECTOR', 'COMPANY'),
+    sector VARCHAR(100),
+    company_id INT COMMENT 'mssdb.kbapp_marketscrip.marketscrip_id',
+    headline VARCHAR(500),
+    summary TEXT,
+    severity ENUM('CRITICAL', 'HIGH', 'MEDIUM', 'LOW'),
+
+    -- Impact linkage
+    drivers_affected JSON,
+    valuation_impact_pct DECIMAL(8,2),
+    valuation_before DECIMAL(15,2),
+    valuation_after DECIMAL(15,2),
+
+    -- Source & document links
+    source VARCHAR(100),
+    source_url TEXT,
+    chromadb_doc_id VARCHAR(100),
+    s3_document_path TEXT,
+    grok_synopsis TEXT,
+    key_quotes TEXT,
+    filing_type VARCHAR(50),
+    filing_reference VARCHAR(100),
+
+    -- Status
+    processed BOOLEAN DEFAULT FALSE,
+    pm_reviewed BOOLEAN DEFAULT FALSE,
+    pm_notes TEXT,
+
+    INDEX idx_date_scope (event_date, scope),
+    INDEX idx_company_date (company_id, event_date),
+    INDEX idx_chromadb (chromadb_doc_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 8. DOCUMENTS (Metadata registry - content in ChromaDB)
+CREATE TABLE IF NOT EXISTS vs_documents (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    doc_type ENUM('NEWS_ARTICLE', 'BSE_FILING', 'NSE_FILING', 'ANNUAL_REPORT',
+                  'INVESTOR_PRESENTATION', 'CON_CALL_TRANSCRIPT', 'ANALYST_REPORT',
+                  'RESEARCH_NOTE', 'REGULATORY_FILING', 'CREDIT_RATING'),
+    chromadb_collection VARCHAR(100) DEFAULT 'RAG_GPT',
+    chromadb_doc_id VARCHAR(100) UNIQUE,
+    s3_path TEXT,
+    title VARCHAR(500),
+    source VARCHAR(100),
+    source_url TEXT,
+    publish_date DATE,
+    grok_summary TEXT,
+    key_metrics_extracted JSON,
+    company_id INT COMMENT 'mssdb.kbapp_marketscrip.marketscrip_id',
+    sector VARCHAR(100),
+    valuation_relevant BOOLEAN DEFAULT TRUE,
+    relevance_score DECIMAL(3,2),
+    indexed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    last_accessed TIMESTAMP,
+    INDEX idx_company_type (company_id, doc_type),
+    INDEX idx_chromadb (chromadb_doc_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 9. ALERTS
+CREATE TABLE IF NOT EXISTS vs_alerts (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    company_id INT NOT NULL COMMENT 'mssdb.kbapp_marketscrip.marketscrip_id',
+    alert_type ENUM('VALUATION_CHANGE', 'NEWS_EVENT', 'DRIVER_CHANGE') NOT NULL,
+    trigger_reason TEXT,
+    old_value DECIMAL(15,2),
+    new_value DECIMAL(15,2),
+    change_pct DECIMAL(8,2),
+    sent_at TIMESTAMP,
+    acknowledged_at TIMESTAMP,
+    pm_action VARCHAR(50),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_company_date (company_id, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 10. MODEL HISTORY (Audit trail)
+CREATE TABLE IF NOT EXISTS vs_model_history (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    company_id INT COMMENT 'mssdb.kbapp_marketscrip.marketscrip_id',
+    change_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    change_type VARCHAR(50),
+    field_changed VARCHAR(100),
+    old_value TEXT,
+    new_value TEXT,
+    changed_by VARCHAR(50),
+    reason TEXT,
+    INDEX idx_company_date (company_id, change_date)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 11. WEIGHT HISTORY
+CREATE TABLE IF NOT EXISTS vs_weight_history (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    effective_date DATE,
+    driver_level ENUM('MACRO', 'SECTOR', 'COMPANY'),
+    driver_name VARCHAR(100),
+    sector VARCHAR(100),
+    weight DECIMAL(5,4),
+    weight_rationale TEXT,
+    set_by ENUM('INITIAL', 'LEARNED', 'PM_OVERRIDE'),
+    correlation_with_returns DECIMAL(5,4),
+    sample_period_start DATE,
+    sample_period_end DATE,
+    INDEX idx_date_driver (effective_date, driver_name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 12. MODEL VERSIONS
+CREATE TABLE IF NOT EXISTS vs_model_versions (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    version VARCHAR(50) UNIQUE,
+    release_date DATE,
+    description TEXT,
+    changes_from_previous TEXT,
+    dcf_methodology TEXT,
+    relative_valuation_rules TEXT,
+    blending_weights JSON,
+    backtest_accuracy DECIMAL(5,2),
+    live_accuracy DECIMAL(5,2),
+    is_active BOOLEAN DEFAULT TRUE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 13. PM FEEDBACK
+CREATE TABLE IF NOT EXISTS vs_pm_feedback (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    valuation_id INT,
+    pm_decision ENUM('AGREE', 'OVERRIDE', 'REJECT'),
+    pm_valuation DECIMAL(15,2),
+    pm_notes TEXT,
+    actual_outcome DECIMAL(15,2),
+    outcome_date DATE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 14. PM INTERACTIONS (All PM decisions for learning)
+CREATE TABLE IF NOT EXISTS vs_pm_interactions (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    interaction_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    company_id INT COMMENT 'mssdb.kbapp_marketscrip.marketscrip_id',
+    sector VARCHAR(100),
+    interaction_type ENUM('VALUATION_OVERRIDE', 'DRIVER_OVERRIDE', 'WEIGHT_CHANGE',
+                          'ALERT_ACKNOWLEDGE', 'ALERT_DISMISS', 'FEEDBACK'),
+    agent_recommendation TEXT,
+    pm_decision TEXT,
+    pm_reasoning TEXT,
+    outcome_tracked BOOLEAN DEFAULT FALSE,
+    outcome_date DATE,
+    outcome_result TEXT,
+    agent_was_correct BOOLEAN
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 15. SOCIAL MEDIA POSTS (Tracking)
+CREATE TABLE IF NOT EXISTS vs_social_posts (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    platform ENUM('twitter', 'linkedin') DEFAULT 'twitter',
+    content TEXT NOT NULL,
+    category VARCHAR(50),
+    status ENUM('queued', 'approved', 'posted', 'rejected') DEFAULT 'queued',
+    source_event_id INT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    posted_at TIMESTAMP NULL,
+    engagement_likes INT DEFAULT 0,
+    engagement_retweets INT DEFAULT 0,
+    engagement_replies INT DEFAULT 0,
+    INDEX idx_status (status),
+    INDEX idx_created (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 16. PEER GROUPS (Two-tier algorithmic peer selection for relative valuation)
+-- company_id and peer_company_id = mssdb.kbapp_marketscrip.marketscrip_id
+-- Sector/industry from mssdb; financial metrics from core CSV + prices CSV
+CREATE TABLE IF NOT EXISTS vs_peer_groups (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    company_id INT NOT NULL COMMENT 'target company - mssdb marketscrip_id',
+    peer_company_id INT NOT NULL COMMENT 'peer company - mssdb marketscrip_id',
+    peer_symbol VARCHAR(50) NOT NULL,
+    peer_name VARCHAR(255),
+    tier ENUM('tight', 'broad') NOT NULL COMMENT 'tight=same industry, broad=same sector',
+    similarity_score DECIMAL(5,4) COMMENT '0-1, higher=more similar',
+    mcap_ratio DECIMAL(8,4) COMMENT 'peer_mcap / target_mcap',
+    computed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    valid_until DATE NOT NULL COMMENT 'cache expiry, typically +30 days',
+    is_pm_override BOOLEAN DEFAULT FALSE,
+    pm_notes TEXT,
+    UNIQUE KEY uq_pair (company_id, peer_company_id),
+    INDEX idx_company_valid (company_id, valid_until),
+    INDEX idx_tier (company_id, tier)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- =============================================================================
+-- SEED DATA: Initial model version
+-- =============================================================================
+INSERT IGNORE INTO vs_model_versions (version, release_date, description, blending_weights, is_active)
+VALUES (
+    'v1.0.0',
+    CURDATE(),
+    'Initial release: FCFF DCF + Relative Valuation + Monte Carlo',
+    '{"dcf": 0.60, "relative": 0.30, "monte_carlo": 0.10}',
+    TRUE
+);

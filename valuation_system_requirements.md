@@ -106,9 +106,9 @@ ANSWER: IIP is also avl in above folder. TRAI can be web scraped (or added to ab
 condier macros above
 
 - Sector drivers (demand trends, regulatory changes)
-add more for each sector
+ANSWER: add more for each sector specific. also consider cost drivers. consider porter's 5-force model related drivers too 
 
-- Company drivers (market share, management quality, capex plans), (geographic mix, product mix,)
+- Company drivers (market share, management quality, capex plans), (geographic mix, product mix,). consider porter's 5-force model related drivers too 
 
 - Should all three levels be tracked?
 ANSWER: yes
@@ -171,11 +171,15 @@ ANSWER: yes
 - Slack/Teams?
 - Dashboard with push notifications?
 - WhatsApp?
+ANSWER: email
 
 **6.3 Alert Frequency**
 - Instant for critical?
+ANSWER: yes
 - Daily digest for routine?
+ANSWER: yes
 - Weekly summary?
+ANSWER: yes
 
 ---
 
@@ -183,38 +187,54 @@ ANSWER: yes
 
 **7.1 Hosting**
 - Local machine vs. cloud (AWS/GCP/Azure)?
+ANSWER: local machine
 - Budget considerations?
+ANSWER: low
 
 **7.2 LLM Usage**
 - Which LLM for news analysis? (Claude, GPT-4, local models like Llama?)
+ANSWER: grok
 - Cost sensitivity - should it minimize API calls?
+ANSWER: keep costs very low
 - Any preference for local vs. cloud LLM?
+ANSWER: ollama is installed but clould llm is also fine (grok)
 
 **7.3 Database**
 - Already have a preferred DB? (PostgreSQL, MongoDB, SQLite?)
+ANSWER: mysql is preferred
 - Vector DB for news/document storage? (ChromaDB mentioned in your CLAUDE.md)
+ANSWER: chromadb is fine. 
 
 **7.4 Scheduling**
 - Cron jobs on local machine?
+ANSWER: yes, or launch** so that things run when machine is switched on too.
 - Cloud scheduler (AWS Lambda, Cloud Functions)?
+ANSWER: not requird for now
 - Airflow/Prefect for orchestration?
-
+ANSWER: any alterntives on local macbook pro?
 ---
 
 ### 8. HUMAN-IN-THE-LOOP
 
 **8.1 Oversight Level**
 - Fully automated recommendations?
+ANSWER: not as of now
 - Or human approval before any valuation change?
+ANSWER: yes. 
 - Review workflow (PM reviews agent findings before acting)?
+ANSWER: yes
 
 **8.2 Manual Overrides**
 - Can PM override agent's valuation?
+ANSWER:  yes
 - How to handle disagreements between agent and PM?
+ANSWER: PM decides
 
 **8.3 Feedback Loop**
 - Should system learn from PM's buy/sell decisions?
+ANSWER: yes
 - Track prediction accuracy over time?
+ANSWER: yes
 
 ---
 
@@ -222,34 +242,46 @@ ANSWER: yes
 
 **9.1 Change Tracking**
 - What level of granularity? (Every driver change? Daily snapshots? Only material changes?)
+ANSWER: every driver change
 - Git-based versioning of model parameters?
+ANSWER: yes
 
 **9.2 Audit Trail**
 - Regulatory requirements (SEBI)?
+ANSWER: assume basic
 - Internal compliance needs?
+ANSWER: very basic is fine.
 
 **9.3 Context Window**
 - How much history should agent consider? (Last 30 days? 90 days? 1 year?)
+ANSWER: atleast 1 yr
 - Summarization strategy for older events?
-
+ANSWER: use grok 
 ---
 
 ### 10. OUTPUT & REPORTING
 
 **10.1 Report Format**
 - Detailed DCF model with assumptions?
+ANSWER: yes
 - One-page summary with key drivers?
+ANSWER: yes
 - Comparison with consensus estimates?
+ANSWER: yes
 
 **10.2 Visualization**
 - Interactive dashboards?
+ANSWER: no for now
 - Static PDF reports?
+ANSWER: yes
 - Both?
+
 
 **10.3 Benchmark Comparison**
 - Compare against sell-side analyst targets?
+ANSWER: yes
 - Track system's accuracy vs. market over time?
-
+ANSWER: yes
 ---
 
 ## Initial Thoughts (To Be Refined)
