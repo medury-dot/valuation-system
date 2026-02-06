@@ -79,7 +79,7 @@ def main():
         print(f"Valuation failed: {result['error']}")
         sys.exit(1)
 
-    # Generate Excel
+    # Generate Excel (output_path already has timestamp from excel_report.py)
     output_path = args.output or None
     excel_path = generate_valuation_excel(result, output_path)
     print(f"\nExcel report generated: {excel_path}")
