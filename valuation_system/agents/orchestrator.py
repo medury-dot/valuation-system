@@ -34,6 +34,7 @@ from valuation_system.data.loaders.core_loader import CoreDataLoader
 from valuation_system.data.loaders.price_loader import PriceLoader
 from valuation_system.data.loaders.damodaran_loader import DamodaranLoader
 from valuation_system.storage.mysql_client import get_mysql_client
+from valuation_system.storage.gsheet_client import GSheetClient
 from valuation_system.utils.config_loader import (
     load_sectors_config, load_companies_config,
     get_active_sectors, get_active_companies
@@ -84,6 +85,15 @@ class OrchestratorAgent:
                 self.mysql = get_mysql_client()
             except Exception as e:
                 logger.error(f"MySQL unavailable: {e}")
+
+        # Initialize Google Sheets client (may fail if no internet or credentials)
+        self.gsheet = None
+        if check_internet():
+            try:
+                self.gsheet = GSheetClient()
+                logger.info("Google Sheets client initialized")
+            except Exception as e:
+                logger.warning(f"Google Sheets unavailable: {e}")
 
         # Load configs
         self.sectors_config = load_sectors_config()
@@ -184,6 +194,199 @@ class OrchestratorAgent:
         return result
 
     # =========================================================================
+    # MACRO DATA SYNC
+    # =========================================================================
+
+    def _check_and_update_macro_data(self) -> dict:
+        """
+        Check if macro CSV is stale (>30 days old) and run update script if needed.
+        Self-healing: Catches missed monthly updates.
+
+        Returns dict with update results.
+        """
+        import subprocess
+
+        result = {'checked': True, 'updated': False, 'reason': ''}
+
+        try:
+            macro_csv_path = os.getenv('MACRO_DATA_PATH',
+                                       '/Users/ram/code/investment_strategies/data/macro') + '/market_indicators.csv'
+
+            if not os.path.exists(macro_csv_path):
+                result['reason'] = 'CSV not found'
+                return result
+
+            # Check file modification time
+            mtime = os.path.getmtime(macro_csv_path)
+            file_age_days = (datetime.now().timestamp() - mtime) / 86400
+
+            logger.info(f"Macro CSV age: {file_age_days:.1f} days")
+
+            # If stale (>30 days), run update script
+            if file_age_days > 30:
+                logger.warning(f"Macro CSV is stale ({file_age_days:.1f} days old), running update...")
+
+                update_script = os.getenv('MACRO_SCRIPT_PATH',
+                                         '/Users/ram/code/investment_strategies/scripts/update_macro_data.py')
+
+                if not os.path.exists(update_script):
+                    logger.error(f"Update script not found: {update_script}")
+                    result['reason'] = 'Update script not found'
+                    return result
+
+                # Run update script
+                try:
+                    proc_result = subprocess.run(
+                        ['python3', update_script, '--all'],
+                        capture_output=True,
+                        text=True,
+                        timeout=600  # 10 minutes max
+                    )
+
+                    if proc_result.returncode == 0:
+                        logger.info("Macro data updated successfully via script")
+                        result['updated'] = True
+                        result['reason'] = f'Auto-update triggered (CSV was {file_age_days:.1f} days old)'
+                    else:
+                        logger.error(f"Macro update script failed: {proc_result.stderr}")
+                        result['reason'] = f'Update script failed: {proc_result.stderr[:200]}'
+
+                except subprocess.TimeoutExpired:
+                    logger.error("Macro update script timed out (>10 min)")
+                    result['reason'] = 'Update script timed out'
+                except Exception as e:
+                    logger.error(f"Failed to run macro update script: {e}")
+                    result['reason'] = f'Script execution failed: {str(e)}'
+            else:
+                result['reason'] = f'CSV fresh ({file_age_days:.1f} days old)'
+
+        except Exception as e:
+            logger.error(f"Macro staleness check failed: {e}", exc_info=True)
+            result['reason'] = f'Check failed: {str(e)}'
+
+        return result
+
+    def _sync_macro_from_csv(self) -> dict:
+        """
+        Read latest macro data from CSV files, update Google Sheet if changed.
+        Called daily before valuation to ensure fresh macro data.
+
+        Returns dict with sync results.
+        """
+        import pandas as pd
+
+        result = {'synced': 0, 'unchanged': 0, 'errors': []}
+
+        if not self.gsheet or not self.mysql:
+            logger.warning("GSheet or MySQL unavailable, skipping macro sync")
+            return {'status': 'SKIPPED', 'reason': 'dependencies_unavailable'}
+
+        try:
+            # Path to macro data
+            macro_csv_path = os.getenv('MACRO_DATA_PATH',
+                                       '/Users/ram/code/investment_strategies/data/macro') + '/market_indicators.csv'
+
+            if not os.path.exists(macro_csv_path):
+                logger.warning(f"Macro CSV not found: {macro_csv_path}")
+                return {'status': 'SKIPPED', 'reason': 'csv_not_found'}
+
+            # Read latest macro data
+            df = pd.read_csv(macro_csv_path, comment='#')
+            df['date'] = pd.to_datetime(df['date'])
+            latest_date = df['date'].max()
+            latest_data = df[df['date'] == latest_date]
+
+            # Map CSV series names to our driver names
+            series_mapping = {
+                'GDP Growth': 'gdp_growth',
+                'USD INR': 'usd_inr',
+                '10 year bond yield (Source: FRED)': 'interest_rate_10y',
+                'Repo Rate': 'repo_rate',
+                'PMI composite': 'pmi_composite'
+            }
+
+            logger.info(f"Syncing macro data from CSV (as of {latest_date.strftime('%Y-%m-%d')})")
+
+            for csv_series, driver_name in series_mapping.items():
+                try:
+                    # Get value from CSV
+                    csv_row = latest_data[latest_data['series_name'] == csv_series]
+                    if len(csv_row) == 0:
+                        logger.warning(f"Series '{csv_series}' not found in CSV")
+                        result['errors'].append(f"{driver_name}: series not found")
+                        continue
+
+                    csv_value = csv_row['value'].values[0]
+
+                    # Format value based on driver type
+                    if driver_name in ['gdp_growth', 'interest_rate_10y', 'repo_rate']:
+                        # These are stored as decimals in CSV (0.063 = 6.3%)
+                        if csv_value < 1:
+                            formatted_value = f"{csv_value * 100:.2f}%"
+                        else:
+                            # Already in percentage format
+                            formatted_value = f"{csv_value:.2f}%"
+                    else:
+                        # usd_inr, pmi_composite - store as is
+                        formatted_value = f"{csv_value:.2f}"
+
+                    # Get current value from MySQL
+                    current = self.mysql.query_one(
+                        "SELECT current_value FROM vs_drivers WHERE driver_level = 'MACRO' AND driver_name = %s",
+                        (driver_name,)
+                    )
+
+                    current_value = current['current_value'] if current else None
+
+                    # Check if changed
+                    if current_value != formatted_value:
+                        logger.info(f"  {driver_name}: {current_value} → {formatted_value}")
+
+                        # Update Google Sheet
+                        if self.gsheet:
+                            self.gsheet.update_driver_value(
+                                'macro_drivers',  # Uses SHEET_NAMES mapping
+                                driver_name,
+                                formatted_value,
+                                column='current_value'
+                            )
+
+                        # Update MySQL
+                        if current:
+                            self.mysql.execute(
+                                """UPDATE vs_drivers
+                                   SET current_value = %s, last_updated = NOW()
+                                   WHERE driver_level = 'MACRO' AND driver_name = %s""",
+                                (formatted_value, driver_name)
+                            )
+                        else:
+                            # Insert if not exists
+                            self.mysql.execute(
+                                """INSERT INTO vs_drivers
+                                   (driver_level, driver_name, current_value, weight, last_updated)
+                                   VALUES ('MACRO', %s, %s, 0.20, NOW())""",
+                                (driver_name, formatted_value)
+                            )
+
+                        result['synced'] += 1
+                    else:
+                        result['unchanged'] += 1
+
+                except Exception as e:
+                    logger.error(f"Error syncing {driver_name}: {e}")
+                    result['errors'].append(f"{driver_name}: {str(e)}")
+
+            logger.info(f"Macro sync complete: {result['synced']} updated, {result['unchanged']} unchanged")
+            result['status'] = 'SUCCESS'
+
+        except Exception as e:
+            logger.error(f"Macro sync failed: {e}", exc_info=True)
+            result['status'] = 'FAILED'
+            result['error'] = str(e)
+
+        return result
+
+    # =========================================================================
     # DAILY VALUATION
     # =========================================================================
 
@@ -206,6 +409,14 @@ class OrchestratorAgent:
         result = {'cycle': 'daily_valuation', 'started_at': start_time.isoformat()}
 
         try:
+            # Check if macro data is stale and update if needed
+            macro_update_result = self._check_and_update_macro_data()
+            result['macro_update'] = macro_update_result
+
+            # Sync macro data from CSV to GSheet/MySQL
+            macro_sync_result = self._sync_macro_from_csv()
+            result['macro_sync'] = macro_sync_result
+
             # Reload price data
             self.price_loader.reload()
 

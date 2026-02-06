@@ -41,14 +41,15 @@ class GSheetClient:
     """
 
     SHEET_NAMES = {
-        'macro_drivers': 'Macro Drivers',
-        'sector_chemicals': 'Sector - Specialty Chemicals',
-        'sector_automobiles': 'Sector - Automobiles',
-        'company_aether': 'Company - Aether Industries',
-        'company_eicher': 'Company - Eicher Motors',
-        'valuation_history': 'Valuation History',
-        'driver_history': 'Driver History',
-        'event_log': 'Event Log',
+        'macro_drivers': '1. Macro Drivers',
+        'sector_drivers': '2. Sector Drivers',  # Unified - all sectors in one sheet
+        'company_drivers': '3. Company Drivers',  # Unified - all companies in one sheet
+        'recent_activity': '4. Recent Activity',  # 7-day summary
+        # Legacy names (kept for backward compatibility):
+        'sector_chemicals': '2. Sector Drivers',
+        'sector_automobiles': '2. Sector Drivers',
+        'company_aether': '3. Company Drivers',
+        'company_eicher': '3. Company Drivers',
     }
 
     def __init__(self, spreadsheet_id: str = None):
@@ -175,14 +176,26 @@ class GSheetClient:
         Finds the row by driver name, updates the specified column.
         """
         ws = self.spreadsheet.worksheet(self.SHEET_NAMES.get(sheet_key, ''))
-        cell = ws.find(driver_name, in_column=2)  # Column B = Driver name
+
+        # Find driver_name column (could be column B or C depending on sheet structure)
+        headers = ws.row_values(1)
+        driver_name_col = None
+        for i, h in enumerate(headers):
+            if h == 'driver_name':
+                driver_name_col = i + 1
+                break
+
+        if not driver_name_col:
+            # Fallback to column 2 for old structure
+            driver_name_col = 2
+
+        cell = ws.find(driver_name, in_column=driver_name_col)
 
         if not cell:
             logger.warning(f"Driver '{driver_name}' not found in {sheet_key}")
             return
 
         # Find column index for the target column
-        headers = ws.row_values(1)
         col_idx = None
         for i, h in enumerate(headers):
             if h == column:
@@ -193,7 +206,7 @@ class GSheetClient:
             ws.update_cell(cell.row, col_idx, new_value)
             # Also update Last Updated column
             for i, h in enumerate(headers):
-                if h == 'Last Updated':
+                if h in ['Last Updated', 'last_updated']:
                     ws.update_cell(cell.row, i + 1, datetime.now().strftime('%Y-%m-%d %H:%M'))
                     break
 
