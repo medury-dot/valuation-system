@@ -473,10 +473,30 @@ class FinancialProcessor:
         """
         Calculate capex as % of sales.
         ACTUAL → DERIVED → DEFAULT fallback chain.
+
+        For high-growth companies (CAGR > 30%), normalize to maintenance capex
+        to avoid treating temporary expansion capex as permanent.
         """
         sales = financials.get('sales_annual', financials.get('sales', {}))
         if not sales:
             return None
+
+        # Detect high-growth phase (check both CAGR and recent YoY)
+        sales_annual = financials.get('sales_annual', financials.get('sales', {}))
+        recent_cagr_3y = self.core.calculate_cagr(sales_annual, years=3)
+
+        # Also check most recent YoY growth
+        recent_yoy = 0
+        if sales_annual and len(sales_annual) >= 2:
+            years = sorted(sales_annual.keys(), reverse=True)
+            if len(years) >= 2:
+                curr = sales_annual.get(years[0], 0)
+                prev = sales_annual.get(years[1], 0)
+                if curr and prev and prev > 0:
+                    recent_yoy = (curr / prev) - 1
+
+        # High-growth if EITHER condition: CAGR >20% OR recent YoY >50%
+        is_high_growth = (recent_cagr_3y and recent_cagr_3y > 0.20) or recent_yoy > 0.50
 
         # Method 1 [ACTUAL]: Use pur_of_fixed_assets (yearly, direct from cash flow statement)
         pur_fa = financials.get('pur_of_fixed_assets', {})
@@ -490,9 +510,19 @@ class FinancialProcessor:
                     logger.debug(f"  Capex/Sales {year}: {cap:.1f}/{sales[year]:.1f} "
                                  f"= {ratio:.4f} [ACTUAL: pur_of_fixed_assets]")
             if ratios:
-                result = round(np.mean(ratios), 4)
-                logger.info(f"  Capex/Sales: {result:.4f} [ACTUAL: pur_of_fixed_assets avg {len(ratios)}yr]")
-                return result
+                historical_avg = round(np.mean(ratios), 4)
+
+                # HIGH-GROWTH NORMALIZATION: Use maintenance capex, not expansion capex
+                if is_high_growth and historical_avg > 0.15:  # >15% indicates expansion phase
+                    # For specialty chemicals, maintenance capex is typically 5-8%
+                    normalized_capex = 0.065  # 6.5% for chemicals
+                    logger.info(f"  Capex/Sales: {normalized_capex:.4f} [NORMALIZED for high-growth: "
+                                f"historical {historical_avg:.1%} includes expansion, using maintenance capex. "
+                                f"3Y CAGR: {recent_cagr_3y:.1%}]")
+                    return normalized_capex
+                else:
+                    logger.info(f"  Capex/Sales: {historical_avg:.4f} [ACTUAL: pur_of_fixed_assets avg {len(ratios)}yr]")
+                    return historical_avg
 
         # Method 2 [DERIVED]: Derive from gross block + CWIP changes
         gross_block = financials.get('gross_block', {})
@@ -613,8 +643,28 @@ class FinancialProcessor:
         ACTUAL → DERIVED → DEFAULT fallback chain.
 
         NWC = Inventories + Sundry Debtors - Trade Payables
+
+        For high-growth companies, NWC can be abnormally high due to inventory
+        build-up and extended receivables. Normalize to industry standards.
         """
         sales = financials.get('sales_annual', financials.get('sales', {}))
+
+        # Detect high-growth phase (check both CAGR and recent YoY)
+        sales_annual = financials.get('sales_annual', financials.get('sales', {}))
+        recent_cagr_3y = self.core.calculate_cagr(sales_annual, years=3)
+
+        # Also check most recent YoY growth
+        recent_yoy = 0
+        if sales_annual and len(sales_annual) >= 2:
+            years = sorted(sales_annual.keys(), reverse=True)
+            if len(years) >= 2:
+                curr = sales_annual.get(years[0], 0)
+                prev = sales_annual.get(years[1], 0)
+                if curr and prev and prev > 0:
+                    recent_yoy = (curr / prev) - 1
+
+        # High-growth if EITHER condition: CAGR >20% OR recent YoY >50%
+        is_high_growth = (recent_cagr_3y and recent_cagr_3y > 0.20) or recent_yoy > 0.50
 
         # Method 1 [ACTUAL]: Direct from balance sheet items (inventories + debtors - payables)
         inventories = financials.get('inventories', {})
@@ -642,9 +692,19 @@ class FinancialProcessor:
                                      f"Payables={payables.get(year, 0):.1f} = "
                                      f"NWC={nwc:.1f} / Sales={sales[year]:.1f} = {ratio:.4f}")
                 if ratios:
-                    result = round(np.mean(ratios), 4)
-                    logger.info(f"  NWC/Sales: {result:.4f} [ACTUAL: (inv+debtors-payables)/sales avg {len(ratios)}yr]")
-                    return result
+                    historical_avg = round(np.mean(ratios), 4)
+
+                    # HIGH-GROWTH NORMALIZATION: Cap NWC at reasonable industry levels
+                    if is_high_growth and historical_avg > 0.60:  # >60% indicates growth phase buildup
+                        # For specialty chemicals, steady-state NWC is typically 25-35%
+                        normalized_nwc = 0.30  # 30% for chemicals
+                        logger.info(f"  NWC/Sales: {normalized_nwc:.4f} [NORMALIZED for high-growth: "
+                                    f"historical {historical_avg:.1%} includes growth-phase buildup, "
+                                    f"using steady-state norm. 3Y CAGR: {recent_cagr_3y:.1%}]")
+                        return normalized_nwc
+                    else:
+                        logger.info(f"  NWC/Sales: {historical_avg:.4f} [ACTUAL: (inv+debtors-payables)/sales avg {len(ratios)}yr]")
+                        return historical_avg
 
         # Method 2 [DERIVED]: Cash Conversion Cycle / 365
         ccc = financials.get('cash_conversion_cycle', {})
@@ -928,8 +988,28 @@ class FinancialProcessor:
         Estimate terminal reinvestment rate.
         Reinvestment Rate = Capex / NOPAT
         ACTUAL → DERIVED → DEFAULT fallback chain.
+
+        For high-growth companies, recent capex is inflated by expansion.
+        Use sector default for terminal (steady-state) reinvestment.
         """
         tax_rate = self._estimate_effective_tax_rate(financials)
+
+        # Detect high-growth phase (check both CAGR and recent YoY)
+        sales_annual = financials.get('sales_annual', financials.get('sales', {}))
+        recent_cagr_3y = self.core.calculate_cagr(sales_annual, years=3)
+
+        # Also check most recent YoY growth
+        recent_yoy = 0
+        if sales_annual and len(sales_annual) >= 2:
+            years = sorted(sales_annual.keys(), reverse=True)
+            if len(years) >= 2:
+                curr = sales_annual.get(years[0], 0)
+                prev = sales_annual.get(years[1], 0)
+                if curr and prev and prev > 0:
+                    recent_yoy = (curr / prev) - 1
+
+        # High-growth if EITHER condition: CAGR >20% OR recent YoY >50%
+        is_high_growth = (recent_cagr_3y and recent_cagr_3y > 0.20) or recent_yoy > 0.50
 
         # Method 1 [ACTUAL]: Use op_profit_yearly + pur_of_fixed_assets
         op_profit_yearly = financials.get('op_profit_yearly', {})
@@ -940,11 +1020,21 @@ class FinancialProcessor:
             if latest_ebit and latest_ebit > 0 and latest_capex:
                 nopat = latest_ebit * (1 - tax_rate)
                 if nopat > 0:
-                    reinv = abs(latest_capex) / nopat
-                    result = round(max(0.10, min(reinv, 0.60)), 4)
-                    logger.info(f"  Terminal reinvestment: {result:.4f} "
-                                f"[ACTUAL: pur_of_fixed_assets/NOPAT = {abs(latest_capex):.1f}/{nopat:.1f}]")
-                    return result
+                    historical_reinv = abs(latest_capex) / nopat
+
+                    # HIGH-GROWTH ADJUSTMENT: Use sector default for terminal, not current high capex
+                    if is_high_growth and historical_reinv > 0.50:  # >50% indicates expansion phase
+                        sector_default = terminal_assumptions.get('reinvestment_rate', 0.30)
+                        logger.info(f"  Terminal reinvestment: {sector_default:.4f} "
+                                    f"[NORMALIZED for high-growth: historical {historical_reinv:.1%} "
+                                    f"includes expansion capex, using sector steady-state. "
+                                    f"3Y CAGR: {recent_cagr_3y:.1%}]")
+                        return sector_default
+                    else:
+                        result = round(max(0.10, min(historical_reinv, 0.60)), 4)
+                        logger.info(f"  Terminal reinvestment: {result:.4f} "
+                                    f"[ACTUAL: pur_of_fixed_assets/NOPAT = {abs(latest_capex):.1f}/{nopat:.1f}]")
+                        return result
 
         # Method 2 [DERIVED]: TTM quarterly op_profit + annualized capex
         op_profit_quarterly = financials.get('op_profit_quarterly',
