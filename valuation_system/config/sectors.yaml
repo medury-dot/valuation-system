@@ -578,6 +578,1264 @@ sectors:
     csv_sector_name: "IT"
     is_active: false
 
+  # ---------------------------------------------------------------------------
+  # FINANCIALS_BANKING_PSU (Pilot Sector #5)
+  # ---------------------------------------------------------------------------
+  financials_banking_psu:
+    csv_sector_name: "Bank"
+    csv_industry_filter: ["Bank - Public"]
+    is_active: true
+
+    valuation_methods:
+      primary: "P/B"
+      secondary: "P/E"
+      blend_weights:
+        dcf: 0.60
+        relative: 0.30
+        monte_carlo: 0.10
+
+    key_metrics:
+      - loan_growth
+      - casa_ratio
+      - gnpa_ratio
+      - nnpa_ratio
+      - roe
+      - nim
+      - credit_cost
+      - capital_adequacy
+      - cost_to_income
+
+    terminal_assumptions:
+      margin_range: [0.12, 0.18]  # ROE 12-18% for PSU banks
+      roce_convergence: 0.14      # PSU banks lower ROCE vs private
+      reinvestment_rate: 0.45     # Moderate reinvestment for loan growth
+
+    demand_drivers:
+      - name: credit_growth
+        metric: "YoY %"
+        weight: 0.10
+        impact: loan_book_growth
+      - name: priority_sector_demand
+        metric: "Agri/MSME Growth %"
+        weight: 0.06
+        impact: mandated_lending
+      - name: government_capex
+        metric: "Budget Allocation"
+        weight: 0.05
+        impact: infrastructure_lending
+      - name: retail_loan_penetration
+        metric: "% of Book"
+        weight: 0.04
+        impact: yield_improvement
+      - name: branch_network
+        metric: "Count, Geographic Reach"
+        weight: 0.04
+        impact: deposit_mobilization
+      - name: deposit_growth
+        metric: "YoY %"
+        weight: 0.08
+        impact: funding_availability
+
+    cost_drivers:
+      - name: funding_cost
+        metric: "% Cost of Deposits"
+        weight: 0.09
+        impact: nim_compression
+        sensitivity: -0.9
+      - name: credit_cost
+        metric: "% of Loans"
+        weight: 0.11
+        impact: profitability
+        sensitivity: -1.0
+      - name: operating_cost_ratio
+        metric: "% of Assets"
+        weight: 0.05
+        impact: efficiency_drag
+      - name: rbi_repo_rate
+        metric: "bps"
+        weight: 0.09
+        impact: borrowing_cost
+        sensitivity: -0.7
+      - name: legacy_npa_provisioning
+        metric: "Slippage Ratio"
+        weight: 0.06
+        impact: provision_burden
+
+    porter_forces:
+      entry_barriers:
+        value: VERY_HIGH
+        drivers: ["rbi_licensing", "capital_requirements_15%", "branch_network_legacy", "government_backing"]
+        impact: limited_new_entrants
+      supplier_power:
+        value: LOW
+        drivers: ["rbi_sets_rates", "deep_deposit_base", "casa_franchise"]
+        impact: stable_funding
+      buyer_power:
+        value: MODERATE
+        drivers: ["retail_fragmentation", "corporate_negotiation", "fintech_alternatives"]
+        impact: selective_pressure
+      substitutes:
+        value: HIGH
+        drivers: ["private_banks_efficiency", "nbfc_agility", "fintech_small_ticket", "bond_markets_corporate"]
+        impact: market_share_erosion
+      rivalry:
+        value: MODERATE
+        drivers: ["psu_oligopoly_12_banks", "branch_overlap", "govt_directed_lending"]
+        impact: pricing_discipline_weak
+
+    regulatory_drivers:
+      - name: rbi_priority_sector
+        weight: 0.05
+        impact: loan_mix_constraint
+      - name: capital_adequacy_basel3
+        weight: 0.05
+        impact: growth_constraint
+      - name: government_recapitalization
+        metric: "Rs Cr Budget"
+        weight: 0.06
+        impact: growth_enabler
+      - name: npa_recognition_norms
+        weight: 0.04
+        impact: provisioning_burden
+      - name: loan_waiver_risk
+        weight: 0.03
+        impact: credit_cost_spike
+
+    sector_specific_drivers:
+      - name: casa_ratio
+        metric: "%"
+        source: filings
+        frequency: quarterly
+      - name: gnpa_ratio
+        metric: "%"
+        source: filings
+        frequency: quarterly
+      - name: nnpa_ratio
+        metric: "%"
+        source: filings
+        frequency: quarterly
+      - name: provision_coverage_ratio
+        metric: "%"
+        source: filings
+        frequency: quarterly
+      - name: capital_adequacy_ratio
+        metric: "%"
+        source: filings
+        frequency: quarterly
+      - name: cost_to_income_ratio
+        metric: "%"
+        source: filings
+        frequency: quarterly
+      - name: nim
+        metric: "%"
+        source: filings
+        frequency: quarterly
+      - name: slippage_ratio
+        metric: "%"
+        source: filings
+        frequency: quarterly
+
+  # ---------------------------------------------------------------------------
+  # FINANCIALS_BANKING_PRIVATE (Pilot Sector #6)
+  # ---------------------------------------------------------------------------
+  financials_banking_private:
+    csv_sector_name: "Bank"
+    csv_industry_filter: ["Bank - Private"]
+    is_active: true
+
+    valuation_methods:
+      primary: "P/B"
+      secondary: "P/E"
+      blend_weights:
+        dcf: 0.60
+        relative: 0.30
+        monte_carlo: 0.10
+
+    key_metrics:
+      - loan_growth
+      - casa_ratio
+      - gnpa_ratio
+      - nnpa_ratio
+      - roe
+      - nim
+      - credit_cost
+      - capital_adequacy
+      - cost_to_income
+
+    terminal_assumptions:
+      margin_range: [0.16, 0.22]  # ROE 16-22% for private banks
+      roce_convergence: 0.18      # Private banks higher ROCE
+      reinvestment_rate: 0.50     # Higher reinvestment for aggressive growth
+
+    demand_drivers:
+      - name: credit_growth
+        metric: "YoY %"
+        weight: 0.12
+        impact: loan_book_growth
+      - name: retail_loan_demand
+        metric: "Home/Auto/Personal %"
+        weight: 0.09
+        impact: high_yield_portfolio
+      - name: corporate_credit_cycle
+        metric: "Capex Cycle"
+        weight: 0.06
+        impact: wholesale_lending
+      - name: digital_customer_acquisition
+        metric: "New-to-Bank %"
+        weight: 0.05
+        impact: market_share_gain
+      - name: wealth_management_growth
+        metric: "HNI AUM Growth %"
+        weight: 0.04
+        impact: fee_income
+      - name: cross_sell_ratio
+        metric: "Products per Customer"
+        weight: 0.05
+        impact: relationship_depth
+
+    cost_drivers:
+      - name: funding_cost
+        metric: "% Cost of Deposits"
+        weight: 0.09
+        impact: nim_compression
+        sensitivity: -0.8
+      - name: credit_cost
+        metric: "% of Loans"
+        weight: 0.10
+        impact: profitability
+        sensitivity: -1.0
+      - name: operating_cost_ratio
+        metric: "% of Assets"
+        weight: 0.04
+        impact: efficiency
+      - name: rbi_repo_rate
+        metric: "bps"
+        weight: 0.08
+        impact: borrowing_cost
+        sensitivity: -0.6
+      - name: technology_investment
+        metric: "% of Revenue"
+        weight: 0.04
+        impact: digital_capability
+      - name: casa_acquisition_cost
+        metric: "Rs per Account"
+        weight: 0.03
+        impact: liability_franchise
+
+    porter_forces:
+      entry_barriers:
+        value: VERY_HIGH
+        drivers: ["rbi_licensing_stringent", "capital_rs_500cr_minimum", "casa_franchise_years", "tech_platform_capex"]
+        impact: oligopoly_protection
+      supplier_power:
+        value: LOW
+        drivers: ["retail_deposit_base", "casa_60%_leaders", "diversified_funding"]
+        impact: low_cost_funds
+      buyer_power:
+        value: HIGH
+        drivers: ["retail_rate_sensitivity", "corporate_sophistication", "digital_comparison", "switching_ease"]
+        impact: margin_pressure
+      substitutes:
+        value: MODERATE
+        drivers: ["nbfc_niche_segments", "fintech_payments", "mutual_funds_savings", "small_finance_banks"]
+        impact: selective_competition
+      rivalry:
+        value: INTENSE
+        drivers: ["top5_concentration", "digital_arms_race", "aggressive_growth_targets", "talent_poaching"]
+        impact: pricing_discipline
+
+    regulatory_drivers:
+      - name: rbi_priority_sector
+        weight: 0.04
+        impact: loan_mix_constraint
+      - name: capital_adequacy_basel3
+        weight: 0.04
+        impact: growth_headroom
+      - name: digital_lending_norms
+        weight: 0.05
+        impact: fintech_partnership
+      - name: npa_recognition_norms
+        weight: 0.04
+        impact: provisioning_timing
+      - name: rbi_rate_transmission
+        weight: 0.04
+        impact: pricing_flexibility
+
+    sector_specific_drivers:
+      - name: casa_ratio
+        metric: "%"
+        source: filings
+        frequency: quarterly
+      - name: gnpa_ratio
+        metric: "%"
+        source: filings
+        frequency: quarterly
+      - name: nnpa_ratio
+        metric: "%"
+        source: filings
+        frequency: quarterly
+      - name: provision_coverage_ratio
+        metric: "%"
+        source: filings
+        frequency: quarterly
+      - name: capital_adequacy_ratio
+        metric: "%"
+        source: filings
+        frequency: quarterly
+      - name: cost_to_income_ratio
+        metric: "%"
+        source: filings
+        frequency: quarterly
+      - name: nim
+        metric: "%"
+        source: filings
+        frequency: quarterly
+      - name: retail_loan_mix
+        metric: "% of Book"
+        source: filings
+        frequency: quarterly
+      - name: digital_adoption
+        metric: "% Transactions"
+        source: filings
+        frequency: quarterly
+
+  # ---------------------------------------------------------------------------
+  # FINANCIALS_NBFC_VEHICLE (Pilot Sector #7)
+  # ---------------------------------------------------------------------------
+  financials_nbfc_vehicle:
+    csv_sector_name: "Finance"
+    csv_industry_filter: ["Finance - NBFC"]
+    is_active: true
+
+    valuation_methods:
+      primary: "P/B"
+      secondary: "P/E"
+      blend_weights:
+        dcf: 0.60
+        relative: 0.30
+        monte_carlo: 0.10
+
+    key_metrics:
+      - aum_growth
+      - gnpa_ratio
+      - nnpa_ratio
+      - roe
+      - spread
+      - credit_cost
+      - capital_adequacy
+      - leverage_ratio
+
+    terminal_assumptions:
+      margin_range: [0.15, 0.24]  # ROE 15-24% for vehicle NBFCs
+      roce_convergence: 0.16      # Vehicle NBFCs moderate ROCE
+      reinvestment_rate: 0.55     # High reinvestment for AUM growth
+
+    demand_drivers:
+      - name: vehicle_sales_growth
+        metric: "2W/4W/CV Units YoY %"
+        weight: 0.13
+        impact: loan_origination
+      - name: rural_financing_penetration
+        metric: "% of Sales Financed"
+        weight: 0.07
+        impact: market_expansion
+      - name: used_vehicle_financing
+        metric: "Growth %"
+        weight: 0.06
+        impact: segment_diversification
+      - name: tractor_financing
+        metric: "Agri Cycle"
+        weight: 0.05
+        impact: rural_portfolio
+      - name: dealer_network_expansion
+        metric: "Touch Points"
+        weight: 0.04
+        impact: origination_reach
+      - name: electric_vehicle_financing
+        metric: "% of AUM"
+        weight: 0.03
+        impact: future_opportunity
+
+    cost_drivers:
+      - name: funding_cost
+        metric: "% Cost of Funds"
+        weight: 0.11
+        impact: spread_compression
+        sensitivity: -0.9
+      - name: credit_cost
+        metric: "% of Loans"
+        weight: 0.10
+        impact: profitability
+        sensitivity: -1.0
+      - name: operating_cost_ratio
+        metric: "% of AUM"
+        weight: 0.05
+        impact: efficiency
+      - name: rbi_repo_rate
+        metric: "bps"
+        weight: 0.08
+        impact: borrowing_cost
+        sensitivity: -0.7
+      - name: collection_efficiency
+        metric: "% in 90 days"
+        weight: 0.05
+        impact: asset_quality
+      - name: repossession_cost
+        metric: "% of Defaulted AUM"
+        weight: 0.04
+        impact: recovery_drag
+
+    porter_forces:
+      entry_barriers:
+        value: MODERATE
+        drivers: ["rbi_nbfc_license", "dealer_relationships", "collection_network", "bureau_integration"]
+        impact: competitive_intensity
+      supplier_power:
+        value: MODERATE
+        drivers: ["bank_borrowing_dependence", "cp_market_access", "securitization_liquidity"]
+        impact: cost_of_funds_volatility
+      buyer_power:
+        value: MODERATE
+        drivers: ["oem_captive_finance", "bank_competition", "rate_transparency", "fintech_digital"]
+        impact: yield_pressure
+      substitutes:
+        value: HIGH
+        drivers: ["bank_auto_loans", "oem_captives_hdfc_kotak", "fintech_partnerships", "direct_dealer_finance"]
+        impact: market_share_risk
+      rivalry:
+        value: INTENSE
+        drivers: ["bajaj_cholamandalam_shriram", "bank_aggression", "oem_push", "geography_overlap"]
+        impact: margin_compression
+
+    regulatory_drivers:
+      - name: rbi_liquidity_norms
+        weight: 0.05
+        impact: liquidity_buffer_cost
+      - name: capital_adequacy_requirements
+        weight: 0.05
+        impact: leverage_constraint
+      - name: asset_liability_mismatch
+        weight: 0.04
+        impact: funding_maturity
+      - name: npa_recognition_90dpd
+        weight: 0.04
+        impact: provisioning_burden
+      - name: vehicle_scrappage_policy
+        weight: 0.01
+        impact: replacement_demand
+
+    sector_specific_drivers:
+      - name: aum_growth
+        metric: "Rs Cr YoY %"
+        source: filings
+        frequency: quarterly
+      - name: disbursement_growth
+        metric: "YoY %"
+        source: filings
+        frequency: quarterly
+      - name: gnpa_ratio
+        metric: "%"
+        source: filings
+        frequency: quarterly
+      - name: nnpa_ratio
+        metric: "%"
+        source: filings
+        frequency: quarterly
+      - name: spread
+        metric: "bps"
+        source: filings
+        frequency: quarterly
+      - name: leverage_ratio
+        metric: "Debt/Equity"
+        source: filings
+        frequency: quarterly
+      - name: product_mix
+        metric: "2W/4W/CV %"
+        source: filings
+        frequency: quarterly
+      - name: collection_efficiency
+        metric: "%"
+        source: filings
+        frequency: monthly
+
+  # ---------------------------------------------------------------------------
+  # FINANCIALS_NBFC_HOUSING (Pilot Sector #8)
+  # ---------------------------------------------------------------------------
+  financials_nbfc_housing:
+    csv_sector_name: "Finance"
+    csv_industry_filter: ["Finance - Housing"]
+    is_active: true
+
+    valuation_methods:
+      primary: "P/B"
+      secondary: "P/E"
+      blend_weights:
+        dcf: 0.60
+        relative: 0.30
+        monte_carlo: 0.10
+
+    key_metrics:
+      - aum_growth
+      - gnpa_ratio
+      - nnpa_ratio
+      - roe
+      - spread
+      - credit_cost
+      - capital_adequacy
+      - leverage_ratio
+      - ltv_ratio
+
+    terminal_assumptions:
+      margin_range: [0.14, 0.20]  # ROE 14-20% for housing finance
+      roce_convergence: 0.15      # Housing finance stable ROCE
+      reinvestment_rate: 0.50     # Moderate reinvestment for AUM growth
+
+    demand_drivers:
+      - name: housing_credit_growth
+        metric: "YoY %"
+        weight: 0.11
+        impact: aum_growth
+      - name: affordable_housing_demand
+        metric: "<Rs 45L Segment %"
+        weight: 0.08
+        impact: volume_growth
+      - name: real_estate_prices
+        metric: "Index YoY %"
+        weight: 0.06
+        impact: ticket_size
+      - name: urbanization_rate
+        metric: "% Urban Population"
+        weight: 0.05
+        impact: addressable_market
+      - name: geographic_expansion
+        metric: "Tier2/3 Penetration %"
+        weight: 0.05
+        impact: market_share
+      - name: construction_linked_disbursement
+        metric: "% of Book"
+        weight: 0.04
+        impact: yield_premium
+
+    cost_drivers:
+      - name: funding_cost
+        metric: "% Cost of Funds"
+        weight: 0.10
+        impact: spread_compression
+        sensitivity: -0.8
+      - name: credit_cost
+        metric: "% of Loans"
+        weight: 0.08
+        impact: profitability
+        sensitivity: -0.9
+      - name: operating_cost_ratio
+        metric: "% of AUM"
+        weight: 0.04
+        impact: efficiency
+      - name: rbi_repo_rate
+        metric: "bps"
+        weight: 0.09
+        impact: borrowing_cost
+        sensitivity: -0.7
+      - name: property_verification_cost
+        metric: "Rs per Loan"
+        weight: 0.04
+        impact: underwriting_expense
+      - name: securitization_cost
+        metric: "bps discount"
+        weight: 0.04
+        impact: liquidity_management
+
+    porter_forces:
+      entry_barriers:
+        value: MODERATE
+        drivers: ["rbi_nhb_registration", "property_valuation_network", "legal_title_expertise", "credit_bureau_integration"]
+        impact: stable_competition
+      supplier_power:
+        value: MODERATE
+        drivers: ["bank_borrowing_mix", "bond_market_access", "nhb_refinance", "securitization_market"]
+        impact: funding_cost_stability
+      buyer_power:
+        value: HIGH
+        drivers: ["bank_home_loans_competitive", "rate_transparency", "prepayment_flexibility", "porting_facility"]
+        impact: yield_pressure
+      substitutes:
+        value: MODERATE
+        drivers: ["bank_home_loans_80%_market", "employer_housing_schemes", "direct_developer_finance"]
+        impact: niche_positioning
+      rivalry:
+        value: MODERATE
+        drivers: ["banks_dominant", "nbfc_niche_focus", "geography_segmentation", "affordable_specialization"]
+        impact: segment_pricing
+
+    regulatory_drivers:
+      - name: rbi_liquidity_norms
+        weight: 0.04
+        impact: liquidity_buffer
+      - name: capital_adequacy_15pct
+        weight: 0.04
+        impact: growth_headroom
+      - name: asset_liability_mismatch
+        weight: 0.04
+        impact: funding_maturity_match
+      - name: npa_recognition_90dpd
+        weight: 0.04
+        impact: provisioning_timing
+      - name: pmay_subsidy
+        metric: "Govt Scheme"
+        weight: 0.05
+        impact: affordable_demand
+      - name: rera_implementation
+        weight: 0.06
+        impact: project_financing_risk
+
+    sector_specific_drivers:
+      - name: aum_growth
+        metric: "Rs Cr YoY %"
+        source: filings
+        frequency: quarterly
+      - name: disbursement_growth
+        metric: "YoY %"
+        source: filings
+        frequency: quarterly
+      - name: gnpa_ratio
+        metric: "%"
+        source: filings
+        frequency: quarterly
+      - name: nnpa_ratio
+        metric: "%"
+        source: filings
+        frequency: quarterly
+      - name: spread
+        metric: "bps"
+        source: filings
+        frequency: quarterly
+      - name: ltv_ratio
+        metric: "% Average"
+        source: filings
+        frequency: quarterly
+      - name: affordable_housing_mix
+        metric: "% <Rs 45L"
+        source: filings
+        frequency: quarterly
+      - name: geographic_mix
+        metric: "Top10 Cities %"
+        source: filings
+        frequency: quarterly
+
+  # ---------------------------------------------------------------------------
+  # FINANCIALS_NBFC_DIVERSIFIED (Pilot Sector #9)
+  # ---------------------------------------------------------------------------
+  financials_nbfc_diversified:
+    csv_sector_name: "Finance"
+    csv_industry_filter: ["Finance Term Lending"]
+    is_active: true
+
+    valuation_methods:
+      primary: "P/B"
+      secondary: "P/E"
+      blend_weights:
+        dcf: 0.60
+        relative: 0.30
+        monte_carlo: 0.10
+
+    key_metrics:
+      - aum_growth
+      - gnpa_ratio
+      - nnpa_ratio
+      - roe
+      - spread
+      - credit_cost
+      - capital_adequacy
+      - leverage_ratio
+
+    terminal_assumptions:
+      margin_range: [0.16, 0.25]  # ROE 16-25% for diversified NBFCs
+      roce_convergence: 0.17      # Diversified NBFCs higher ROCE
+      reinvestment_rate: 0.50     # Moderate to high reinvestment
+
+    demand_drivers:
+      - name: credit_growth
+        metric: "YoY %"
+        weight: 0.10
+        impact: aum_growth
+      - name: msme_financing_demand
+        metric: "Working Capital Growth %"
+        weight: 0.08
+        impact: segment_expansion
+      - name: gold_loan_demand
+        metric: "AUM Growth %"
+        weight: 0.06
+        impact: secured_portfolio
+      - name: commercial_vehicle_financing
+        metric: "Freight Growth Proxy"
+        weight: 0.05
+        impact: transport_segment
+      - name: construction_equipment_finance
+        metric: "Infra Capex Proxy"
+        weight: 0.04
+        impact: equipment_loans
+      - name: rural_credit_penetration
+        metric: "Branch Expansion"
+        weight: 0.04
+        impact: geographic_reach
+      - name: digital_lending_adoption
+        metric: "% Digital Disbursements"
+        weight: 0.04
+        impact: cost_efficiency
+
+    cost_drivers:
+      - name: funding_cost
+        metric: "% Cost of Funds"
+        weight: 0.10
+        impact: spread_compression
+        sensitivity: -0.9
+      - name: credit_cost
+        metric: "% of Loans"
+        weight: 0.10
+        impact: profitability
+        sensitivity: -1.0
+      - name: operating_cost_ratio
+        metric: "% of AUM"
+        weight: 0.05
+        impact: efficiency
+      - name: rbi_repo_rate
+        metric: "bps"
+        weight: 0.07
+        impact: borrowing_cost
+        sensitivity: -0.7
+      - name: branch_operating_cost
+        metric: "Rs Cr per Branch"
+        weight: 0.04
+        impact: distribution_expense
+      - name: collection_cost
+        metric: "% of Disbursements"
+        weight: 0.04
+        impact: field_force_expense
+
+    porter_forces:
+      entry_barriers:
+        value: MODERATE
+        drivers: ["rbi_nbfc_license", "diversified_underwriting_expertise", "multi_product_platform", "rural_reach"]
+        impact: competitive_moat
+      supplier_power:
+        value: MODERATE
+        drivers: ["bank_borrowing_dependence", "cp_ncd_market_access", "securitization_rating_dependent"]
+        impact: funding_cost_volatility
+      buyer_power:
+        value: MODERATE
+        drivers: ["msme_fragmentation", "gold_loan_commoditization", "cv_fleet_concentration"]
+        impact: selective_pressure
+      substitutes:
+        value: HIGH
+        drivers: ["bank_expansion_msme", "small_finance_banks", "fintech_partnerships", "microfinance_overlap"]
+        impact: segment_competition
+      rivalry:
+        value: INTENSE
+        drivers: ["shriram_bajaj_cholamandalam", "bank_aggression", "product_overlap", "geography_overlap"]
+        impact: margin_pressure
+
+    regulatory_drivers:
+      - name: rbi_liquidity_norms
+        weight: 0.04
+        impact: liquidity_buffer
+      - name: capital_adequacy_requirements
+        weight: 0.04
+        impact: leverage_constraint
+      - name: asset_liability_mismatch
+        weight: 0.04
+        impact: funding_maturity
+      - name: npa_recognition_norms
+        weight: 0.04
+        impact: provisioning_burden
+      - name: msme_priority_lending
+        weight: 0.04
+        impact: segment_allocation
+      - name: gold_loan_ltv_cap
+        metric: "75% Max"
+        weight: 0.04
+        impact: gold_segment_constraint
+
+    sector_specific_drivers:
+      - name: aum_growth
+        metric: "Rs Cr YoY %"
+        source: filings
+        frequency: quarterly
+      - name: disbursement_growth
+        metric: "YoY %"
+        source: filings
+        frequency: quarterly
+      - name: gnpa_ratio
+        metric: "%"
+        source: filings
+        frequency: quarterly
+      - name: nnpa_ratio
+        metric: "%"
+        source: filings
+        frequency: quarterly
+      - name: spread
+        metric: "bps"
+        source: filings
+        frequency: quarterly
+      - name: leverage_ratio
+        metric: "Debt/Equity"
+        source: filings
+        frequency: quarterly
+      - name: product_mix
+        metric: "Gold/CV/MSME/Others %"
+        source: filings
+        frequency: quarterly
+      - name: branch_count
+        metric: "Total Branches"
+        source: filings
+        frequency: quarterly
+
+  # ---------------------------------------------------------------------------
+  # FINANCIALS_ASSET_MGMT (Pilot Sector #10)
+  # ---------------------------------------------------------------------------
+  financials_asset_mgmt:
+    csv_sector_name: "Finance"
+    csv_industry_filter: ["Finance - Investment", "Finance - Asset Management"]
+    is_active: true
+
+    valuation_methods:
+      primary: "P/E"
+      secondary: "EV/EBITDA"
+      blend_weights:
+        dcf: 0.60
+        relative: 0.30
+        monte_carlo: 0.10
+
+    key_metrics:
+      - aum_growth
+      - management_fee_margin
+      - ebitda_margin
+      - roe
+      - active_aum_mix
+      - client_retention
+
+    terminal_assumptions:
+      margin_range: [0.35, 0.50]  # EBITDA margin 35-50% for AMCs
+      roce_convergence: 0.30      # Asset-light, high ROCE
+      reinvestment_rate: 0.20     # Low reinvestment, capital-light
+
+    demand_drivers:
+      - name: mutual_fund_aum_growth
+        metric: "Industry YoY %"
+        weight: 0.13
+        impact: revenue_growth
+      - name: equity_market_performance
+        metric: "Nifty50 YoY %"
+        weight: 0.09
+        impact: equity_aum_mark_to_market
+      - name: sip_adoption
+        metric: "Monthly SIP Flows Rs Cr"
+        weight: 0.08
+        impact: stable_aum_accretion
+      - name: hni_wealth_management_demand
+        metric: "PMS/AIF Growth %"
+        weight: 0.06
+        impact: high_margin_segment
+      - name: retirement_planning_penetration
+        metric: "NPS/Pension AUM %"
+        weight: 0.04
+        impact: long_term_sticky_aum
+      - name: financial_literacy
+        metric: "Beyond Top10 Cities %"
+        weight: 0.04
+        impact: market_expansion
+
+    cost_drivers:
+      - name: distribution_commission
+        metric: "% of Revenue"
+        weight: 0.10
+        impact: net_revenue_margin
+        sensitivity: -0.9
+      - name: regulatory_compliance_cost
+        metric: "Rs Cr per Year"
+        weight: 0.04
+        impact: fixed_overhead
+      - name: technology_platform_cost
+        metric: "% of Revenue"
+        weight: 0.05
+        impact: digital_capability
+      - name: talent_retention_cost
+        metric: "Compensation Ratio %"
+        weight: 0.06
+        impact: fund_manager_stability
+      - name: marketing_expense
+        metric: "% of Revenue"
+        weight: 0.05
+        impact: brand_building
+
+    porter_forces:
+      entry_barriers:
+        value: MODERATE
+        drivers: ["sebi_registration", "brand_trust_years", "distribution_network", "track_record_performance"]
+        impact: stable_oligopoly
+      supplier_power:
+        value: MODERATE
+        drivers: ["fund_manager_talent_scarce", "distributor_commission_negotiation", "technology_vendor_switching"]
+        impact: margin_pressure
+      buyer_power:
+        value: HIGH
+        drivers: ["investor_choice_40_amcs", "performance_transparency", "low_switching_cost", "direct_plans_pressure"]
+        impact: fee_compression
+      substitutes:
+        value: HIGH
+        drivers: ["direct_equity_demat", "etf_passive_funds", "pms_customization", "robo_advisors", "real_estate_gold"]
+        impact: active_fund_headwinds
+      rivalry:
+        value: INTENSE
+        drivers: ["top5_concentration_50%_aum", "performance_chasing", "new_fund_offers", "fee_wars_direct"]
+        impact: margin_erosion
+
+    regulatory_drivers:
+      - name: sebi_expense_ratio_cap
+        metric: "TER Limits %"
+        weight: 0.08
+        impact: revenue_ceiling
+      - name: direct_plan_mandate
+        weight: 0.06
+        impact: distribution_disintermediation
+      - name: side_pocketing_norms
+        weight: 0.03
+        impact: credit_risk_management
+      - name: sebi_categorization
+        weight: 0.04
+        impact: product_rationalization
+      - name: tax_treatment_ltcg_stcg
+        weight: 0.05
+        impact: investor_demand
+
+    sector_specific_drivers:
+      - name: aum_equity
+        metric: "Rs Cr"
+        source: amfi
+        frequency: monthly
+      - name: aum_debt
+        metric: "Rs Cr"
+        source: amfi
+        frequency: monthly
+      - name: aum_total
+        metric: "Rs Cr"
+        source: amfi
+        frequency: monthly
+      - name: market_share
+        metric: "% of Industry AUM"
+        source: amfi
+        frequency: monthly
+      - name: net_flows
+        metric: "Rs Cr"
+        source: amfi
+        frequency: monthly
+      - name: average_ter
+        metric: "bps"
+        source: filings
+        frequency: quarterly
+      - name: active_aum_pct
+        metric: "% vs Passive"
+        source: filings
+        frequency: quarterly
+
+  # ---------------------------------------------------------------------------
+  # FINANCIALS_INSURANCE (Pilot Sector #11)
+  # ---------------------------------------------------------------------------
+  financials_insurance:
+    csv_sector_name: "Insurance"
+    csv_industry_filter: null
+    is_active: true
+
+    valuation_methods:
+      primary: "P/E"
+      secondary: "EV"
+      blend_weights:
+        dcf: 0.60
+        relative: 0.30
+        monte_carlo: 0.10
+
+    key_metrics:
+      - gross_written_premium_growth
+      - combined_ratio
+      - loss_ratio
+      - expense_ratio
+      - solvency_ratio
+      - roe
+      - persistency_ratio
+      - vne_margin
+
+    terminal_assumptions:
+      margin_range: [0.10, 0.18]  # ROE 10-18% for insurers
+      roce_convergence: 0.12      # Insurance moderate ROCE
+      reinvestment_rate: 0.60     # High reinvestment for regulatory capital
+
+    demand_drivers:
+      - name: insurance_penetration
+        metric: "% of GDP"
+        weight: 0.10
+        impact: market_expansion
+      - name: retail_health_insurance_demand
+        metric: "YoY Premium Growth %"
+        weight: 0.09
+        impact: health_segment_growth
+      - name: motor_insurance_demand
+        metric: "Vehicle Sales Proxy"
+        weight: 0.07
+        impact: motor_odt_premium
+      - name: term_life_insurance_adoption
+        metric: "Pure Protection Mix %"
+        weight: 0.06
+        impact: mortality_margin
+      - name: ulip_demand
+        metric: "Equity Market Proxy"
+        weight: 0.05
+        impact: savings_segment
+      - name: corporate_group_insurance
+        metric: "Employee Base Growth %"
+        weight: 0.04
+        impact: group_premium
+
+    cost_drivers:
+      - name: claims_ratio
+        metric: "% of Premium"
+        weight: 0.11
+        impact: underwriting_profitability
+        sensitivity: -1.0
+      - name: commission_expense
+        metric: "% of Premium"
+        weight: 0.08
+        impact: distribution_cost
+        sensitivity: -0.9
+      - name: operating_expense_ratio
+        metric: "% of Premium"
+        weight: 0.06
+        impact: efficiency
+      - name: reinsurance_cost
+        metric: "% of GWP"
+        weight: 0.06
+        impact: net_retention
+      - name: regulatory_capital_requirement
+        metric: "Solvency Margin %"
+        weight: 0.05
+        impact: capital_intensity
+      - name: investment_yield
+        metric: "% on Float"
+        weight: 0.07
+        impact: investment_income
+        sensitivity: 0.7
+
+    porter_forces:
+      entry_barriers:
+        value: VERY_HIGH
+        drivers: ["irdai_licensing", "capital_rs_100cr_minimum", "distribution_network_years", "actuarial_expertise"]
+        impact: oligopoly_protection
+      supplier_power:
+        value: LOW
+        drivers: ["reinsurance_market_competitive", "technology_vendor_choice", "hospital_network_fragmentation"]
+        impact: cost_control
+      buyer_power:
+        value: MODERATE
+        drivers: ["retail_switching_cost_high", "corporate_negotiation_power", "comparison_portals"]
+        impact: selective_pressure
+      substitutes:
+        value: MODERATE
+        drivers: ["self_insurance_savings", "mutual_funds_investment", "employer_schemes", "community_health"]
+        impact: penetration_headwind
+      rivalry:
+        value: INTENSE
+        drivers: ["24_life_insurers", "34_general_insurers", "psu_lic_dominance", "digital_disruption"]
+        impact: pricing_discipline_weak
+
+    regulatory_drivers:
+      - name: irdai_solvency_norms
+        metric: "150% Minimum"
+        weight: 0.06
+        impact: capital_requirement
+      - name: ayushman_bharat
+        weight: 0.05
+        impact: health_insurance_demand
+      - name: motor_third_party_pooling
+        weight: 0.04
+        impact: loss_ratio_socialization
+      - name: irdai_product_filing
+        weight: 0.04
+        impact: innovation_speed
+      - name: long_term_tax_benefits
+        weight: 0.04
+        impact: savings_product_demand
+
+    sector_specific_drivers:
+      - name: gross_written_premium
+        metric: "Rs Cr"
+        source: filings
+        frequency: quarterly
+      - name: net_earned_premium
+        metric: "Rs Cr"
+        source: filings
+        frequency: quarterly
+      - name: combined_ratio
+        metric: "%"
+        source: filings
+        frequency: quarterly
+      - name: loss_ratio
+        metric: "%"
+        source: filings
+        frequency: quarterly
+      - name: expense_ratio
+        metric: "%"
+        source: filings
+        frequency: quarterly
+      - name: solvency_ratio
+        metric: "%"
+        source: filings
+        frequency: quarterly
+      - name: persistency_13th_month
+        metric: "%"
+        source: filings
+        frequency: quarterly
+      - name: vne_margin
+        metric: "% of APE"
+        source: filings
+        frequency: annual
+
+  # ---------------------------------------------------------------------------
+  # FINANCIALS_OTHER (Pilot Sector #12)
+  # ---------------------------------------------------------------------------
+  financials_other:
+    csv_sector_name: ["Ratings", "Business Services"]
+    csv_industry_filter: ["Ratings", "Depository Services"]
+    is_active: true
+
+    valuation_methods:
+      primary: "P/E"
+      secondary: "EV/EBITDA"
+      blend_weights:
+        dcf: 0.60
+        relative: 0.30
+        monte_carlo: 0.10
+
+    key_metrics:
+      - revenue_growth
+      - ebitda_margin
+      - roe
+      - roce
+      - transaction_volume
+      - market_share
+
+    terminal_assumptions:
+      margin_range: [0.40, 0.60]  # EBITDA margin 40-60% for oligopolies
+      roce_convergence: 0.35      # Regulated utility, high ROCE
+      reinvestment_rate: 0.15     # Very low reinvestment, capital-light
+
+    demand_drivers:
+      - name: debt_issuance_activity
+        metric: "Corporate Bond YoY Rs Cr"
+        weight: 0.12
+        impact: rating_revenue
+      - name: demat_account_growth
+        metric: "YoY %"
+        weight: 0.10
+        impact: depository_transactions
+      - name: mutual_fund_transaction_volume
+        metric: "AUM Churn %"
+        weight: 0.08
+        impact: rta_fees
+      - name: capital_market_activity
+        metric: "Cash+Derivatives Turnover"
+        weight: 0.08
+        impact: transaction_linked_revenue
+      - name: regulatory_mandates
+        metric: "Compliance Requirements"
+        weight: 0.06
+        impact: base_revenue_floor
+      - name: ipo_activity
+        metric: "Number of Issues"
+        weight: 0.05
+        impact: one_time_fees
+
+    cost_drivers:
+      - name: employee_cost
+        metric: "% of Revenue"
+        weight: 0.08
+        impact: operating_leverage
+        sensitivity: -0.6
+      - name: technology_platform_cost
+        metric: "% of Revenue"
+        weight: 0.06
+        impact: efficiency
+      - name: regulatory_compliance_cost
+        metric: "Rs Cr per Year"
+        weight: 0.04
+        impact: fixed_overhead
+      - name: analyst_training_cost
+        metric: "% of Revenue"
+        weight: 0.03
+        impact: quality_maintenance
+
+    porter_forces:
+      entry_barriers:
+        value: VERY_HIGH
+        drivers: ["sebi_irdai_licensing", "brand_trust_decades", "issuer_relationships", "network_effects_depository"]
+        impact: duopoly_oligopoly
+      supplier_power:
+        value: LOW
+        drivers: ["analyst_talent_market", "technology_commoditized", "office_space_fungible"]
+        impact: cost_control
+      buyer_power:
+        value: MODERATE
+        drivers: ["issuer_choice_limited_3_agencies", "sebi_mandates_dual_rating", "depository_monopoly_2_players"]
+        impact: pricing_power_stable
+      substitutes:
+        value: VERY_LOW
+        drivers: ["regulatory_mandate_rating", "no_alternative_depository", "trust_brand_critical"]
+        impact: utility_moat
+      rivalry:
+        value: LOW
+        drivers: ["crisil_icra_care_oligopoly", "nsdl_cdsl_duopoly", "pricing_discipline", "market_share_stable"]
+        impact: margin_protection
+
+    regulatory_drivers:
+      - name: sebi_rating_mandates
+        weight: 0.09
+        impact: base_demand_floor
+      - name: dual_rating_requirement
+        weight: 0.06
+        impact: revenue_per_issuer
+      - name: depository_tariff_regulation
+        weight: 0.07
+        impact: pricing_ceiling
+      - name: rta_kyc_norms
+        weight: 0.04
+        impact: compliance_cost
+      - name: issuer_pays_model
+        weight: 0.04
+        impact: conflict_of_interest_scrutiny
+
+    sector_specific_drivers:
+      - name: number_of_ratings
+        metric: "Count"
+        source: filings
+        frequency: quarterly
+      - name: average_rating_fee
+        metric: "Rs Lakhs"
+        source: filings
+        frequency: quarterly
+      - name: demat_accounts_serviced
+        metric: "Millions"
+        source: filings
+        frequency: quarterly
+      - name: transaction_volume
+        metric: "Million Txns"
+        source: filings
+        frequency: quarterly
+      - name: market_share
+        metric: "% of Industry"
+        source: industry_reports
+        frequency: annual
+      - name: ebitda_margin
+        metric: "%"
+        source: filings
+        frequency: quarterly
+
 # =============================================================================
 # Hierarchical Driver Weights
 # =============================================================================
