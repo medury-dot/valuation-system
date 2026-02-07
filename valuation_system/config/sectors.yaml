@@ -265,14 +265,314 @@ sectors:
     csv_sector_name: "FMCG"
     is_active: false
 
+  # ---------------------------------------------------------------------------
+  # FINANCE / NBFC (Pilot Sector #4)
+  # ---------------------------------------------------------------------------
   nbfc:
     csv_sector_name: "Finance"
-    csv_industry_filter: "NBFC"
-    is_active: false
+    csv_industry_filter: ["Finance - NBFC", "Finance Term Lending"]
+    is_active: true
 
+    valuation_methods:
+      primary: "P/B"
+      secondary: "P/E"
+      blend_weights:
+        dcf: 0.60
+        relative: 0.30
+        monte_carlo: 0.10
+
+    key_metrics:
+      - loan_growth
+      - gnpa_ratio
+      - nnpa_ratio
+      - roe
+      - credit_cost
+      - capital_adequacy
+      - spread
+      - leverage_ratio
+
+    terminal_assumptions:
+      margin_range: [0.15, 0.25]  # NIM typically 6-10%, ROA 2-4%, ROE 15-25%
+      roce_convergence: 0.15      # NBFCs tend toward 12-18% ROCE
+      reinvestment_rate: 0.50     # Higher reinvestment for loan book growth
+
+    demand_drivers:
+      - name: credit_growth
+        metric: "YoY %"
+        weight: 0.13
+        impact: aum_growth
+      - name: retail_loan_demand
+        metric: "Growth %"
+        weight: 0.08
+        impact: volume_growth
+      - name: vehicle_financing_demand
+        metric: "Industry Sales"
+        weight: 0.06
+        impact: segment_growth
+      - name: msme_credit_penetration
+        metric: "Index"
+        weight: 0.05
+        impact: market_expansion
+      - name: consumption_demand
+        metric: "GDP Growth"
+        weight: 0.05
+        impact: loan_offtake
+      - name: digital_lending_adoption
+        metric: "% of AUM"
+        weight: 0.04
+        impact: cost_efficiency
+      - name: geographic_expansion
+        metric: "Branch/Digital Reach"
+        weight: 0.03
+        impact: market_share
+
+    cost_drivers:
+      - name: funding_cost
+        metric: "% Cost of Funds"
+        weight: 0.11
+        impact: nim_compression
+        sensitivity: -0.8
+      - name: credit_cost
+        metric: "% of Loans"
+        weight: 0.10
+        impact: profitability
+        sensitivity: -1.0
+      - name: operating_cost_ratio
+        metric: "% of Assets"
+        weight: 0.04
+        impact: efficiency
+      - name: rbi_repo_rate
+        metric: "bps"
+        weight: 0.08
+        impact: borrowing_cost
+        sensitivity: -0.6
+      - name: cp_market_rates
+        metric: "% Yield"
+        weight: 0.04
+        impact: short_term_funding
+
+    porter_forces:
+      entry_barriers:
+        value: MODERATE
+        drivers: ["rbi_licensing", "capital_requirements", "distribution_network"]
+        impact: competitive_intensity
+      supplier_power:
+        value: MODERATE
+        drivers: ["funding_source_diversity", "market_liquidity", "rbi_policy"]
+        impact: cost_of_funds
+      buyer_power:
+        value: HIGH
+        drivers: ["borrower_choice", "fintech_competition", "rate_transparency"]
+        impact: spread_compression
+      substitutes:
+        value: HIGH
+        drivers: ["bank_competition", "fintech_platforms", "p2p_lending", "nbfc_account_aggregation"]
+        impact: market_share_pressure
+      rivalry:
+        value: INTENSE
+        drivers: ["nbfc_fragmentation", "bank_entry", "digital_disruption"]
+        impact: margin_pressure
+
+    regulatory_drivers:
+      - name: rbi_liquidity_norms
+        weight: 0.05
+        impact: liquidity_buffer
+      - name: capital_adequacy_requirements
+        weight: 0.04
+        impact: leverage_constraint
+      - name: asset_liability_mismatch_norms
+        weight: 0.03
+        impact: funding_maturity
+      - name: npa_recognition_norms
+        weight: 0.04
+        impact: provisioning_burden
+      - name: rbi_rate_transmission
+        weight: 0.03
+        impact: pricing_flexibility
+
+    sector_specific_drivers:
+      - name: aum_growth
+        metric: "Rs Cr"
+        source: filings
+        frequency: quarterly
+      - name: gnpa_ratio
+        metric: "%"
+        source: filings
+        frequency: quarterly
+      - name: nnpa_ratio
+        metric: "%"
+        source: filings
+        frequency: quarterly
+      - name: provision_coverage_ratio
+        metric: "%"
+        source: filings
+        frequency: quarterly
+      - name: capital_adequacy_ratio
+        metric: "%"
+        source: filings
+        frequency: quarterly
+      - name: cost_to_income_ratio
+        metric: "%"
+        source: filings
+        frequency: quarterly
+
+  # ---------------------------------------------------------------------------
+  # HEALTHCARE/PHARMA (Pilot Sector #3)
+  # ---------------------------------------------------------------------------
   pharma:
     csv_sector_name: "Healthcare"
-    is_active: false
+    csv_industry_filter: null  # All pharma/healthcare sub-industries
+    is_active: true
+
+    valuation_methods:
+      primary: "P/E"
+      secondary: "EV/EBITDA"
+      blend_weights:
+        dcf: 0.60
+        relative: 0.30
+        monte_carlo: 0.10
+
+    key_metrics:
+      - ebitda_margin
+      - roce
+      - roe
+      - r_and_d_pct
+      - us_sales_pct
+      - usfda_facilities
+
+    terminal_assumptions:
+      margin_range: [0.18, 0.25]
+      roce_convergence: 0.20
+      reinvestment_rate: 0.25
+
+    demand_drivers:
+      - name: domestic_demand
+        metric: "YoY %"
+        weight: 0.10
+        impact: revenue_growth
+      - name: us_market_growth
+        metric: "Generic Rx Growth %"
+        weight: 0.12
+        impact: export_revenue
+      - name: generic_opportunity
+        metric: "Patent Expiry Pipeline $bn"
+        weight: 0.08
+        impact: addressable_market
+      - name: biosimilars
+        metric: "Launches/Pipeline"
+        weight: 0.06
+        impact: future_revenue
+      - name: covid_impact
+        metric: "Vaccine/Therapeutic Sales"
+        weight: 0.04
+        impact: transitory_revenue
+      - name: pricing_power_domestic
+        metric: "IPM Growth vs Volume"
+        weight: 0.06
+        impact: domestic_realization
+
+    cost_drivers:
+      - name: api_costs
+        metric: "Index (China/India)"
+        weight: 0.10
+        impact: cogs
+        sensitivity: -0.4
+      - name: r_and_d_spend
+        metric: "% of Sales"
+        weight: 0.08
+        impact: future_pipeline
+      - name: pricing_pressure
+        metric: "Generic Price Erosion %"
+        weight: 0.08
+        impact: us_margins
+        sensitivity: -0.6
+      - name: fx_on_costs
+        metric: "Net Impact (API imports)"
+        weight: 0.05
+        impact: margin_hedge
+      - name: compliance_capex
+        metric: "% of Sales"
+        weight: 0.04
+        impact: maintenance_burden
+
+    porter_forces:
+      entry_barriers:
+        value: HIGH
+        drivers: ["regulatory_expertise", "manufacturing_compliance", "distribution_networks", "dossier_filing_costs"]
+        impact: roce_sustainability
+      supplier_power:
+        value: MODERATE
+        drivers: ["api_concentration_china", "alternate_sources_india", "backward_integration"]
+        impact: cost_stability
+      buyer_power:
+        value: HIGH
+        drivers: ["hospital_chains_consolidation", "insurance_formularies_us", "price_control_india"]
+        impact: pricing_pressure
+      substitutes:
+        value: MODERATE
+        drivers: ["biosimilar_threat_to_biologics", "ayurveda_traditional", "patent_protection"]
+        impact: terminal_value
+      rivalry:
+        value: INTENSE
+        drivers: ["generic_competition", "us_channel_consolidation", "domestic_fragmentation"]
+        impact: margin_compression
+
+    regulatory_drivers:
+      - name: usfda_approvals
+        weight: 0.08
+        impact: market_access_us
+      - name: domestic_approvals
+        weight: 0.04
+        impact: market_access_india
+      - name: patent_expiry
+        weight: 0.07
+        impact: addressable_market
+      - name: price_control_dpco
+        weight: 0.05
+        impact: domestic_margins
+      - name: fda_warning_letters
+        weight: 0.04
+        impact: manufacturing_risk
+      - name: data_exclusivity
+        weight: 0.03
+        impact: first_to_file_advantage
+      - name: pli_scheme_pharma
+        weight: 0.03
+        impact: capex_subsidy
+
+    sector_specific_drivers:
+      - name: anda_filings
+        metric: "Count (trailing 12m)"
+        source: usfda
+        frequency: quarterly
+      - name: anda_approvals
+        metric: "Count (trailing 12m)"
+        source: usfda
+        frequency: quarterly
+      - name: usfda_inspections
+        metric: "Status (OAI/VAI/NAI)"
+        source: filings
+        frequency: event_driven
+      - name: us_sales_pct
+        metric: "% of Total Revenue"
+        source: filings
+        frequency: quarterly
+      - name: domestic_ipm_rank
+        metric: "Position"
+        source: awacs
+        frequency: monthly
+      - name: r_and_d_pipeline
+        metric: "Count by phase"
+        source: filings
+        frequency: annual
+      - name: patent_expiry_pipeline
+        metric: "$bn (next 3 years)"
+        source: industry_reports
+        frequency: annual
+      - name: api_backward_integration
+        metric: "% self-sufficiency"
+        source: filings
+        frequency: annual
 
   it_services:
     csv_sector_name: "IT"
