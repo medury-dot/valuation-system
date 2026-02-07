@@ -2504,3 +2504,115 @@ driver_hierarchy:
   sector_weight: 0.55
   company_weight: 0.25
   principle: "Macro sets the ceiling and floor. Sectors determine the value. Companies decide who wins."
+
+  # ---------------------------------------------------------------------------
+  # CONSUMER_FOOD_BEVERAGE (VBL - Varun Beverages)
+  # ---------------------------------------------------------------------------
+  consumer_food_beverage:
+    csv_sector_name: "FMCG"
+    csv_industry_filter: ["Consumer Food", "Edible Oil", "Breweries"]
+    is_active: true
+    valuation_methods:
+      primary: "P/E"
+      secondary: "EV/EBITDA"
+      blend_weights: {dcf: 0.60, relative: 0.30, monte_carlo: 0.10}
+    terminal_assumptions:
+      margin_range: [0.12, 0.18]
+      roce_convergence: 0.18
+      reinvestment_rate: 0.30
+    demand_drivers:
+      - {name: volume_growth, metric: "YoY %", weight: 0.15, impact: revenue_growth}
+      - {name: pricing_power, metric: "Price/mix", weight: 0.12, impact: revenue_margin}
+      - {name: rural_demand, metric: "Index", weight: 0.10, impact: volume}
+      - {name: distribution_reach, metric: "Outlets", weight: 0.08, impact: market_share}
+    cost_drivers:
+      - {name: commodity_costs, metric: "Input basket", weight: 0.12, impact: cogs, sensitivity: -0.4}
+      - {name: advertising_spend, metric: "% sales", weight: 0.08, impact: margin}
+      - {name: logistics_cost, metric: "% sales", weight: 0.06, impact: margin}
+    regulatory_drivers:
+      - {name: gst_impact, metric: "Rate change", weight: 0.05, impact: pricing}
+      - {name: licensing_environment, metric: "Ease", weight: 0.04, impact: expansion}
+
+  # ---------------------------------------------------------------------------
+  # CONSUMER_DURABLES (PGEL, BLUESTARCO - Appliances)
+  # ---------------------------------------------------------------------------
+  consumer_durables:
+    csv_sector_name: "Consumer Durables"
+    is_active: true
+    valuation_methods:
+      primary: "P/E"
+      secondary: "EV/EBITDA"
+      blend_weights: {dcf: 0.60, relative: 0.30, monte_carlo: 0.10}
+    terminal_assumptions:
+      margin_range: [0.08, 0.15]
+      roce_convergence: 0.15
+      reinvestment_rate: 0.25
+    demand_drivers:
+      - {name: housing_starts, metric: "Units", weight: 0.14, impact: volume}
+      - {name: discretionary_spend, metric: "Growth %", weight: 0.12, impact: volume}
+      - {name: replacement_cycle, metric: "Years", weight: 0.08, impact: demand_stability}
+      - {name: premiumization, metric: "Mix shift", weight: 0.08, impact: asp_margin}
+    cost_drivers:
+      - {name: commodity_costs, metric: "Steel/copper", weight: 0.12, impact: cogs, sensitivity: -0.3}
+      - {name: import_duties, metric: "Tariff %", weight: 0.07, impact: cost}
+      - {name: operating_leverage, metric: "Fixed/var", weight: 0.06, impact: margin_sensitivity}
+    regulatory_drivers:
+      - {name: energy_efficiency_norms, metric: "BEE star", weight: 0.05, impact: compliance_capex}
+      - {name: pli_scheme, metric: "Status", weight: 0.04, impact: margin_subsidy}
+
+  # ---------------------------------------------------------------------------
+  # INFRA_CONSTRUCTION (AMBUJACEM - Cement)
+  # ---------------------------------------------------------------------------
+  infra_construction:
+    csv_sector_name: "Construction Materials"
+    csv_industry_filter: ["Cement", "Engineering - Construction"]
+    is_active: true
+    valuation_methods:
+      primary: "EV/EBITDA"
+      secondary: "EV/ton"
+      blend_weights: {dcf: 0.60, relative: 0.30, monte_carlo: 0.10}
+    terminal_assumptions:
+      margin_range: [0.18, 0.25]
+      roce_convergence: 0.18
+      reinvestment_rate: 0.35
+    demand_drivers:
+      - {name: infra_spending, metric: "YoY %", weight: 0.13, impact: volume}
+      - {name: real_estate_demand, metric: "Housing starts", weight: 0.11, impact: volume}
+      - {name: pricing_power, metric: "Premium/discount", weight: 0.10, impact: realization}
+      - {name: capacity_utilization, metric: "%", weight: 0.08, impact: margin}
+    cost_drivers:
+      - {name: coal_petcoke_cost, metric: "Rs/ton", weight: 0.13, impact: power_fuel, sensitivity: -0.5}
+      - {name: freight_cost, metric: "Rs/ton/km", weight: 0.08, impact: cogs}
+      - {name: operating_leverage, metric: "Fixed/var", weight: 0.06, impact: margin}
+    regulatory_drivers:
+      - {name: environmental_compliance, metric: "Capex burden", weight: 0.06, impact: reinvestment}
+      - {name: mining_approvals, metric: "Timeline", weight: 0.05, impact: supply_security}
+
+  # ---------------------------------------------------------------------------
+  # AUTO_ANCILLARY (ARE&M - Batteries, Components)
+  # ---------------------------------------------------------------------------
+  auto_ancillary:
+    csv_sector_name: "Automobile & Ancillaries"
+    csv_industry_filter: ["Auto Ancillary", "Tyres"]
+    is_active: true
+    valuation_methods:
+      primary: "P/E"
+      secondary: "EV/EBITDA"
+      blend_weights: {dcf: 0.60, relative: 0.30, monte_carlo: 0.10}
+    terminal_assumptions:
+      margin_range: [0.08, 0.14]
+      roce_convergence: 0.16
+      reinvestment_rate: 0.28
+    demand_drivers:
+      - {name: oem_production, metric: "Vehicle sales", weight: 0.14, impact: volume}
+      - {name: aftermarket_share, metric: "% revenue", weight: 0.10, impact: margin_stability}
+      - {name: export_growth, metric: "YoY %", weight: 0.09, impact: diversification}
+      - {name: ev_transition, metric: "EV %", weight: 0.08, impact: product_shift}
+    cost_drivers:
+      - {name: raw_material_cost, metric: "Commodity basket", weight: 0.12, impact: cogs, sensitivity: -0.4}
+      - {name: oem_pricing_pressure, metric: "Pass-through %", weight: 0.10, impact: margin}
+      - {name: operating_leverage, metric: "Capacity utilization", weight: 0.06, impact: margin}
+    regulatory_drivers:
+      - {name: emission_norms, metric: "BS compliance", weight: 0.06, impact: r_and_d_capex}
+      - {name: pli_scheme, metric: "Eligibility", weight: 0.05, impact: margin_boost}
+
