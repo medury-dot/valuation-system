@@ -259,6 +259,483 @@ sectors:
         frequency: event_driven
 
   # ---------------------------------------------------------------------------
+  # SERVICES_HOSPITALITY (Pilot Sector #13)
+  # ---------------------------------------------------------------------------
+  services_hospitality:
+    csv_sector_name: "Services"
+    csv_industry_filter: ["Hotels/Resorts"]
+    is_active: true
+
+    valuation_methods:
+      primary: "EV/EBITDA"
+      secondary: "P/E"
+      blend_weights:
+        dcf: 0.60
+        relative: 0.30
+        monte_carlo: 0.10
+
+    key_metrics:
+      - occupancy_rate
+      - arr_adr
+      - revpar
+      - ebitda_margin
+      - roce
+      - roe
+      - portfolio_rooms
+      - brand_strength
+
+    terminal_assumptions:
+      margin_range: [0.28, 0.36]  # EBITDA margin 28-36% for hotels
+      roce_convergence: 0.18      # Hotels moderate ROCE, asset heavy
+      reinvestment_rate: 0.40     # Moderate reinvestment for expansion
+
+    demand_drivers:
+      - name: domestic_travel_growth
+        metric: "YoY %"
+        weight: 0.14
+        impact: occupancy_volume
+      - name: international_tourist_arrivals
+        metric: "YoY %"
+        weight: 0.07
+        impact: premium_segment
+      - name: business_travel_recovery
+        metric: "Corporate Bookings %"
+        weight: 0.09
+        impact: weekday_occupancy
+      - name: mice_segment_growth
+        metric: "Event Revenue %"
+        weight: 0.05
+        impact: banquet_revenue
+      - name: leisure_travel_penetration
+        metric: "Weekend/Holiday Occupancy %"
+        weight: 0.10
+        impact: leisure_mix
+      - name: airline_capacity_growth
+        metric: "Seat Growth %"
+        weight: 0.05
+        impact: accessibility
+
+    cost_drivers:
+      - name: labor_cost_inflation
+        metric: "YoY %"
+        weight: 0.09
+        impact: operating_expense
+        sensitivity: -0.7
+      - name: energy_costs
+        metric: "Power/Fuel Rs/unit"
+        weight: 0.06
+        impact: utility_expense
+        sensitivity: -0.4
+      - name: food_and_beverage_costs
+        metric: "% of F&B Revenue"
+        weight: 0.07
+        impact: fnb_margin
+        sensitivity: -0.6
+      - name: property_maintenance_capex
+        metric: "% of Revenue"
+        weight: 0.05
+        impact: maintenance_burden
+      - name: distribution_cost
+        metric: "OTA Commission %"
+        weight: 0.06
+        impact: customer_acquisition
+        sensitivity: -0.5
+
+    porter_forces:
+      entry_barriers:
+        value: HIGH
+        drivers: ["location_scarcity_prime", "brand_trust_years", "capex_500cr_plus_luxury", "license_approvals"]
+        impact: pricing_power_protection
+      supplier_power:
+        value: MODERATE
+        drivers: ["food_vendor_fragmentation", "labor_market_tight", "property_lease_escalation"]
+        impact: cost_control_moderate
+      buyer_power:
+        value: HIGH
+        drivers: ["ota_aggregation_makemytrip", "corporate_negotiation", "loyalty_program_switching", "airbnb_competition"]
+        impact: rate_pressure
+      substitutes:
+        value: HIGH
+        drivers: ["airbnb_1.4m_listings", "serviced_apartments_cagr_10pct", "homestays_budget", "bleisure_hybrid"]
+        impact: market_share_erosion
+      rivalry:
+        value: INTENSE
+        drivers: ["47000_keys_signed_ytd_nov25", "taj_oberoi_itc_ihg_marriott", "budget_segment_oyo", "geography_overlap"]
+        impact: pricing_discipline_moderate
+
+    regulatory_drivers:
+      - name: fssai_compliance
+        weight: 0.03
+        impact: operating_standards
+      - name: tourism_policy_incentives
+        weight: 0.04
+        impact: capex_subsidy
+      - name: liquor_license_norms
+        weight: 0.03
+        impact: fnb_revenue_enabler
+      - name: environmental_norms
+        weight: 0.03
+        impact: sustainability_capex
+      - name: heritage_property_restrictions
+        weight: 0.02
+        impact: renovation_constraint
+
+    sector_specific_drivers:
+      - name: occupancy_rate
+        metric: "%"
+        source: filings
+        frequency: quarterly
+      - name: arr_average_room_rate
+        metric: "Rs per Night"
+        source: filings
+        frequency: quarterly
+      - name: revpar_revenue_per_available_room
+        metric: "Rs"
+        source: filings
+        frequency: quarterly
+      - name: portfolio_rooms
+        metric: "Room Count"
+        source: filings
+        frequency: quarterly
+      - name: fnb_revenue_mix
+        metric: "% of Total Revenue"
+        source: filings
+        frequency: quarterly
+      - name: management_contract_rooms
+        metric: "% Asset-Light"
+        source: filings
+        frequency: quarterly
+      - name: brand_signings
+        metric: "New Properties Signed"
+        source: filings
+        frequency: quarterly
+
+  # ---------------------------------------------------------------------------
+  # REALTY_RESIDENTIAL (Pilot Sector #14)
+  # ---------------------------------------------------------------------------
+  realty_residential:
+    csv_sector_name: "Realty"
+    csv_industry_filter: ["Residential"]
+    is_active: true
+
+    valuation_methods:
+      primary: "P/E"
+      secondary: "P/B"
+      blend_weights:
+        dcf: 0.60
+        relative: 0.30
+        monte_carlo: 0.10
+
+    key_metrics:
+      - presales_growth
+      - collections_efficiency
+      - ebitda_margin
+      - roe
+      - roce
+      - debt_to_equity
+      - land_bank_years
+      - inventory_turnover
+
+    terminal_assumptions:
+      margin_range: [0.18, 0.28]  # EBITDA margin 18-28% for residential developers
+      roce_convergence: 0.16      # Real estate moderate ROCE, project cycles
+      reinvestment_rate: 0.45     # High reinvestment for land and WIP
+
+    demand_drivers:
+      - name: housing_affordability_index
+        metric: "EMI/Income Ratio %"
+        weight: 0.11
+        impact: sales_velocity
+      - name: urbanization_rate
+        metric: "% Annual Growth"
+        weight: 0.08
+        impact: addressable_market
+      - name: end_user_demand
+        metric: "% vs Investor Demand"
+        weight: 0.09
+        impact: sustainable_sales
+      - name: premiumization_trend
+        metric: ">Rs 2Cr Segment %"
+        weight: 0.06
+        impact: realization_growth
+      - name: tier2_tier3_demand
+        metric: "Beyond Top7 Cities %"
+        weight: 0.05
+        impact: geographic_expansion
+      - name: demographic_dividend
+        metric: "25-45 Age Cohort Growth"
+        weight: 0.06
+        impact: first_time_buyers
+
+    cost_drivers:
+      - name: interest_rates
+        metric: "Home Loan Rate %"
+        weight: 0.12
+        impact: demand_sensitivity
+        sensitivity: -0.8
+      - name: land_acquisition_cost
+        metric: "Rs/sq.ft."
+        weight: 0.09
+        impact: project_viability
+        sensitivity: -0.6
+      - name: construction_cost_inflation
+        metric: "Steel/Cement/Labor YoY %"
+        weight: 0.08
+        impact: margin_compression
+        sensitivity: -0.5
+      - name: approval_timeline
+        metric: "Months to Launch"
+        weight: 0.07
+        impact: capital_rotation
+      - name: marketing_expense
+        metric: "% of Presales"
+        weight: 0.04
+        impact: customer_acquisition
+      - name: financing_cost
+        metric: "Borrowing Rate %"
+        weight: 0.05
+        impact: project_irr
+        sensitivity: -0.7
+
+    porter_forces:
+      entry_barriers:
+        value: HIGH
+        drivers: ["land_availability_metro", "rera_compliance_capital", "brand_trust_decades", "political_connections"]
+        impact: oligopoly_formation
+      supplier_power:
+        value: MODERATE
+        drivers: ["land_owner_negotiation", "contractor_consolidation", "cement_steel_commodity", "labor_availability"]
+        impact: cost_pass_through
+      buyer_power:
+        value: HIGH
+        drivers: ["buyer_choice_rera_transparency", "delayed_possession_penalty", "price_negotiation_inventory", "home_loan_portability"]
+        impact: pricing_pressure_launch
+      substitutes:
+        value: MODERATE
+        drivers: ["rental_vs_buy", "commercial_real_estate_investment", "reits_liquidity", "plotted_development"]
+        impact: selective_competition
+      rivalry:
+        value: INTENSE
+        drivers: ["dlf_godrej_oberoi_lodha", "local_players_micro_markets", "launch_timing_overlap", "pricing_wars_inventory"]
+        impact: margin_pressure_oversupply
+
+    regulatory_drivers:
+      - name: rera_implementation
+        weight: 0.03
+        impact: project_timeline_accountability
+      - name: gst_rate_structure
+        metric: "12% with ITC"
+        weight: 0.02
+        impact: input_cost_credit
+      - name: pmay_subsidy
+        weight: 0.02
+        impact: affordable_segment_demand
+      - name: fsi_dcr_norms
+        weight: 0.02
+        impact: project_density_revenue
+      - name: environmental_clearance
+        weight: 0.01
+        impact: approval_timeline
+      - name: stamp_duty_rates
+        weight: 0.01
+        impact: buyer_affordability
+
+    sector_specific_drivers:
+      - name: presales_value
+        metric: "Rs Cr"
+        source: filings
+        frequency: quarterly
+      - name: presales_area
+        metric: "Million sq.ft."
+        source: filings
+        frequency: quarterly
+      - name: average_realization
+        metric: "Rs/sq.ft."
+        source: filings
+        frequency: quarterly
+      - name: collections
+        metric: "Rs Cr"
+        source: filings
+        frequency: quarterly
+      - name: land_bank
+        metric: "Million sq.ft. Saleable"
+        source: filings
+        frequency: quarterly
+      - name: inventory_months
+        metric: "Unsold/Sales Velocity"
+        source: filings
+        frequency: quarterly
+      - name: project_launches
+        metric: "Count & Million sq.ft."
+        source: filings
+        frequency: quarterly
+      - name: debt_to_equity
+        metric: "Ratio"
+        source: filings
+        frequency: quarterly
+
+  # ---------------------------------------------------------------------------
+  # INFRA_LOGISTICS (Pilot Sector #15)
+  # ---------------------------------------------------------------------------
+  infra_logistics:
+    csv_sector_name: "Infrastructure"
+    csv_industry_filter: ["Ports", "Logistics"]
+    is_active: true
+
+    valuation_methods:
+      primary: "EV/EBITDA"
+      secondary: "P/E"
+      blend_weights:
+        dcf: 0.60
+        relative: 0.30
+        monte_carlo: 0.10
+
+    key_metrics:
+      - cargo_volume_growth
+      - capacity_utilization
+      - ebitda_margin
+      - roce
+      - roe
+      - realization_per_tonne
+      - capex_to_revenue
+
+    terminal_assumptions:
+      margin_range: [0.50, 0.62]  # EBITDA margin 50-62% for ports (asset heavy, high operating leverage)
+      roce_convergence: 0.14      # Ports moderate ROCE, high capex
+      reinvestment_rate: 0.55     # High reinvestment for capacity expansion
+
+    demand_drivers:
+      - name: export_import_trade_growth
+        metric: "India Trade YoY %"
+        weight: 0.13
+        impact: cargo_volume
+      - name: container_traffic_growth
+        metric: "TEU YoY %"
+        weight: 0.10
+        impact: high_value_cargo
+      - name: coal_thermal_power_demand
+        metric: "Coal Imports MT"
+        weight: 0.06
+        impact: bulk_cargo_base
+      - name: steel_cement_production
+        metric: "Infra Capex Proxy"
+        weight: 0.05
+        impact: raw_material_cargo
+      - name: crude_oil_imports
+        metric: "Million Tonnes"
+        weight: 0.05
+        impact: liquid_cargo
+      - name: logistics_parks_expansion
+        metric: "Warehousing Growth %"
+        weight: 0.06
+        impact: ancillary_revenue
+
+    cost_drivers:
+      - name: dredging_maintenance_cost
+        metric: "Rs Cr per Year"
+        weight: 0.04
+        impact: channel_depth_maintenance
+      - name: labor_cost_inflation
+        metric: "YoY %"
+        weight: 0.05
+        impact: operating_expense
+        sensitivity: -0.5
+      - name: equipment_maintenance_capex
+        metric: "% of Revenue"
+        weight: 0.05
+        impact: crane_conveyor_upkeep
+      - name: concession_royalty
+        metric: "% of Revenue to Govt"
+        weight: 0.08
+        impact: margin_compression
+        sensitivity: -0.9
+      - name: fuel_power_cost
+        metric: "Rs/kWh"
+        weight: 0.05
+        impact: handling_cost
+        sensitivity: -0.4
+      - name: land_lease_escalation
+        metric: "% Annual"
+        weight: 0.02
+        impact: fixed_cost_growth
+
+    porter_forces:
+      entry_barriers:
+        value: VERY_HIGH
+        drivers: ["capex_500m_1bn_usd", "govt_concession_2yr_approval", "location_scarcity_coastline", "evacuation_rail_road_infra"]
+        impact: duopoly_oligopoly_adani_jsw
+      supplier_power:
+        value: LOW
+        drivers: ["equipment_vendor_competition", "dredging_contracts_tender", "labor_availability_ports"]
+        impact: cost_control_high
+      buyer_power:
+        value: MODERATE
+        drivers: ["shipping_line_concentration_maersk_msc", "captive_cargo_jsw_adani", "tariff_regulation_tamp"]
+        impact: pricing_discipline_moderate
+      substitutes:
+        value: LOW
+        drivers: ["port_location_specific_hinterland", "rail_road_alternative_limited", "govt_port_vs_private_complementary"]
+        impact: utility_moat
+      rivalry:
+        value: MODERATE
+        drivers: ["adani_28pct_share_mundra", "jsw_second_largest_177mtpa", "govt_major_ports_12", "geography_segmentation"]
+        impact: cargo_diversion_competition
+
+    regulatory_drivers:
+      - name: tamp_tariff_regulation
+        weight: 0.08
+        impact: pricing_ceiling_review
+      - name: major_port_authority_act
+        weight: 0.05
+        impact: landlord_model_flexibility
+      - name: coastal_shipping_cabotage
+        weight: 0.03
+        impact: domestic_cargo_reservation
+      - name: sagarmala_programme
+        weight: 0.05
+        impact: connectivity_capex_subsidy
+      - name: environmental_clearance_crz
+        weight: 0.03
+        impact: expansion_approval_timeline
+      - name: customs_digitization
+        weight: 0.02
+        impact: cargo_clearance_speed
+
+    sector_specific_drivers:
+      - name: cargo_volume
+        metric: "Million Tonnes"
+        source: filings
+        frequency: quarterly
+      - name: cargo_mix
+        metric: "Container/Bulk/Liquid %"
+        source: filings
+        frequency: quarterly
+      - name: capacity
+        metric: "MTPA"
+        source: filings
+        frequency: annual
+      - name: capacity_utilization
+        metric: "%"
+        source: filings
+        frequency: quarterly
+      - name: realization_per_tonne
+        metric: "Rs/MT"
+        source: filings
+        frequency: quarterly
+      - name: turnaround_time
+        metric: "Days per Vessel"
+        source: filings
+        frequency: quarterly
+      - name: logistics_revenue
+        metric: "Rs Cr from Warehousing/Rail"
+        source: filings
+        frequency: quarterly
+      - name: capex_guidance
+        metric: "Rs Cr Annual"
+        source: filings
+        frequency: annual
+
+  # ---------------------------------------------------------------------------
   # FUTURE SECTORS (inactive until enabled)
   # ---------------------------------------------------------------------------
   fmcg:
@@ -1833,6 +2310,189 @@ sectors:
         frequency: annual
       - name: ebitda_margin
         metric: "%"
+        source: filings
+        frequency: quarterly
+
+  # ---------------------------------------------------------------------------
+  # INDUSTRIALS_DEFENSE (Pilot Sector #13)
+  # ---------------------------------------------------------------------------
+  industrials_defense:
+    csv_sector_name: "Industrial Products"
+    csv_industry_filter: ["Defence Equipment", "Aerospace & Defence", "Shipbuilding"]
+    is_active: true
+
+    valuation_methods:
+      primary: "P/E"
+      secondary: "EV/EBITDA"
+      blend_weights:
+        dcf: 0.60
+        relative: 0.30
+        monte_carlo: 0.10
+
+    key_metrics:
+      - order_book_to_sales_ratio
+      - execution_percentage
+      - ebitda_margin
+      - roce
+      - roe
+      - r_and_d_pct
+      - export_pct
+      - order_book_growth
+
+    terminal_assumptions:
+      margin_range: [0.10, 0.18]  # EBITDA margin 10-18% for defense
+      roce_convergence: 0.14      # Defense PSUs 12-15% ROCE
+      reinvestment_rate: 0.35     # 30-40% reinvestment for capex
+
+    demand_drivers:
+      - name: defense_budget_allocation
+        metric: "Rs Lakh Cr YoY %"
+        weight: 0.11
+        impact: addressable_market
+      - name: order_book_replenishment
+        metric: "New Orders/Executed Orders"
+        weight: 0.09
+        impact: revenue_visibility
+      - name: geopolitical_tensions
+        metric: "Border Incidents Index"
+        weight: 0.07
+        impact: procurement_urgency
+      - name: navy_modernization
+        metric: "Shipbuilding Pipeline Rs Cr"
+        weight: 0.06
+        impact: shipyard_capacity_utilization
+      - name: air_force_fleet_expansion
+        metric: "Aircraft Orders Count"
+        weight: 0.05
+        impact: aerospace_manufacturing
+      - name: export_opportunities
+        metric: "Defense Exports Rs Cr"
+        weight: 0.04
+        impact: revenue_diversification
+      - name: indigenization_push
+        metric: "% Domestic Content"
+        weight: 0.02
+        impact: market_share_gain
+
+    cost_drivers:
+      - name: steel_aluminum_prices
+        metric: "Index"
+        weight: 0.07
+        impact: raw_material_cost
+        sensitivity: -0.4
+      - name: electronics_component_cost
+        metric: "Semiconductor Index"
+        weight: 0.06
+        impact: avionics_systems_cost
+        sensitivity: -0.5
+      - name: skilled_labor_availability
+        metric: "Man Hours/Unit"
+        weight: 0.05
+        impact: manufacturing_efficiency
+      - name: technology_licensing_cost
+        metric: "Rs Cr per Program"
+        weight: 0.04
+        impact: r_and_d_burden
+      - name: operating_leverage
+        metric: "Fixed/Variable Cost Ratio"
+        weight: 0.04
+        impact: margin_sensitivity
+      - name: supply_chain_disruption
+        metric: "Lead Time Days"
+        weight: 0.03
+        impact: execution_delays
+
+    porter_forces:
+      entry_barriers:
+        value: VERY_HIGH
+        drivers: ["security_clearances", "decade_long_relationships_mod", "capex_intensity_high", "technology_barriers", "quality_certifications"]
+        impact: oligopoly_protection
+      supplier_power:
+        value: MODERATE
+        drivers: ["imported_components_dependency", "steel_commodity_linkage", "specialized_electronics_limited_sources", "backward_integration_initiatives"]
+        impact: cost_volatility_managed
+      buyer_power:
+        value: HIGH
+        drivers: ["single_buyer_mod", "price_negotiation_l1_basis", "payment_delays_government", "offset_obligations"]
+        impact: margin_pressure_pricing
+      substitutes:
+        value: VERY_LOW
+        drivers: ["strategic_importance", "no_civilian_alternative", "import_dependency_reduction_policy", "self_reliance_mandate"]
+        impact: demand_stability
+      rivalry:
+        value: LOW
+        drivers: ["limited_players_3_to_5_per_segment", "order_allocation_government_directed", "capacity_constraints", "specialization_by_domain"]
+        impact: pricing_discipline_moderate
+
+    regulatory_drivers:
+      - name: make_in_india_preference
+        metric: "75% Capital Budget Domestic"
+        weight: 0.06
+        impact: order_flow_certainty
+      - name: offset_obligations
+        metric: "30% of Contract Value >Rs 2000 Cr"
+        weight: 0.06
+        impact: partnership_revenue_opportunities
+      - name: procurement_cycle_delays
+        metric: "Months from AoN to Contract"
+        weight: 0.05
+        impact: order_realization_timing
+      - name: export_restrictions
+        metric: "End-Use Certificate Requirements"
+        weight: 0.04
+        impact: market_access_constraint
+      - name: pli_scheme_defense
+        metric: "Rs Cr Incentive"
+        weight: 0.03
+        impact: margin_enhancement
+      - name: fdi_liberalization
+        metric: "74% FDI Allowed"
+        weight: 0.02
+        impact: technology_partnership
+      - name: quality_assurance_norms
+        metric: "DGQA Certification"
+        weight: 0.01
+        impact: compliance_overhead
+
+    sector_specific_drivers:
+      - name: order_book
+        metric: "Rs Cr"
+        source: filings
+        frequency: quarterly
+      - name: order_book_to_sales_ratio
+        metric: "Multiple"
+        source: filings
+        frequency: quarterly
+      - name: execution_percentage
+        metric: "% of Order Book Executed Annually"
+        source: filings
+        frequency: quarterly
+      - name: new_order_inflows
+        metric: "Rs Cr"
+        source: filings
+        frequency: quarterly
+      - name: book_to_bill_ratio
+        metric: "New Orders/Revenue"
+        source: filings
+        frequency: quarterly
+      - name: r_and_d_spend
+        metric: "Rs Cr"
+        source: filings
+        frequency: annual
+      - name: export_revenue
+        metric: "Rs Cr"
+        source: filings
+        frequency: annual
+      - name: indigenization_level
+        metric: "% Domestic Content"
+        source: filings
+        frequency: annual
+      - name: capacity_utilization
+        metric: "%"
+        source: filings
+        frequency: quarterly
+      - name: average_realization_per_unit
+        metric: "Rs Cr per Platform"
         source: filings
         frequency: quarterly
 

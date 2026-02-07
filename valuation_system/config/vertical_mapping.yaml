@@ -1,13 +1,13 @@
-# VERTICAL and SUB_VERTICAL Taxonomy
-# Maps mssdb CD_Sector + CD_Industry1 → (VERTICAL, SUB_VERTICAL)
+# valuation_group and SUB_valuation_group Taxonomy
+# Maps mssdb CD_Sector + CD_Industry1 → (valuation_group, SUB_valuation_group)
 #
 # Purpose: Create sharp, well-defined valuation groups
 # Coverage: 2,802 companies (Active, Listed, Sales >100 Cr)
 # Last updated: 2026-02-06
 
 # ==============================================================================
-# TIER 1: VERTICAL (15 broad groups for organization/reporting)
-# TIER 2: SUB_VERTICAL (40 specific groups for valuation drivers)
+# TIER 1: valuation_group (15 broad groups for organization/reporting)
+# TIER 2: SUB_valuation_group (40 specific groups for valuation drivers)
 # ==============================================================================
 
 mappings:
@@ -17,50 +17,50 @@ mappings:
 
   - sector: "Bank"
     industry: "Bank - Public"
-    vertical: "FINANCIALS"
-    sub_vertical: "FINANCIALS_BANKING_PSU"
+    valuation_group: "FINANCIALS"
+    sub_valuation_group: "FINANCIALS_BANKING_PSU"
     notes: "PSU banks - different cost structure, govt influence"
 
   - sector: "Bank"
     industry: "Bank - Private"
-    vertical: "FINANCIALS"
-    sub_vertical: "FINANCIALS_BANKING_PRIVATE"
+    valuation_group: "FINANCIALS"
+    sub_valuation_group: "FINANCIALS_BANKING_PRIVATE"
     notes: "Private banks - higher efficiency, CASA focus"
 
   - sector: "Finance"
     industry: "Finance - NBFC"
-    vertical: "FINANCIALS"
-    sub_vertical: "FINANCIALS_NBFC_VEHICLE"
+    valuation_group: "FINANCIALS"
+    sub_valuation_group: "FINANCIALS_NBFC_VEHICLE"
     notes: "Vehicle/consumer finance - cyclical, unsecured lending"
 
   - sector: "Finance"
     industry: "Finance - Housing"
-    vertical: "FINANCIALS"
-    sub_vertical: "FINANCIALS_NBFC_HOUSING"
+    valuation_group: "FINANCIALS"
+    sub_valuation_group: "FINANCIALS_NBFC_HOUSING"
     notes: "Housing finance - secured, lower NPA, real estate linked"
 
   - sector: "Finance"
     industry: "Finance Term Lending"
-    vertical: "FINANCIALS"
-    sub_vertical: "FINANCIALS_NBFC_DIVERSIFIED"
+    valuation_group: "FINANCIALS"
+    sub_valuation_group: "FINANCIALS_NBFC_DIVERSIFIED"
     notes: "Diversified NBFCs - corporate + retail mix"
 
   - sector: "Finance"
     industry: "Finance - Investment"
-    vertical: "FINANCIALS"
-    sub_vertical: "FINANCIALS_ASSET_MGMT"
+    valuation_group: "FINANCIALS"
+    sub_valuation_group: "FINANCIALS_ASSET_MGMT"
     notes: "Asset management, wealth management - fee-based"
 
   - sector: "Ratings"
     industry: "Ratings"
-    vertical: "FINANCIALS"
-    sub_vertical: "FINANCIALS_OTHER"
+    valuation_group: "FINANCIALS"
+    sub_valuation_group: "FINANCIALS_OTHER"
     notes: "Credit ratings - regulatory driven, oligopoly"
 
   - sector: "Business Services"
     industry: "Depository Services"
-    vertical: "FINANCIALS"
-    sub_vertical: "FINANCIALS_OTHER"
+    valuation_group: "FINANCIALS"
+    sub_valuation_group: "FINANCIALS_OTHER"
     notes: "CAMS, depositories - regulated utility model"
 
   # ============================================================================
@@ -69,26 +69,26 @@ mappings:
 
   - sector: "IT"
     industry: "IT - Software"
-    vertical: "TECHNOLOGY"
-    sub_vertical: "TECHNOLOGY_IT_SERVICES"
+    valuation_group: "TECHNOLOGY"
+    sub_valuation_group: "TECHNOLOGY_IT_SERVICES"
     notes: "Traditional IT services - people arbitrage, FX sensitive"
 
   - sector: "IT"
     industry: "BPO/ITeS"
-    vertical: "TECHNOLOGY"
-    sub_vertical: "TECHNOLOGY_BPO_ITES"
+    valuation_group: "TECHNOLOGY"
+    sub_valuation_group: "TECHNOLOGY_BPO_ITES"
     notes: "BPO/KPO - lower margins, attrition risk"
 
   - sector: "IT"
     industry: "Fintech"
-    vertical: "TECHNOLOGY"
-    sub_vertical: "TECHNOLOGY_PRODUCT_SAAS"
+    valuation_group: "TECHNOLOGY"
+    sub_valuation_group: "TECHNOLOGY_PRODUCT_SAAS"
     notes: "Fintech/SaaS - recurring revenue, scalable"
 
   - sector: "Media & Entertainment"
     industry: "Printing And Publishing"
-    vertical: "TECHNOLOGY"
-    sub_vertical: "TECHNOLOGY_DIGITAL_INFRA"
+    valuation_group: "TECHNOLOGY"
+    sub_valuation_group: "TECHNOLOGY_DIGITAL_INFRA"
     notes: "Digital content, mapping (MapMyIndia)"
 
   # ============================================================================
@@ -97,20 +97,20 @@ mappings:
 
   - sector: "Healthcare"
     industry: "Pharmaceuticals & Drugs"
-    vertical: "HEALTHCARE"
-    sub_vertical: "HEALTHCARE_PHARMA_EXPORT"
+    valuation_group: "HEALTHCARE"
+    sub_valuation_group: "HEALTHCARE_PHARMA_EXPORT"
     notes: "Export-focused pharma - US generics, USFDA risk"
 
   - sector: "Healthcare"
     industry: "Hospital & Healthcare Services"
-    vertical: "HEALTHCARE"
-    sub_vertical: "HEALTHCARE_HOSPITALS_EQUIPMENT"
+    valuation_group: "HEALTHCARE"
+    sub_valuation_group: "HEALTHCARE_HOSPITALS_EQUIPMENT"
     notes: "Hospitals, diagnostics - bed utilization, ARR"
 
   - sector: "Healthcare"
     industry: "Medical Equipment/Supplies/Accessories"
-    vertical: "HEALTHCARE"
-    sub_vertical: "HEALTHCARE_HOSPITALS_EQUIPMENT"
+    valuation_group: "HEALTHCARE"
+    sub_valuation_group: "HEALTHCARE_HOSPITALS_EQUIPMENT"
     notes: "Medical devices, disposables"
 
   # ============================================================================
@@ -119,38 +119,38 @@ mappings:
 
   - sector: "Capital Goods"
     industry: "Defence"
-    vertical: "INDUSTRIALS"
-    sub_vertical: "INDUSTRIALS_DEFENSE"
+    valuation_group: "INDUSTRIALS"
+    sub_valuation_group: "INDUSTRIALS_DEFENSE"
     notes: "Defense PSU - govt budget, order book, execution"
 
   - sector: "Capital Goods"
     industry: "Engineering - Industrial Equipments"
-    vertical: "INDUSTRIALS"
-    sub_vertical: "INDUSTRIALS_CAPITAL_GOODS"
+    valuation_group: "INDUSTRIALS"
+    sub_valuation_group: "INDUSTRIALS_CAPITAL_GOODS"
     notes: "Industrial machinery - capex cycle, order book"
 
   - sector: "Capital Goods"
     industry: "Electric Equipment"
-    vertical: "INDUSTRIALS"
-    sub_vertical: "INDUSTRIALS_ELECTRICALS"
+    valuation_group: "INDUSTRIALS"
+    sub_valuation_group: "INDUSTRIALS_ELECTRICALS"
     notes: "T&D equipment, electrical - govt/utility capex"
 
   - sector: "Electricals"
     industry: "Cable"
-    vertical: "INDUSTRIALS"
-    sub_vertical: "INDUSTRIALS_ELECTRICALS"
+    valuation_group: "INDUSTRIALS"
+    sub_valuation_group: "INDUSTRIALS_ELECTRICALS"
     notes: "Cables - copper cost, infra spend"
 
   - sector: "Capital Goods"
     industry: "Engineering"
-    vertical: "INDUSTRIALS"
-    sub_vertical: "INDUSTRIALS_ENGINEERING"
+    valuation_group: "INDUSTRIALS"
+    sub_valuation_group: "INDUSTRIALS_ENGINEERING"
     notes: "EPC, consulting - project-based revenue"
 
   - sector: "Ship Building"
     industry: "Ship Building"
-    vertical: "INDUSTRIALS"
-    sub_vertical: "INDUSTRIALS_DEFENSE"
+    valuation_group: "INDUSTRIALS"
+    sub_valuation_group: "INDUSTRIALS_DEFENSE"
     notes: "Shipyards - defense orders, execution risk"
 
   # ============================================================================
@@ -159,26 +159,26 @@ mappings:
 
   - sector: "Automobile & Ancillaries"
     industry: "Automobiles - Passenger Cars"
-    vertical: "AUTO"
-    sub_vertical: "AUTO_OEM"
+    valuation_group: "AUTO"
+    sub_valuation_group: "AUTO_OEM"
     notes: "OEMs - volume, pricing, mix"
 
   - sector: "Automobile & Ancillaries"
     industry: "Automobile Two & Three Wheelers"
-    vertical: "AUTO"
-    sub_vertical: "AUTO_OEM"
+    valuation_group: "AUTO"
+    sub_valuation_group: "AUTO_OEM"
     notes: "2W/3W OEMs"
 
   - sector: "Automobile & Ancillaries"
     industry: "Auto Ancillary"
-    vertical: "AUTO"
-    sub_vertical: "AUTO_ANCILLARY"
+    valuation_group: "AUTO"
+    sub_valuation_group: "AUTO_ANCILLARY"
     notes: "Component suppliers - OEM dependent"
 
   - sector: "Automobile & Ancillaries"
     industry: "Tyres & Allied"
-    vertical: "AUTO"
-    sub_vertical: "AUTO_ANCILLARY"
+    valuation_group: "AUTO"
+    sub_valuation_group: "AUTO_ANCILLARY"
     notes: "Tires - replacement + OEM mix"
 
   # ============================================================================
@@ -187,26 +187,26 @@ mappings:
 
   - sector: "Chemicals"
     industry: "Chemicals"
-    vertical: "MATERIALS_CHEMICALS"
-    sub_vertical: "CHEMICALS_SPECIALTY"
+    valuation_group: "MATERIALS_CHEMICALS"
+    sub_valuation_group: "CHEMICALS_SPECIALTY"
     notes: "Specialty chemicals - R&D driven, China+1"
 
   - sector: "Chemicals"
     industry: "Pesticides & Agrochemicals"
-    vertical: "MATERIALS_CHEMICALS"
-    sub_vertical: "CHEMICALS_COMMODITY"
+    valuation_group: "MATERIALS_CHEMICALS"
+    sub_valuation_group: "CHEMICALS_COMMODITY"
     notes: "Agrochem - commodity linked, monsoon dependent"
 
   - sector: "Chemicals"
     industry: "Paints"
-    vertical: "MATERIALS_CHEMICALS"
-    sub_vertical: "CHEMICALS_PAINTS_COATINGS"
+    valuation_group: "MATERIALS_CHEMICALS"
+    sub_valuation_group: "CHEMICALS_PAINTS_COATINGS"
     notes: "Paints - real estate linked, brand driven"
 
   - sector: "Chemicals"
     industry: "Fertilizers"
-    vertical: "MATERIALS_CHEMICALS"
-    sub_vertical: "CHEMICALS_COMMODITY"
+    valuation_group: "MATERIALS_CHEMICALS"
+    sub_valuation_group: "CHEMICALS_COMMODITY"
     notes: "Fertilizers - subsidy dependent, commodity"
 
   # ============================================================================
@@ -215,14 +215,14 @@ mappings:
 
   - sector: "Iron & Steel"
     industry: "Steel & Iron Products"
-    vertical: "MATERIALS_METALS"
-    sub_vertical: "METALS_STEEL"
+    valuation_group: "MATERIALS_METALS"
+    sub_valuation_group: "METALS_STEEL"
     notes: "Steel - coal/iron ore cost, demand cyclical"
 
   - sector: "Non - Ferrous Metals"
     industry: "Metal - Non Ferrous"
-    vertical: "MATERIALS_METALS"
-    sub_vertical: "METALS_NON_FERROUS"
+    valuation_group: "MATERIALS_METALS"
+    sub_valuation_group: "METALS_NON_FERROUS"
     notes: "Aluminum, copper, zinc - LME linked"
 
   # ============================================================================
@@ -231,38 +231,38 @@ mappings:
 
   - sector: "FMCG"
     industry: "Cigarettes/Tobacco"
-    vertical: "CONSUMER_STAPLES"
-    sub_vertical: "CONSUMER_FMCG"
+    valuation_group: "CONSUMER_STAPLES"
+    sub_valuation_group: "CONSUMER_FMCG"
     notes: "FMCG - brand, distribution, pricing power"
 
   - sector: "FMCG"
     industry: "Household & Personal Products"
-    vertical: "CONSUMER_STAPLES"
-    sub_vertical: "CONSUMER_FMCG"
+    valuation_group: "CONSUMER_STAPLES"
+    sub_valuation_group: "CONSUMER_FMCG"
     notes: "HPC - urban demand, distribution"
 
   - sector: "FMCG"
     industry: "Consumer Food"
-    vertical: "CONSUMER_STAPLES"
-    sub_vertical: "CONSUMER_FOOD_BEVERAGE"
+    valuation_group: "CONSUMER_STAPLES"
+    sub_valuation_group: "CONSUMER_FOOD_BEVERAGE"
     notes: "Packaged food, beverages - brand, distribution"
 
   - sector: "FMCG"
     industry: "Edible Oil"
-    vertical: "CONSUMER_STAPLES"
-    sub_vertical: "CONSUMER_FOOD_BEVERAGE"
+    valuation_group: "CONSUMER_STAPLES"
+    sub_valuation_group: "CONSUMER_FOOD_BEVERAGE"
     notes: "Edible oil - commodity linked"
 
   - sector: "Agri"
     industry: "Sugar"
-    vertical: "CONSUMER_STAPLES"
-    sub_vertical: "CONSUMER_AGRI"
+    valuation_group: "CONSUMER_STAPLES"
+    sub_valuation_group: "CONSUMER_AGRI"
     notes: "Sugar - govt policy, ethanol, cyclical"
 
   - sector: "Agri"
     industry: "Agriculture"
-    vertical: "CONSUMER_STAPLES"
-    sub_vertical: "CONSUMER_AGRI"
+    valuation_group: "CONSUMER_STAPLES"
+    sub_valuation_group: "CONSUMER_AGRI"
     notes: "Agriculture - monsoon, MSP, exports"
 
   # ============================================================================
@@ -271,20 +271,20 @@ mappings:
 
   - sector: "Consumer Durables"
     industry: "Consumer Durables - Electronics"
-    vertical: "CONSUMER_DISCRETIONARY"
-    sub_vertical: "CONSUMER_DURABLES"
+    valuation_group: "CONSUMER_DISCRETIONARY"
+    sub_valuation_group: "CONSUMER_DURABLES"
     notes: "Durables - housing linked, discretionary"
 
   - sector: "Retailing"
     industry: "Retailing"
-    vertical: "CONSUMER_DISCRETIONARY"
-    sub_vertical: "CONSUMER_RETAIL"
+    valuation_group: "CONSUMER_DISCRETIONARY"
+    sub_valuation_group: "CONSUMER_RETAIL"
     notes: "Retail - footfalls, same-store-sales"
 
   - sector: "Textile"
     industry: "Textile"
-    vertical: "CONSUMER_DISCRETIONARY"
-    sub_vertical: "CONSUMER_TEXTILE"
+    valuation_group: "CONSUMER_DISCRETIONARY"
+    sub_valuation_group: "CONSUMER_TEXTILE"
     notes: "Textiles - cotton cost, export demand"
 
   # ============================================================================
@@ -293,26 +293,26 @@ mappings:
 
   - sector: "Realty"
     industry: "Construction - Real Estate"
-    vertical: "REAL_ESTATE_INFRA"
-    sub_vertical: "REALTY_RESIDENTIAL"
+    valuation_group: "REAL_ESTATE_INFRA"
+    sub_valuation_group: "REALTY_RESIDENTIAL"
     notes: "Real estate - interest rates, approvals, inventory"
 
   - sector: "Infrastructure"
     industry: "Engineering - Construction"
-    vertical: "REAL_ESTATE_INFRA"
-    sub_vertical: "INFRA_CONSTRUCTION"
+    valuation_group: "REAL_ESTATE_INFRA"
+    sub_valuation_group: "INFRA_CONSTRUCTION"
     notes: "EPC contractors - order book, execution, working capital"
 
   - sector: "Construction Materials"
     industry: "Cement & Construction Materials"
-    vertical: "REAL_ESTATE_INFRA"
-    sub_vertical: "INFRA_CONSTRUCTION"
+    valuation_group: "REAL_ESTATE_INFRA"
+    sub_valuation_group: "INFRA_CONSTRUCTION"
     notes: "Cement - demand from infra/real estate, pricing"
 
   - sector: "Logistics"
     industry: "Port"
-    vertical: "REAL_ESTATE_INFRA"
-    sub_vertical: "INFRA_LOGISTICS_PORTS"
+    valuation_group: "REAL_ESTATE_INFRA"
+    sub_valuation_group: "INFRA_LOGISTICS_PORTS"
     notes: "Ports, logistics - trade volumes, tariffs"
 
   # ============================================================================
@@ -321,26 +321,26 @@ mappings:
 
   - sector: "Crude Oil"
     industry: "Refineries"
-    vertical: "ENERGY_UTILITIES"
-    sub_vertical: "ENERGY_OIL_GAS"
+    valuation_group: "ENERGY_UTILITIES"
+    sub_valuation_group: "ENERGY_OIL_GAS"
     notes: "Refineries - GRM, crude spread, demand"
 
   - sector: "Crude Oil"
     industry: "Oil Exploration"
-    vertical: "ENERGY_UTILITIES"
-    sub_vertical: "ENERGY_OIL_GAS"
+    valuation_group: "ENERGY_UTILITIES"
+    sub_valuation_group: "ENERGY_OIL_GAS"
     notes: "E&P - oil prices, reserves, production"
 
   - sector: "Power"
     industry: "Power Generation/Distribution"
-    vertical: "ENERGY_UTILITIES"
-    sub_vertical: "ENERGY_POWER_GENERATION"
+    valuation_group: "ENERGY_UTILITIES"
+    sub_valuation_group: "ENERGY_POWER_GENERATION"
     notes: "Power - PLF, tariffs, fuel costs, regulatory returns"
 
   - sector: "Gas Transmission"
     industry: "Gas Transmission/Marketing"
-    vertical: "ENERGY_UTILITIES"
-    sub_vertical: "ENERGY_POWER_DISTRIBUTION"
+    valuation_group: "ENERGY_UTILITIES"
+    sub_valuation_group: "ENERGY_POWER_DISTRIBUTION"
     notes: "Gas utilities - tariffs, volume, regulatory"
 
   # ============================================================================
@@ -349,20 +349,20 @@ mappings:
 
   - sector: "Hospitality"
     industry: "Hotel, Resort & Restaurants"
-    vertical: "SERVICES"
-    sub_vertical: "SERVICES_HOSPITALITY"
+    valuation_group: "SERVICES"
+    sub_valuation_group: "SERVICES_HOSPITALITY"
     notes: "Hotels - occupancy, ARR, travel demand"
 
   - sector: "Media & Entertainment"
     industry: "TV Broadcasting & Software Production"
-    vertical: "SERVICES"
-    sub_vertical: "SERVICES_MEDIA_ENTERTAINMENT"
+    valuation_group: "SERVICES"
+    sub_valuation_group: "SERVICES_MEDIA_ENTERTAINMENT"
     notes: "Media - ad revenue, subscriptions, content costs"
 
   - sector: "Telecom"
     industry: "Telecommunication - Service  Provider"
-    vertical: "SERVICES"
-    sub_vertical: "SERVICES_TELECOM"
+    valuation_group: "SERVICES"
+    sub_valuation_group: "SERVICES_TELECOM"
     notes: "Telecom - ARPU, subs growth, spectrum, tariffs"
 
 # ==============================================================================
@@ -372,55 +372,55 @@ mappings:
 default_mappings:
   # If only sector matches (no industry-specific rule)
   - sector_pattern: "^Finance"
-    default_vertical: "FINANCIALS"
-    default_sub_vertical: "FINANCIALS_NBFC_DIVERSIFIED"
+    default_valuation_group: "FINANCIALS"
+    default_sub_valuation_group: "FINANCIALS_NBFC_DIVERSIFIED"
 
   - sector_pattern: "^IT"
-    default_vertical: "TECHNOLOGY"
-    default_sub_vertical: "TECHNOLOGY_IT_SERVICES"
+    default_valuation_group: "TECHNOLOGY"
+    default_sub_valuation_group: "TECHNOLOGY_IT_SERVICES"
 
   - sector_pattern: "^Healthcare"
-    default_vertical: "HEALTHCARE"
-    default_sub_vertical: "HEALTHCARE_PHARMA_EXPORT"
+    default_valuation_group: "HEALTHCARE"
+    default_sub_valuation_group: "HEALTHCARE_PHARMA_EXPORT"
 
   - sector_pattern: "^Capital Goods"
-    default_vertical: "INDUSTRIALS"
-    default_sub_vertical: "INDUSTRIALS_CAPITAL_GOODS"
+    default_valuation_group: "INDUSTRIALS"
+    default_sub_valuation_group: "INDUSTRIALS_CAPITAL_GOODS"
 
   - sector_pattern: "^Automobile"
-    default_vertical: "AUTO"
-    default_sub_vertical: "AUTO_ANCILLARY"
+    default_valuation_group: "AUTO"
+    default_sub_valuation_group: "AUTO_ANCILLARY"
 
   - sector_pattern: "^Chemicals"
-    default_vertical: "MATERIALS_CHEMICALS"
-    default_sub_vertical: "CHEMICALS_SPECIALTY"
+    default_valuation_group: "MATERIALS_CHEMICALS"
+    default_sub_valuation_group: "CHEMICALS_SPECIALTY"
 
   - sector_pattern: "^(Iron & Steel|Non - Ferrous Metals)"
-    default_vertical: "MATERIALS_METALS"
-    default_sub_vertical: "METALS_STEEL"
+    default_valuation_group: "MATERIALS_METALS"
+    default_sub_valuation_group: "METALS_STEEL"
 
   - sector_pattern: "^FMCG"
-    default_vertical: "CONSUMER_STAPLES"
-    default_sub_vertical: "CONSUMER_FMCG"
+    default_valuation_group: "CONSUMER_STAPLES"
+    default_sub_valuation_group: "CONSUMER_FMCG"
 
   - sector_pattern: "^Consumer Durables"
-    default_vertical: "CONSUMER_DISCRETIONARY"
-    default_sub_vertical: "CONSUMER_DURABLES"
+    default_valuation_group: "CONSUMER_DISCRETIONARY"
+    default_sub_valuation_group: "CONSUMER_DURABLES"
 
   - sector_pattern: "^(Realty|Infrastructure|Construction)"
-    default_vertical: "REAL_ESTATE_INFRA"
-    default_sub_vertical: "INFRA_CONSTRUCTION"
+    default_valuation_group: "REAL_ESTATE_INFRA"
+    default_sub_valuation_group: "INFRA_CONSTRUCTION"
 
   - sector_pattern: "^(Crude Oil|Power|Gas)"
-    default_vertical: "ENERGY_UTILITIES"
-    default_sub_vertical: "ENERGY_OIL_GAS"
+    default_valuation_group: "ENERGY_UTILITIES"
+    default_sub_valuation_group: "ENERGY_OIL_GAS"
 
   - sector_pattern: "^(Hospitality|Hotel)"
-    default_vertical: "SERVICES"
-    default_sub_vertical: "SERVICES_HOSPITALITY"
+    default_valuation_group: "SERVICES"
+    default_sub_valuation_group: "SERVICES_HOSPITALITY"
 
 # ==============================================================================
-# COMPLETE SUB_VERTICAL LIST (40 total)
+# COMPLETE SUB_valuation_group LIST (40 total)
 # ==============================================================================
 
 sub_verticals:

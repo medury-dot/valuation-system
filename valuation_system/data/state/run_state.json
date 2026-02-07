@@ -1,0 +1,43 @@
+{
+  "hourly_cycle": {
+    "last_status": "RUNNING",
+    "started_at": "2026-02-06T21:21:25.753326"
+  },
+  "daily_valuation": {
+    "last_status": "SUCCESS",
+    "started_at": "2026-02-06T21:22:04.755225",
+    "last_success": "2026-02-06T21:22:24.303161",
+    "consecutive_failures": 0,
+    "last_details": {
+      "cycle": "daily_valuation",
+      "started_at": "2026-02-06T21:22:04.755477",
+      "macro_update": {
+        "checked": true,
+        "updated": false,
+        "reason": "CSV fresh (23.1 days old)"
+      },
+      "macro_sync": {
+        "synced": 0,
+        "unchanged": 5,
+        "errors": [],
+        "status": "SUCCESS"
+      },
+      "valuations": {
+        "aether_industries": {
+          "intrinsic": 287.63,
+          "cmp": 1006.6,
+          "upside_pct": -71.43,
+          "confidence": 0.67
+        },
+        "eicher_motors": {
+          "intrinsic": 3475.83,
+          "cmp": 7215.0,
+          "upside_pct": -51.82,
+          "confidence": 0.72
+        }
+      },
+      "alerts": 0,
+      "status": "SUCCESS"
+    }
+  }
+}

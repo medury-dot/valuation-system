@@ -1,0 +1,768 @@
+  # ---------------------------------------------------------------------------
+  # CAPITAL GOODS - DEFENSE (Sector #5)
+  # ---------------------------------------------------------------------------
+  capital_goods_defense:
+    csv_sector_name: "Capital Goods"
+    csv_industry_filter: ["Defence"]
+    is_active: true
+
+    valuation_methods:
+      primary: "EV/EBITDA"
+      secondary: "P/E"
+      blend_weights:
+        dcf: 0.60
+        relative: 0.30
+        monte_carlo: 0.10
+
+    key_metrics:
+      - order_book_to_revenue
+      - ebitda_margin
+      - roce
+      - order_inflow
+      - execution_velocity
+      - export_pct
+
+    terminal_assumptions:
+      margin_range: [0.20, 0.28]
+      roce_convergence: 0.25
+      reinvestment_rate: 0.30
+
+    demand_drivers:
+      - name: defense_budget
+        metric: "Rs Cr YoY %"
+        weight: 0.15
+        impact: addressable_market
+      - name: order_book
+        metric: "Rs Cr, x Revenue"
+        weight: 0.12
+        impact: revenue_visibility
+      - name: order_inflow
+        metric: "Rs Cr, YoY %"
+        weight: 0.10
+        impact: future_growth
+      - name: govt_capex_allocation
+        metric: "% of Budget"
+        weight: 0.08
+        impact: funding_certainty
+      - name: export_growth
+        metric: "YoY %"
+        weight: 0.07
+        impact: diversification
+      - name: indigenization_push
+        metric: "Intensity Index"
+        weight: 0.06
+        impact: market_share
+
+    cost_drivers:
+      - name: raw_material_inflation
+        metric: "YoY %"
+        weight: 0.08
+        impact: margin
+        sensitivity: -0.4
+      - name: labor_productivity
+        metric: "Output/Employee"
+        weight: 0.05
+        impact: operating_leverage
+      - name: operating_leverage
+        metric: "Fixed/Variable"
+        weight: 0.04
+        impact: margin_sensitivity
+      - name: working_capital_cycle
+        metric: "Days"
+        weight: 0.05
+        impact: cash_conversion
+
+    porter_forces:
+      entry_barriers:
+        value: VERY_HIGH
+        drivers: ["strategic_sector_status", "technology_barriers", "security_clearances", "scale_requirements"]
+        impact: duopoly_protection
+      supplier_power:
+        value: MODERATE
+        drivers: ["vendor_development", "component_localization", "supplier_concentration"]
+        impact: cost_stability
+      buyer_power:
+        value: HIGH
+        drivers: ["govt_monopsony", "offset_obligations", "price_negotiations"]
+        impact: margin_pressure
+      substitutes:
+        value: LOW
+        drivers: ["import_restrictions", "strategic_autonomy", "make_in_india"]
+        impact: terminal_value
+      rivalry:
+        value: DUOPOLY
+        drivers: ["two_player_market", "high_entry_barriers", "govt_support"]
+        impact: pricing_discipline
+
+    regulatory_drivers:
+      - name: offset_policy
+        weight: 0.04
+        impact: export_mandate
+      - name: make_in_india_defense
+        weight: 0.04
+        impact: domestic_sourcing
+      - name: fdi_cap_liberalization
+        weight: 0.02
+        impact: partnership_opportunities
+      - name: export_clearance_timeline
+        weight: 0.03
+        impact: international_revenue
+
+    sector_specific_drivers:
+      - name: order_book
+        metric: "Rs Cr"
+        source: filings
+        frequency: quarterly
+      - name: order_execution_rate
+        metric: "% of OB"
+        source: filings
+        frequency: quarterly
+      - name: r_and_d_spend
+        metric: "% of Revenue"
+        source: filings
+        frequency: annual
+
+  # ---------------------------------------------------------------------------
+  # FMCG (Sector #6)
+  # ---------------------------------------------------------------------------
+  fmcg:
+    csv_sector_name: "FMCG"
+    csv_industry_filter: null
+    is_active: true
+
+    valuation_methods:
+      primary: "P/E"
+      secondary: "EV/EBITDA"
+      blend_weights:
+        dcf: 0.60
+        relative: 0.30
+        monte_carlo: 0.10
+
+    key_metrics:
+      - volume_growth
+      - realization_growth
+      - ebitda_margin
+      - roce
+      - roe
+      - distribution_reach
+      - brand_equity
+
+    terminal_assumptions:
+      margin_range: [0.15, 0.22]
+      roce_convergence: 0.30
+      reinvestment_rate: 0.25
+
+    demand_drivers:
+      - name: consumer_demand_index
+        metric: "YoY %"
+        weight: 0.12
+        impact: volume_growth
+      - name: rural_demand
+        metric: "Index"
+        weight: 0.10
+        impact: volume_mass_segment
+      - name: urban_demand
+        metric: "Index"
+        weight: 0.08
+        impact: volume_premium_segment
+      - name: disposable_income
+        metric: "YoY %"
+        weight: 0.08
+        impact: premiumization
+      - name: distribution_expansion
+        metric: "Outlet Count"
+        weight: 0.07
+        impact: market_penetration
+      - name: pricing_power
+        metric: "Realization Growth %"
+        weight: 0.06
+        impact: revenue_margin
+
+    cost_drivers:
+      - name: commodity_basket
+        metric: "Blended Index"
+        weight: 0.10
+        impact: rm_cost
+        sensitivity: -0.6
+      - name: packaging_costs
+        metric: "Rs/Unit"
+        weight: 0.05
+        impact: cogs
+      - name: freight_costs
+        metric: "Rs/km"
+        weight: 0.04
+        impact: logistics
+      - name: advertising_efficiency
+        metric: "Revenue/Ad Spend"
+        weight: 0.06
+        impact: customer_acquisition
+      - name: operating_leverage
+        metric: "Fixed/Variable"
+        weight: 0.04
+        impact: margin_sensitivity
+
+    porter_forces:
+      entry_barriers:
+        value: MODERATE
+        drivers: ["brand_equity", "distribution_network", "scale_economies"]
+        impact: competitive_moat
+      supplier_power:
+        value: MODERATE
+        drivers: ["commodity_exposure", "supplier_concentration", "contract_farming"]
+        impact: cost_volatility
+      buyer_power:
+        value: HIGH
+        drivers: ["modern_trade_concentration", "price_sensitivity", "private_labels"]
+        impact: margin_pressure
+      substitutes:
+        value: MODERATE
+        drivers: ["regional_brands", "unorganized_players", "health_trends"]
+        impact: market_share_risk
+      rivalry:
+        value: INTENSE
+        drivers: ["market_share_battles", "innovation_cycles", "promotional_intensity"]
+        impact: pricing_discipline
+
+    regulatory_drivers:
+      - name: gst_structure
+        weight: 0.04
+        impact: pricing_taxation
+      - name: fssai_compliance
+        weight: 0.03
+        impact: compliance_cost
+      - name: plastic_packaging_norms
+        weight: 0.03
+        impact: packaging_cost
+      - name: sugar_taxes
+        weight: 0.02
+        impact: category_specific
+
+    sector_specific_drivers:
+      - name: volume_growth
+        metric: "%"
+        source: filings
+        frequency: quarterly
+      - name: realization_growth
+        metric: "%"
+        source: filings
+        frequency: quarterly
+      - name: distribution_outlets
+        metric: "count"
+        source: filings
+        frequency: annual
+
+  # ---------------------------------------------------------------------------
+  # CONSUMER DURABLES (Sector #7)
+  # ---------------------------------------------------------------------------
+  consumer_durables:
+    csv_sector_name: "Consumer Durables"
+    csv_industry_filter: null
+    is_active: true
+
+    valuation_methods:
+      primary: "P/E"
+      secondary: "EV/EBITDA"
+      blend_weights:
+        dcf: 0.60
+        relative: 0.30
+        monte_carlo: 0.10
+
+    key_metrics:
+      - volume_growth
+      - realization
+      - ebitda_margin
+      - roce
+      - working_capital_days
+      - market_share
+
+    terminal_assumptions:
+      margin_range: [0.08, 0.14]
+      roce_convergence: 0.22
+      reinvestment_rate: 0.28
+
+    demand_drivers:
+      - name: housing_demand
+        metric: "New Launches YoY %"
+        weight: 0.12
+        impact: replacement_demand
+      - name: discretionary_spending
+        metric: "Index"
+        weight: 0.10
+        impact: volume
+      - name: urban_income_growth
+        metric: "YoY %"
+        weight: 0.08
+        impact: affordability
+      - name: premiumization_trend
+        metric: "Premium Mix %"
+        weight: 0.07
+        impact: asp_margin
+      - name: replacement_cycle
+        metric: "Years"
+        weight: 0.06
+        impact: demand_visibility
+      - name: cooling_degree_days
+        metric: "Count (AC-specific)"
+        weight: 0.05
+        impact: seasonal_demand
+
+    cost_drivers:
+      - name: steel_prices
+        metric: "Rs/kg"
+        weight: 0.09
+        impact: rm_cost
+        sensitivity: -0.4
+      - name: copper_prices
+        metric: "$/MT"
+        weight: 0.08
+        impact: rm_cost
+        sensitivity: -0.3
+      - name: plastic_petrochemical_prices
+        metric: "Index"
+        weight: 0.05
+        impact: cogs
+      - name: electronic_component_costs
+        metric: "Index"
+        weight: 0.06
+        impact: bom_cost
+      - name: operating_leverage
+        metric: "Fixed/Variable"
+        weight: 0.04
+        impact: margin_sensitivity
+
+    porter_forces:
+      entry_barriers:
+        value: MODERATE
+        drivers: ["brand_premium", "distribution_network", "after_sales_service", "scale_economies"]
+        impact: competitive_position
+      supplier_power:
+        value: MODERATE
+        drivers: ["component_import_dependence", "commodity_linkage", "supplier_concentration"]
+        impact: cost_control
+      buyer_power:
+        value: HIGH
+        drivers: ["modern_trade_dependence", "online_channel_growth", "price_comparison"]
+        impact: margin_pressure
+      substitutes:
+        value: LOW
+        drivers: ["essential_durables", "energy_efficiency_mandate"]
+        impact: category_stability
+      rivalry:
+        value: INTENSE
+        drivers: ["fragmented_market", "import_competition", "innovation_cycles"]
+        impact: pricing_pressure
+
+    regulatory_drivers:
+      - name: bee_star_rating
+        weight: 0.04
+        impact: compliance_innovation
+      - name: import_duties
+        weight: 0.04
+        impact: competitive_protection
+      - name: pli_scheme
+        weight: 0.03
+        impact: manufacturing_subsidy
+      - name: credit_availability
+        weight: 0.03
+        impact: consumer_financing
+
+    sector_specific_drivers:
+      - name: channel_mix
+        metric: "% Online/Offline/Institutional"
+        source: filings
+        frequency: quarterly
+      - name: inventory_days
+        metric: "days"
+        source: filings
+        frequency: quarterly
+      - name: warranty_costs
+        metric: "% of Revenue"
+        source: filings
+        frequency: annual
+
+  # ---------------------------------------------------------------------------
+  # CONSTRUCTION MATERIALS (Sector #8)
+  # ---------------------------------------------------------------------------
+  construction_materials:
+    csv_sector_name: "Construction Materials"
+    csv_industry_filter: null
+    is_active: true
+
+    valuation_methods:
+      primary: "EV/EBITDA"
+      secondary: "EV/Ton"
+      blend_weights:
+        dcf: 0.60
+        relative: 0.30
+        monte_carlo: 0.10
+
+    key_metrics:
+      - ebitda_per_ton
+      - capacity_utilization
+      - realization
+      - ebitda_margin
+      - roce
+      - debt_to_ebitda
+
+    terminal_assumptions:
+      margin_range: [0.18, 0.25]
+      roce_convergence: 0.18
+      reinvestment_rate: 0.40
+
+    demand_drivers:
+      - name: infrastructure_capex
+        metric: "Rs Cr, YoY %"
+        weight: 0.12
+        impact: cement_demand
+      - name: real_estate_activity
+        metric: "Launches & Sales"
+        weight: 0.10
+        impact: cement_demand
+      - name: govt_housing_schemes
+        metric: "Units YoY"
+        weight: 0.08
+        impact: affordable_housing_demand
+      - name: regional_demand_growth
+        metric: "Zone-wise %"
+        weight: 0.08
+        impact: plant_utilization
+      - name: pricing_power
+        metric: "Realization/Ton"
+        weight: 0.07
+        impact: margin
+      - name: volume_growth
+        metric: "MT YoY %"
+        weight: 0.06
+        impact: revenue_growth
+
+    cost_drivers:
+      - name: coal_prices
+        metric: "Rs/Ton"
+        weight: 0.10
+        impact: power_fuel_cost
+        sensitivity: -0.5
+      - name: pet_coke_prices
+        metric: "$/MT"
+        weight: 0.06
+        impact: fuel_cost
+      - name: freight_costs
+        metric: "Rs/km/Ton"
+        weight: 0.06
+        impact: logistics
+      - name: power_tariffs
+        metric: "Rs/kWh"
+        weight: 0.04
+        impact: operating_cost
+      - name: operating_leverage
+        metric: "Fixed/Variable"
+        weight: 0.04
+        impact: margin_sensitivity
+
+    porter_forces:
+      entry_barriers:
+        value: HIGH
+        drivers: ["capex_intensity", "limestone_access", "environmental_clearances", "logistics_network"]
+        impact: consolidated_structure
+      supplier_power:
+        value: MODERATE
+        drivers: ["coal_availability", "captive_mines", "power_linkages"]
+        impact: cost_stability
+      buyer_power:
+        value: MODERATE
+        drivers: ["fragmented_buyers", "brand_preference", "credit_terms"]
+        impact: pricing_flexibility
+      substitutes:
+        value: LOW
+        drivers: ["blended_cement_adoption", "infrastructure_standards"]
+        impact: volume_stability
+      rivalry:
+        value: CONSOLIDATING
+        drivers: ["capacity_rationalization", "pricing_discipline", "market_share_stability"]
+        impact: margin_expansion
+
+    regulatory_drivers:
+      - name: environmental_compliance
+        weight: 0.05
+        impact: capex_burden
+      - name: limestone_mining_regulations
+        weight: 0.04
+        impact: raw_material_access
+      - name: fly_ash_usage_mandate
+        weight: 0.03
+        impact: blended_cement_push
+      - name: carbon_emission_norms
+        weight: 0.03
+        impact: green_capex
+
+    sector_specific_drivers:
+      - name: capacity_utilization
+        metric: "%"
+        source: filings
+        frequency: quarterly
+      - name: realization_per_ton
+        metric: "Rs/Ton"
+        source: filings
+        frequency: quarterly
+      - name: power_fuel_cost_per_ton
+        metric: "Rs/Ton"
+        source: filings
+        frequency: quarterly
+
+  # ---------------------------------------------------------------------------
+  # REALTY (Sector #9)
+  # ---------------------------------------------------------------------------
+  realty:
+    csv_sector_name: "Realty"
+    csv_industry_filter: null
+    is_active: true
+
+    valuation_methods:
+      primary: "P/BV"
+      secondary: "EV/EBITDA"
+      blend_weights:
+        dcf: 0.60
+        relative: 0.30
+        monte_carlo: 0.10
+
+    key_metrics:
+      - presales
+      - collections
+      - inventory_months
+      - roce
+      - roe
+      - debt_to_equity
+      - land_bank
+
+    terminal_assumptions:
+      margin_range: [0.25, 0.35]
+      roce_convergence: 0.15
+      reinvestment_rate: 0.50
+
+    demand_drivers:
+      - name: housing_affordability
+        metric: "Price-to-Income Ratio"
+        weight: 0.12
+        impact: sales_velocity
+      - name: mortgage_rates
+        metric: "% Repo + Spread"
+        weight: 0.10
+        impact: buyer_demand
+      - name: presales_momentum
+        metric: "Rs Cr YoY %"
+        weight: 0.09
+        impact: revenue_visibility
+      - name: urban_income_growth
+        metric: "YoY %"
+        weight: 0.08
+        impact: affordability
+      - name: inventory_overhang
+        metric: "Months of Sales"
+        weight: 0.06
+        impact: pricing_pressure
+      - name: rental_yields
+        metric: "% IRR"
+        weight: 0.05
+        impact: investor_demand
+
+    cost_drivers:
+      - name: land_acquisition_cost
+        metric: "Rs/sq ft"
+        weight: 0.08
+        impact: project_margin
+        sensitivity: -0.6
+      - name: construction_costs
+        metric: "Rs/sq ft"
+        weight: 0.08
+        impact: project_margin
+        sensitivity: -0.4
+      - name: approval_timeline
+        metric: "Months"
+        weight: 0.06
+        impact: project_delay_cost
+      - name: borrowing_costs
+        metric: "Interest %"
+        weight: 0.05
+        impact: financing_cost
+      - name: working_capital_intensity
+        metric: "% of Revenue"
+        weight: 0.04
+        impact: cash_cycle
+
+    porter_forces:
+      entry_barriers:
+        value: HIGH
+        drivers: ["land_access", "capital_intensity", "brand_premium", "execution_track_record"]
+        impact: market_consolidation
+      supplier_power:
+        value: MODERATE
+        drivers: ["contractor_fragmentation", "material_availability", "labor_supply"]
+        impact: cost_control
+      buyer_power:
+        value: MODERATE
+        drivers: ["rera_transparency", "project_comparison", "payment_terms"]
+        impact: pricing_discipline
+      substitutes:
+        value: LOW
+        drivers: ["rental_market", "commercial_real_estate"]
+        impact: residential_demand_stability
+      rivalry:
+        value: INTENSE
+        drivers: ["micro_market_competition", "product_differentiation", "inventory_liquidation"]
+        impact: margin_pressure
+
+    regulatory_drivers:
+      - name: rera_compliance
+        weight: 0.05
+        impact: transparency_trust
+      - name: approval_timelines
+        metric: "Months"
+        weight: 0.05
+        impact: project_velocity
+      - name: affordable_housing_incentives
+        weight: 0.03
+        impact: segment_mix
+      - name: stamp_duty_rates
+        weight: 0.03
+        impact: transaction_costs
+
+    sector_specific_drivers:
+      - name: presales
+        metric: "Rs Cr"
+        source: filings
+        frequency: quarterly
+      - name: collections
+        metric: "Rs Cr, % of Presales"
+        source: filings
+        frequency: quarterly
+      - name: land_bank
+        metric: "Million sq ft"
+        source: filings
+        frequency: annual
+
+  # ---------------------------------------------------------------------------
+  # HOSPITALITY (Sector #10)
+  # ---------------------------------------------------------------------------
+  hospitality:
+    csv_sector_name: "Hospitality"
+    csv_industry_filter: null
+    is_active: true
+
+    valuation_methods:
+      primary: "EV/EBITDA"
+      secondary: "EV/Room"
+      blend_weights:
+        dcf: 0.60
+        relative: 0.30
+        monte_carlo: 0.10
+
+    key_metrics:
+      - revpar
+      - occupancy_rate
+      - arr
+      - ebitda_margin
+      - roce
+      - room_count
+
+    terminal_assumptions:
+      margin_range: [0.30, 0.40]
+      roce_convergence: 0.12
+      reinvestment_rate: 0.35
+
+    demand_drivers:
+      - name: domestic_travel_demand
+        metric: "PAX YoY %"
+        weight: 0.12
+        impact: occupancy
+      - name: international_travel_demand
+        metric: "Tourist Arrivals YoY %"
+        weight: 0.10
+        impact: occupancy_arr
+      - name: corporate_travel_recovery
+        metric: "Index"
+        weight: 0.09
+        impact: weekday_occupancy
+      - name: leisure_travel_growth
+        metric: "YoY %"
+        weight: 0.08
+        impact: weekend_occupancy
+      - name: mice_events
+        metric: "Event Count"
+        weight: 0.06
+        impact: banquet_f&b_revenue
+      - name: pricing_power
+        metric: "ARR Growth %"
+        weight: 0.07
+        impact: revpar
+
+    cost_drivers:
+      - name: employee_costs
+        metric: "% of Revenue"
+        weight: 0.08
+        impact: staff_expenses
+        sensitivity: -0.5
+      - name: energy_costs
+        metric: "Rs/Room/Night"
+        weight: 0.05
+        impact: operating_costs
+      - name: f&b_input_costs
+        metric: "Index"
+        weight: 0.05
+        impact: f&b_margin
+      - name: operating_leverage
+        metric: "Fixed/Variable"
+        weight: 0.04
+        impact: margin_sensitivity
+      - name: property_taxes
+        metric: "Rs Cr"
+        weight: 0.03
+        impact: fixed_costs
+
+    porter_forces:
+      entry_barriers:
+        value: HIGH
+        drivers: ["land_access_prime_locations", "capital_intensity", "brand_premium", "operational_expertise"]
+        impact: limited_supply
+      supplier_power:
+        value: LOW
+        drivers: ["fragmented_suppliers", "commodity_inputs", "outsourcing_options"]
+        impact: cost_control
+      buyer_power:
+        value: MODERATE
+        drivers: ["ota_concentration", "corporate_contracts", "loyalty_programs"]
+        impact: margin_pressure
+      substitutes:
+        value: MODERATE
+        drivers: ["budget_hotels", "airbnb", "serviced_apartments"]
+        impact: mid_segment_pressure
+      rivalry:
+        value: MODERATE
+        drivers: ["location_differentiation", "brand_stickiness", "supply_constraints"]
+        impact: pricing_power
+
+    regulatory_drivers:
+      - name: tourism_promotion_schemes
+        weight: 0.04
+        impact: demand_stimulus
+      - name: visa_policies
+        weight: 0.04
+        impact: international_arrivals
+      - name: labor_regulations
+        weight: 0.03
+        impact: staffing_costs
+      - name: liquor_licensing
+        weight: 0.02
+        impact: f&b_profitability
+
+    sector_specific_drivers:
+      - name: revpar
+        metric: "Rs"
+        source: filings
+        frequency: quarterly
+      - name: occupancy_rate
+        metric: "%"
+        source: filings
+        frequency: quarterly
+      - name: arr
+        metric: "Rs"
+        source: filings
+        frequency: quarterly

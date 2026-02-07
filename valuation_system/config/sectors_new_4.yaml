@@ -1,0 +1,626 @@
+# =============================================================================
+# Four New Sectors - CONSUMER_FOOD_BEVERAGE, CONSUMER_DURABLES,
+# INFRA_CONSTRUCTION, AUTO_ANCILLARY
+# =============================================================================
+# These can be merged into the main sectors.yaml file
+# =============================================================================
+
+sectors:
+
+  # ---------------------------------------------------------------------------
+  # CONSUMER_FOOD_BEVERAGE (VBL - Varun Beverages)
+  # ---------------------------------------------------------------------------
+  consumer_food_beverage:
+    csv_sector_name: "Consumer Goods"
+    csv_industry_filter: ["Beverages - Non Alcoholic", "Food Processing"]
+    is_active: true
+
+    valuation_methods:
+      primary: "P/E"
+      secondary: "EV/EBITDA"
+      blend_weights:
+        dcf: 0.60
+        relative: 0.30
+        monte_carlo: 0.10
+
+    key_metrics:
+      - volume_growth
+      - realization_per_case
+      - ebitda_margin
+      - roe
+      - roce
+      - distribution_reach
+
+    terminal_assumptions:
+      margin_range: [0.16, 0.22]  # EBITDA margin 16-22% for beverage bottlers
+      roce_convergence: 0.22      # Strong franchise, capital-efficient
+      reinvestment_rate: 0.40     # Moderate reinvestment for capacity and distribution
+
+    demand_drivers:
+      - name: per_capita_consumption
+        metric: "Cases per capita YoY %"
+        weight: 0.12
+        impact: volume_growth
+      - name: rural_demand
+        metric: "Rural CSD penetration %"
+        weight: 0.09
+        impact: market_expansion
+      - name: urban_premiumization
+        metric: "Premium SKU mix %"
+        weight: 0.07
+        impact: realization_uplift
+      - name: summer_intensity
+        metric: "Temperature index"
+        weight: 0.06
+        impact: seasonal_volume
+      - name: geographic_expansion
+        metric: "New territories"
+        weight: 0.08
+        impact: distribution_reach
+      - name: visi_cooler_penetration
+        metric: "Units deployed"
+        weight: 0.06
+        impact: availability_impulse
+
+    cost_drivers:
+      - name: pet_resin_prices
+        metric: "Rs/kg"
+        weight: 0.10
+        impact: packaging_cost
+        sensitivity: -0.4
+      - name: sugar_prices
+        metric: "Rs/quintal"
+        weight: 0.08
+        impact: raw_material_cost
+        sensitivity: -0.3
+      - name: franchise_fee
+        metric: "% of sales"
+        weight: 0.06
+        impact: operating_margin
+      - name: distribution_cost
+        metric: "Rs per case"
+        weight: 0.07
+        impact: logistics_expense
+      - name: operating_leverage
+        metric: "Fixed/Variable"
+        weight: 0.05
+        impact: margin_expansion
+
+    porter_forces:
+      entry_barriers:
+        value: VERY_HIGH
+        drivers: ["master_franchise_exclusivity", "capital_intensive_bottling", "distribution_network_years", "brand_power_pepsi_coca_cola"]
+        impact: oligopoly_protection
+      supplier_power:
+        value: MODERATE
+        drivers: ["concentrate_supplier_control_pepsi", "packaging_material_commoditized", "backward_integration_capability"]
+        impact: margin_pressure_selective
+      buyer_power:
+        value: LOW
+        drivers: ["retail_fragmentation", "brand_loyalty_high", "impulse_purchase_behavior"]
+        impact: pricing_power_retained
+      substitutes:
+        value: MODERATE
+        drivers: ["water_juice_tea_coffee", "health_consciousness_trend", "local_beverages"]
+        impact: category_shift_risk
+      rivalry:
+        value: MODERATE
+        drivers: ["pepsi_coca_cola_duopoly", "regional_players_limited", "pricing_discipline"]
+        impact: stable_competitive_dynamics
+
+    regulatory_drivers:
+      - name: sugar_tax_regulation
+        weight: 0.06
+        impact: demand_suppression_risk
+      - name: plastic_ban_regulations
+        weight: 0.05
+        impact: packaging_transition_cost
+      - name: fssai_labeling_norms
+        weight: 0.03
+        impact: compliance_overhead
+      - name: water_usage_regulations
+        weight: 0.04
+        impact: operational_constraint
+
+    sector_specific_drivers:
+      - name: volume_growth_ttm
+        metric: "Million cases YoY %"
+        source: filings
+        frequency: quarterly
+      - name: realization_per_case
+        metric: "Rs"
+        source: filings
+        frequency: quarterly
+      - name: csd_mix
+        metric: "% of volume"
+        source: filings
+        frequency: quarterly
+      - name: international_revenue
+        metric: "% of total"
+        source: filings
+        frequency: quarterly
+      - name: ebitda_per_case
+        metric: "Rs"
+        source: filings
+        frequency: quarterly
+      - name: working_capital_days
+        metric: "days"
+        source: filings
+        frequency: quarterly
+
+  # ---------------------------------------------------------------------------
+  # CONSUMER_DURABLES (PGEL, BLUESTARCO - Appliances, Electronics)
+  # ---------------------------------------------------------------------------
+  consumer_durables:
+    csv_sector_name: "Consumer Goods"
+    csv_industry_filter: ["Consumer Durables - White Goods", "Consumer Durables - Electronics"]
+    is_active: true
+
+    valuation_methods:
+      primary: "P/E"
+      secondary: "EV/EBITDA"
+      blend_weights:
+        dcf: 0.60
+        relative: 0.30
+        monte_carlo: 0.10
+
+    key_metrics:
+      - volume_growth
+      - average_selling_price
+      - ebitda_margin
+      - roe
+      - roce
+      - inventory_turnover
+
+    terminal_assumptions:
+      margin_range: [0.08, 0.14]  # EBITDA margin 8-14% for durables
+      roce_convergence: 0.18      # Moderate capital efficiency
+      reinvestment_rate: 0.35     # Working capital and capacity investment
+
+    demand_drivers:
+      - name: housing_starts
+        metric: "PMAY units YoY %"
+        weight: 0.11
+        impact: primary_demand
+      - name: discretionary_spending
+        metric: "Consumer sentiment index"
+        weight: 0.09
+        impact: demand_strength
+      - name: replacement_cycle
+        metric: "Years since last peak"
+        weight: 0.07
+        impact: refresh_demand
+      - name: rural_electrification
+        metric: "Village coverage %"
+        weight: 0.06
+        impact: market_expansion
+      - name: summer_heatwave_intensity
+        metric: "Cooling degree days"
+        weight: 0.08
+        impact: ac_sales_seasonal
+      - name: premiumization_trend
+        metric: "Premium SKU mix %"
+        weight: 0.07
+        impact: asp_uplift
+      - name: online_channel_penetration
+        metric: "% of sales"
+        weight: 0.05
+        impact: reach_efficiency
+
+    cost_drivers:
+      - name: steel_prices
+        metric: "Rs/kg"
+        weight: 0.09
+        impact: raw_material_cost
+        sensitivity: -0.35
+      - name: copper_aluminum_prices
+        metric: "LME index"
+        weight: 0.08
+        impact: component_cost
+        sensitivity: -0.30
+      - name: compressor_import_cost
+        metric: "USD price + duty"
+        weight: 0.07
+        impact: key_component_expense
+      - name: energy_efficiency_compliance
+        metric: "Star rating capex"
+        weight: 0.05
+        impact: development_cost
+      - name: freight_logistics
+        metric: "Rs per unit"
+        weight: 0.06
+        impact: distribution_expense
+      - name: after_sales_service_cost
+        metric: "% of revenue"
+        weight: 0.04
+        impact: warranty_provision
+
+    porter_forces:
+      entry_barriers:
+        value: MODERATE
+        drivers: ["brand_trust_years_built", "distribution_network_investment", "service_network_capex", "working_capital_intensity"]
+        impact: established_player_advantage
+      supplier_power:
+        value: MODERATE
+        drivers: ["compressor_oligopoly_3_global_players", "commodity_linkage_steel_copper", "import_dependence_components"]
+        impact: margin_volatility
+      buyer_power:
+        value: HIGH
+        drivers: ["price_transparency_online", "brand_switching_low_cost", "promotional_intensity", "consumer_financing_availability"]
+        impact: pricing_pressure
+      substitutes:
+        value: LOW
+        drivers: ["essential_household_items", "local_alternatives_inferior_quality", "product_differentiation_features"]
+        impact: category_retention
+      rivalry:
+        value: INTENSE
+        drivers: ["indian_korean_japanese_chinese_brands", "overcapacity_in_segments", "promotional_discounting", "channel_conflicts"]
+        impact: margin_compression
+
+    regulatory_drivers:
+      - name: bee_energy_efficiency_norms
+        metric: "Star rating mandate Jan 2026"
+        weight: 0.07
+        impact: redesign_cost_demand_shift
+      - name: pli_scheme_white_goods
+        weight: 0.06
+        impact: capex_subsidy_localization
+      - name: customs_duty_components
+        weight: 0.05
+        impact: import_cost_competitiveness
+      - name: ewaste_management_rules
+        weight: 0.03
+        impact: compliance_collection_cost
+      - name: gst_rate_structure
+        weight: 0.04
+        impact: pricing_affordability
+
+    sector_specific_drivers:
+      - name: volume_growth_units
+        metric: "YoY %"
+        source: filings
+        frequency: quarterly
+      - name: average_selling_price
+        metric: "Rs"
+        source: filings
+        frequency: quarterly
+      - name: product_mix
+        metric: "AC/Fridge/Washing Machine %"
+        source: filings
+        frequency: quarterly
+      - name: channel_mix
+        metric: "Online/Retail/B2B %"
+        source: filings
+        frequency: quarterly
+      - name: inventory_days
+        metric: "days"
+        source: filings
+        frequency: quarterly
+      - name: warranty_provision
+        metric: "% of sales"
+        source: filings
+        frequency: quarterly
+
+  # ---------------------------------------------------------------------------
+  # INFRA_CONSTRUCTION (AMBUJACEM - Cement)
+  # ---------------------------------------------------------------------------
+  infra_construction:
+    csv_sector_name: "Construction & Cement"
+    csv_industry_filter: ["Cement", "Cement Products"]
+    is_active: true
+
+    valuation_methods:
+      primary: "EV/EBITDA"
+      secondary: "EV/Tonne Capacity"
+      blend_weights:
+        dcf: 0.60
+        relative: 0.30
+        monte_carlo: 0.10
+
+    key_metrics:
+      - volume_growth
+      - realization_per_tonne
+      - ebitda_per_tonne
+      - capacity_utilization
+      - roe
+      - roce
+
+    terminal_assumptions:
+      margin_range: [0.18, 0.26]  # EBITDA margin 18-26% for cement
+      roce_convergence: 0.16      # Capital-intensive, cyclical
+      reinvestment_rate: 0.50     # High capex for capacity expansion
+
+    demand_drivers:
+      - name: infrastructure_spending
+        metric: "Govt capex Rs Lakh Cr"
+        weight: 0.12
+        impact: demand_growth
+      - name: real_estate_construction
+        metric: "Housing starts YoY %"
+        weight: 0.10
+        impact: demand_residential
+      - name: industrial_capex
+        metric: "PMI capital goods"
+        weight: 0.06
+        impact: demand_industrial
+      - name: rural_housing_demand
+        metric: "PMAY-G allocation"
+        weight: 0.05
+        impact: demand_rural
+      - name: road_railway_construction
+        metric: "NHAI/Railways km target"
+        weight: 0.08
+        impact: demand_infra
+      - name: capacity_utilization_industry
+        metric: "%"
+        weight: 0.07
+        impact: pricing_power_indicator
+
+    cost_drivers:
+      - name: pet_coke_coal_prices
+        metric: "Rs per 000 Kcal"
+        weight: 0.11
+        impact: fuel_cost_major
+        sensitivity: -0.6
+      - name: power_tariff
+        metric: "Rs per kWh"
+        weight: 0.08
+        impact: energy_cost
+        sensitivity: -0.4
+      - name: freight_diesel_cost
+        metric: "Rs per liter"
+        weight: 0.09
+        impact: logistics_expense
+        sensitivity: -0.5
+      - name: limestone_access
+        metric: "Linkage security"
+        weight: 0.06
+        impact: raw_material_continuity
+      - name: renewable_energy_mix
+        metric: "% solar/wind"
+        weight: 0.05
+        impact: cost_reduction_trajectory
+      - name: operating_leverage
+        metric: "Fixed cost %"
+        weight: 0.05
+        impact: margin_sensitivity_volume
+
+    porter_forces:
+      entry_barriers:
+        value: VERY_HIGH
+        drivers: ["limestone_reserves_location_specific", "capex_rs_10000_cr_per_mtpa", "logistics_network_decades", "environmental_clearances_years"]
+        impact: consolidated_oligopoly
+      supplier_power:
+        value: LOW
+        drivers: ["limestone_captive_mines", "coal_petcoke_global_commodities", "equipment_vendor_competition"]
+        impact: cost_control_achievable
+      buyer_power:
+        value: MODERATE
+        drivers: ["bulk_buyers_infra_negotiation", "retail_fragmentation", "brand_differentiation_low"]
+        impact: regional_pricing_variation
+      substitutes:
+        value: VERY_LOW
+        drivers: ["no_viable_construction_alternative", "fly_ash_slag_supplementary_only"]
+        impact: category_monopoly
+      rivalry:
+        value: INTENSE
+        drivers: ["ultratech_ambuja_shree_adani_top4_60%", "regional_players_fragmented", "overcapacity_65_70%_utilization", "price_wars_periodic"]
+        impact: margin_cyclicality
+
+    regulatory_drivers:
+      - name: environmental_norms_emission
+        weight: 0.06
+        impact: capex_compliance_burden
+      - name: limestone_mining_clearances
+        weight: 0.07
+        impact: capacity_expansion_timeline
+      - name: plastic_waste_coprocessing
+        metric: "Tonne per day mandate"
+        weight: 0.04
+        impact: alternative_fuel_benefit
+      - name: gst_rate_cement
+        metric: "28%"
+        weight: 0.05
+        impact: demand_elasticity
+      - name: state_taxes_royalty
+        weight: 0.04
+        impact: regional_cost_structure
+
+    sector_specific_drivers:
+      - name: volume_dispatches
+        metric: "Million tonnes"
+        source: filings
+        frequency: quarterly
+      - name: realization_per_tonne
+        metric: "Rs"
+        source: filings
+        frequency: quarterly
+      - name: ebitda_per_tonne
+        metric: "Rs"
+        source: filings
+        frequency: quarterly
+      - name: capacity_utilization
+        metric: "%"
+        source: filings
+        frequency: quarterly
+      - name: fuel_cost_per_tonne
+        metric: "Rs"
+        source: filings
+        frequency: quarterly
+      - name: renewable_energy_capacity
+        metric: "MW"
+        source: filings
+        frequency: annual
+      - name: clinker_factor
+        metric: "ratio"
+        source: filings
+        frequency: quarterly
+
+  # ---------------------------------------------------------------------------
+  # AUTO_ANCILLARY (ARE&M - Batteries)
+  # ---------------------------------------------------------------------------
+  auto_ancillary:
+    csv_sector_name: "Automobile & Ancillaries"
+    csv_industry_filter: ["Auto Ancillaries - Batteries", "Auto Ancillaries - Others"]
+    is_active: true
+
+    valuation_methods:
+      primary: "P/E"
+      secondary: "EV/EBITDA"
+      blend_weights:
+        dcf: 0.60
+        relative: 0.30
+        monte_carlo: 0.10
+
+    key_metrics:
+      - revenue_growth
+      - ebitda_margin
+      - roe
+      - roce
+      - oem_aftermarket_mix
+      - capacity_utilization
+
+    terminal_assumptions:
+      margin_range: [0.12, 0.18]  # EBITDA margin 12-18% for battery makers
+      roce_convergence: 0.20      # Moderate capital efficiency
+      reinvestment_rate: 0.45     # High reinvestment for EV transition capex
+
+    demand_drivers:
+      - name: vehicle_production_growth
+        metric: "2W/4W/CV units YoY %"
+        weight: 0.12
+        impact: oem_demand
+      - name: replacement_demand
+        metric: "Installed base aging"
+        weight: 0.10
+        impact: aftermarket_sales
+      - name: ev_penetration_rate
+        metric: "% of sales electric"
+        weight: 0.11
+        impact: lithium_ion_opportunity
+      - name: export_growth
+        metric: "YoY %"
+        weight: 0.06
+        impact: revenue_diversification
+      - name: telecom_industrial_demand
+        metric: "Tower/UPS growth %"
+        weight: 0.05
+        impact: non_auto_segment
+      - name: rural_vehicle_financing
+        metric: "Penetration %"
+        weight: 0.04
+        impact: 2w_3w_demand
+
+    cost_drivers:
+      - name: lead_prices
+        metric: "LME USD/MT"
+        weight: 0.13
+        impact: raw_material_cost_lead_acid
+        sensitivity: -0.7
+      - name: lithium_cobalt_nickel_prices
+        metric: "Index"
+        weight: 0.10
+        impact: lithium_ion_cell_cost
+        sensitivity: -0.6
+      - name: warranty_provision
+        metric: "% of sales"
+        weight: 0.06
+        impact: quality_cost_drag
+      - name: ev_capex_depreciation
+        metric: "Rs Cr per year"
+        weight: 0.07
+        impact: fixed_cost_burden_transition
+      - name: oem_price_reduction_pressure
+        metric: "Annual % demand"
+        weight: 0.05
+        impact: realization_erosion
+      - name: recycling_credit
+        metric: "Rs per battery"
+        weight: 0.04
+        impact: cost_offset_circular_economy
+
+    porter_forces:
+      entry_barriers:
+        value: MODERATE
+        drivers: ["oem_approval_process_2_3_years", "distribution_network_aftermarket", "technology_licensing_partnerships", "working_capital_inventory"]
+        impact: established_player_advantage
+      supplier_power:
+        value: HIGH
+        drivers: ["lead_global_commodity_volatility", "lithium_supply_chain_china_dependence", "separator_electrolyte_imports"]
+        impact: margin_volatility_high
+      buyer_power:
+        value: MODERATE
+        drivers: ["oem_concentration_negotiation_power", "aftermarket_fragmentation", "brand_loyalty_exide_amara_raja"]
+        impact: selective_pressure_oem_vs_aftermarket
+      substitutes:
+        value: MODERATE
+        drivers: ["lithium_ion_replacing_lead_acid_ev", "supercapacitors_emerging", "hydrogen_fuel_cells_long_term"]
+        impact: technology_disruption_risk
+      rivalry:
+        value: MODERATE
+        drivers: ["exide_amara_raja_duopoly_85%", "chinese_entrants_lithium_ion", "oem_backward_integration_threat"]
+        impact: stable_lead_acid_intense_lithium_ion
+
+    regulatory_drivers:
+      - name: vehicle_scrappage_policy
+        weight: 0.05
+        impact: replacement_demand_surge
+      - name: fame_ii_ev_subsidies
+        weight: 0.07
+        impact: ev_battery_demand
+      - name: pli_acc_batteries
+        metric: "40 GWh capacity target"
+        weight: 0.08
+        impact: lithium_ion_localization_capex_support
+      - name: lead_recycling_norms
+        weight: 0.04
+        impact: circular_economy_mandate
+      - name: emission_norms_bs6
+        weight: 0.03
+        impact: start_stop_battery_upgrade_demand
+
+    sector_specific_drivers:
+      - name: volume_growth
+        metric: "Million units YoY %"
+        source: filings
+        frequency: quarterly
+      - name: oem_aftermarket_mix
+        metric: "% revenue split"
+        source: filings
+        frequency: quarterly
+      - name: lithium_ion_revenue_share
+        metric: "%"
+        source: filings
+        frequency: quarterly
+      - name: lead_acid_realization
+        metric: "Rs per Ah"
+        source: filings
+        frequency: quarterly
+      - name: warranty_claims_ratio
+        metric: "% of sales"
+        source: filings
+        frequency: quarterly
+      - name: export_revenue
+        metric: "% of total"
+        source: filings
+        frequency: quarterly
+      - name: lithium_ion_capacity
+        metric: "GWh"
+        source: filings
+        frequency: annual
+
+# =============================================================================
+# Notes on Driver Weights
+# =============================================================================
+# All driver weights sum to approximately 1.00 (100%) across:
+#   - Demand drivers (6-7 drivers): 48-58%
+#   - Cost drivers (5-6 drivers): 36-45%
+#   - Regulatory drivers (4-5 drivers): 18-27%
+#   - Porter's forces: Qualitative assessment
+#   - Sector-specific drivers: Tracking metrics from filings
+#
+# Terminal assumptions based on:
+#   - Industry norms and historical ranges
+#   - Capital intensity of business model
+#   - Competitive dynamics and moat sustainability
+# =============================================================================
