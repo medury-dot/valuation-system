@@ -28,7 +28,7 @@ from typing import Optional
 from dotenv import load_dotenv
 
 from valuation_system.agents.news_scanner import NewsScannerAgent
-from valuation_system.agents.sector_analyst import SectorAnalystAgent
+from valuation_system.agents.group_analyst import GroupAnalystAgent
 from valuation_system.agents.valuator import ValuatorAgent
 from valuation_system.data.loaders.core_loader import CoreDataLoader
 from valuation_system.data.loaders.price_loader import PriceLoader
@@ -97,20 +97,28 @@ class OrchestratorAgent:
 
         # Load configs
         self.sectors_config = load_sectors_config()
-        self.companies_config = load_companies_config()
+        self.companies_config = load_companies_config()  # Keep for fallback
         self.active_sectors = get_active_sectors(self.sectors_config)
-        self.active_companies = get_active_companies(self.companies_config)
+
+        # Load companies from database (with YAML fallback)
+        self.active_companies = get_active_companies(
+            mysql_client=self.mysql,
+            use_yaml_fallback=True  # Safe during transition
+        )
+        logger.info(f"Loaded {len(self.active_companies)} active companies from {'database' if self.mysql else 'YAML'}")
 
         # Initialize agents
         self.news_scanner = None
         if self.mysql:
             self.news_scanner = NewsScannerAgent(self.mysql, self.llm, self.state)
 
-        self.sector_analysts = {}
+        self.group_analysts = {}
         if self.mysql:
             for sector_key in self.active_sectors:
-                self.sector_analysts[sector_key] = SectorAnalystAgent(
-                    sector_key, self.mysql, self.llm
+                self.group_analysts[sector_key] = GroupAnalystAgent(
+                    valuation_group=sector_key,
+                    mysql_client=self.mysql,
+                    llm_client=self.llm
                 )
 
         self.valuator = None
@@ -164,9 +172,9 @@ class OrchestratorAgent:
             else:
                 result['news_scan'] = 'SKIPPED' if not check_internet() else 'NO_SCANNER'
 
-            # 3. Update sector drivers
+            # 3. Update group drivers
             driver_changes = {}
-            for sector_key, analyst in self.sector_analysts.items():
+            for sector_key, analyst in self.group_analysts.items():
                 changes = analyst.update_drivers_from_news(significant)
                 driver_changes[sector_key] = len(changes)
             result['driver_changes'] = driver_changes
@@ -268,115 +276,225 @@ class OrchestratorAgent:
 
     def _sync_macro_from_csv(self) -> dict:
         """
-        Read latest macro data from CSV files, update Google Sheet if changed.
+        Read latest macro data from all CSV files, compute trends, update GSheet + MySQL.
         Called daily before valuation to ensure fresh macro data.
+
+        Handles 9 MACRO drivers from 3 sources:
+        - market_indicators.csv: gdp_growth, usd_inr, interest_rate_10y, repo_rate, pmi_composite
+        - iip_monthly.csv: iip_manufacturing (latest IIP Manufacturing index)
+        - cpi_monthly.csv: cpi_food_inflation (latest CPI food inflation YoY)
+        - wpi_monthly.csv: wpi_inflation (latest WPI YoY)
+        - plfs_quarterly.csv: unemployment_rate (latest PLFS UR)
+
+        Also syncs IIP sector indices → GROUP drivers and CPI categories → GROUP signals.
 
         Returns dict with sync results.
         """
         import pandas as pd
 
-        result = {'synced': 0, 'unchanged': 0, 'errors': []}
+        result = {'synced': 0, 'unchanged': 0, 'errors': [], 'group_synced': 0}
 
-        if not self.gsheet or not self.mysql:
-            logger.warning("GSheet or MySQL unavailable, skipping macro sync")
+        if not self.mysql:
+            logger.warning("MySQL unavailable, skipping macro sync")
             return {'status': 'SKIPPED', 'reason': 'dependencies_unavailable'}
 
+        macro_dir = os.getenv('MACRO_DATA_PATH',
+                              '/Users/ram/code/investment_strategies/data/macro')
+
         try:
-            # Path to macro data
-            macro_csv_path = os.getenv('MACRO_DATA_PATH',
-                                       '/Users/ram/code/investment_strategies/data/macro') + '/market_indicators.csv'
+            # ---------------------------------------------------------------
+            # 1. MARKET INDICATORS (existing 5 drivers)
+            # ---------------------------------------------------------------
+            market_csv = os.path.join(macro_dir, 'market_indicators.csv')
+            if os.path.exists(market_csv):
+                df_market = pd.read_csv(market_csv, comment='#')
+                df_market['date'] = pd.to_datetime(df_market['date'])
+                latest_date = df_market['date'].max()
+                latest_market = df_market[df_market['date'] == latest_date]
 
-            if not os.path.exists(macro_csv_path):
-                logger.warning(f"Macro CSV not found: {macro_csv_path}")
-                return {'status': 'SKIPPED', 'reason': 'csv_not_found'}
+                market_mapping = {
+                    'GDP Growth': ('gdp_growth', 'pct'),
+                    'USD INR': ('usd_inr', 'value'),
+                    '10 year bond yield (Source: FRED)': ('interest_rate_10y', 'pct'),
+                    'Repo Rate': ('repo_rate', 'pct'),
+                    'PMI composite': ('pmi_composite', 'value'),
+                }
 
-            # Read latest macro data
-            df = pd.read_csv(macro_csv_path, comment='#')
-            df['date'] = pd.to_datetime(df['date'])
-            latest_date = df['date'].max()
-            latest_data = df[df['date'] == latest_date]
+                logger.info(f"Syncing market indicators (as of {latest_date.strftime('%Y-%m-%d')})")
+                for csv_series, (driver_name, fmt) in market_mapping.items():
+                    self._sync_single_macro_driver(
+                        latest_market, csv_series, driver_name, fmt,
+                        df_market, result)
 
-            # Map CSV series names to our driver names
-            series_mapping = {
-                'GDP Growth': 'gdp_growth',
-                'USD INR': 'usd_inr',
-                '10 year bond yield (Source: FRED)': 'interest_rate_10y',
-                'Repo Rate': 'repo_rate',
-                'PMI composite': 'pmi_composite'
-            }
+            # ---------------------------------------------------------------
+            # 2. IIP — iip_manufacturing driver + GROUP sector signals
+            # ---------------------------------------------------------------
+            iip_csv = os.path.join(macro_dir, 'iip_monthly.csv')
+            if os.path.exists(iip_csv):
+                df_iip = pd.read_csv(iip_csv, comment='#')
+                df_iip['date'] = pd.to_datetime(df_iip['date'])
+                latest_iip_date = df_iip['date'].max()
+                latest_iip = df_iip[df_iip['date'] == latest_iip_date]
 
-            logger.info(f"Syncing macro data from CSV (as of {latest_date.strftime('%Y-%m-%d')})")
+                logger.info(f"Syncing IIP data (as of {latest_iip_date.strftime('%Y-%m-%d')})")
 
-            for csv_series, driver_name in series_mapping.items():
-                try:
-                    # Get value from CSV
-                    csv_row = latest_data[latest_data['series_name'] == csv_series]
-                    if len(csv_row) == 0:
-                        logger.warning(f"Series '{csv_series}' not found in CSV")
-                        result['errors'].append(f"{driver_name}: series not found")
-                        continue
+                # MACRO driver: iip_manufacturing
+                mfg = latest_iip[latest_iip['series_name'] == 'Manufacturing']
+                if not mfg.empty:
+                    val = float(mfg['value'].values[0])
+                    trend = self._compute_trend(df_iip, 'Manufacturing', months=3)
+                    self._update_driver('MACRO', 'iip_manufacturing', f"{val:.1f}",
+                                       trend=trend, result=result)
 
-                    csv_value = csv_row['value'].values[0]
+                # IIP → GROUP driver mapping
+                iip_group_map = {
+                    'Manufacture of motor vehicles, trailers and semi-trailers': 'AUTO',
+                    'Manufacture of pharmaceuticals, medicinal chemical and botanical products': 'HEALTHCARE',
+                    'Manufacture of basic metals': 'MATERIALS_METALS',
+                    'Manufacture of chemicals and chemical products': 'MATERIALS_CHEMICALS',
+                    'Manufacture of food products': 'CONSUMER_STAPLES',
+                    'Manufacture of textiles': 'CONSUMER_DISCRETIONARY',
+                    'Manufacture of electrical equipment': 'INDUSTRIALS',
+                    'Electricity': 'ENERGY_UTILITIES',
+                    'Manufacture of computer, electronic and optical products': 'TECHNOLOGY',
+                    'Mining': 'MATERIALS_METALS',
+                }
+                for iip_series, vg in iip_group_map.items():
+                    row = latest_iip[latest_iip['series_name'] == iip_series]
+                    if not row.empty:
+                        val = float(row['value'].values[0])
+                        trend = self._compute_trend(df_iip, iip_series, months=3)
+                        driver_name = f"iip_{vg.lower()}"
+                        self._update_group_driver(vg, driver_name, f"{val:.1f}",
+                                                  trend=trend, result=result)
 
-                    # Format value based on driver type
-                    if driver_name in ['gdp_growth', 'interest_rate_10y', 'repo_rate']:
-                        # These are stored as decimals in CSV (0.063 = 6.3%)
-                        if csv_value < 1:
-                            formatted_value = f"{csv_value * 100:.2f}%"
+            # ---------------------------------------------------------------
+            # 3. CPI — cpi_food_inflation driver + GROUP signals
+            # ---------------------------------------------------------------
+            cpi_csv = os.path.join(macro_dir, 'cpi_monthly.csv')
+            if os.path.exists(cpi_csv):
+                df_cpi = pd.read_csv(cpi_csv, comment='#')
+                df_cpi['date'] = pd.to_datetime(df_cpi['date'])
+                latest_cpi_date = df_cpi['date'].max()
+                # Use Combined only for MACRO driver
+                df_cpi_combined = df_cpi[df_cpi['category'] == 'CPI_Combined']
+                latest_cpi = df_cpi_combined[df_cpi_combined['date'] == latest_cpi_date]
+
+                logger.info(f"Syncing CPI data (as of {latest_cpi_date.strftime('%Y-%m-%d')})")
+
+                # MACRO driver: cpi_food_inflation (YoY from Food and beverages index)
+                food = latest_cpi[latest_cpi['series_name'] == 'Food and beverages']
+                if not food.empty:
+                    current_idx = float(food['value'].values[0])
+                    # YoY: compare to same month previous year
+                    yoy_date = latest_cpi_date - pd.DateOffset(years=1)
+                    yoy_row = df_cpi_combined[
+                        (df_cpi_combined['series_name'] == 'Food and beverages') &
+                        (df_cpi_combined['date'].dt.month == yoy_date.month) &
+                        (df_cpi_combined['date'].dt.year == yoy_date.year)
+                    ]
+                    if not yoy_row.empty:
+                        prev_idx = float(yoy_row['value'].values[0])
+                        yoy_pct = ((current_idx / prev_idx) - 1) * 100
+                        trend = self._compute_trend(df_cpi_combined, 'Food and beverages', months=3)
+                        self._update_driver('MACRO', 'cpi_food_inflation',
+                                           f"{yoy_pct:.2f}%", trend=trend, result=result)
+
+                # CPI → GROUP margin signal mapping
+                cpi_group_map = {
+                    'Food and beverages': 'CONSUMER_STAPLES',
+                    'Fuel and light': 'ENERGY_UTILITIES',
+                    'Clothing and footwear': 'CONSUMER_DISCRETIONARY',
+                    'Housing': 'REAL_ESTATE_INFRA',
+                    'Health': 'HEALTHCARE',
+                    'Transport and communication': 'AUTO',
+                }
+                for cpi_series, vg in cpi_group_map.items():
+                    row = latest_cpi[latest_cpi['series_name'] == cpi_series]
+                    if not row.empty:
+                        val = float(row['value'].values[0])
+                        trend = self._compute_trend(df_cpi_combined, cpi_series, months=3)
+                        driver_name = f"cpi_{vg.lower()}"
+                        self._update_group_driver(vg, driver_name, f"{val:.1f}",
+                                                  trend=trend, result=result)
+
+            # ---------------------------------------------------------------
+            # 4. WPI — wpi_inflation MACRO driver
+            # ---------------------------------------------------------------
+            wpi_csv = os.path.join(macro_dir, 'wpi_monthly.csv')
+            if os.path.exists(wpi_csv):
+                df_wpi = pd.read_csv(wpi_csv, comment='#')
+                df_wpi['date'] = pd.to_datetime(df_wpi['date'])
+                latest_wpi_date = df_wpi['date'].max()
+                latest_wpi = df_wpi[df_wpi['date'] == latest_wpi_date]
+
+                logger.info(f"Syncing WPI data (as of {latest_wpi_date.strftime('%Y-%m-%d')})")
+
+                # WPI overall YoY
+                overall = latest_wpi[latest_wpi['series_name'] == 'Wholesale Price Index']
+                if not overall.empty:
+                    current_idx = float(overall['value'].values[0])
+                    yoy_date = latest_wpi_date - pd.DateOffset(years=1)
+                    yoy_row = df_wpi[
+                        (df_wpi['series_name'] == 'Wholesale Price Index') &
+                        (df_wpi['date'].dt.month == yoy_date.month) &
+                        (df_wpi['date'].dt.year == yoy_date.year)
+                    ]
+                    if not yoy_row.empty:
+                        prev_idx = float(yoy_row['value'].values[0])
+                        yoy_pct = ((current_idx / prev_idx) - 1) * 100
+                        trend = self._compute_trend(df_wpi, 'Wholesale Price Index', months=3)
+                        self._update_driver('MACRO', 'wpi_inflation',
+                                           f"{yoy_pct:.2f}%", trend=trend, result=result)
+
+            # ---------------------------------------------------------------
+            # 5. PLFS — unemployment_rate MACRO driver
+            # ---------------------------------------------------------------
+            plfs_csv = os.path.join(macro_dir, 'plfs_quarterly.csv')
+            if os.path.exists(plfs_csv):
+                df_plfs = pd.read_csv(plfs_csv, comment='#')
+                df_plfs['date'] = pd.to_datetime(df_plfs['date'])
+                latest_plfs_date = df_plfs['date'].max()
+
+                logger.info(f"Syncing PLFS data (as of {latest_plfs_date.strftime('%Y-%m-%d')})")
+
+                # Find overall UR for 15+ age group, total sector
+                ur_series = [s for s in df_plfs['series_name'].unique()
+                             if 'Unemployment Rate' in s and '- total' in s.lower()
+                             and '15-29' not in s]
+                if ur_series:
+                    ur_name = ur_series[0]
+                    ur_latest = df_plfs[
+                        (df_plfs['series_name'] == ur_name) &
+                        (df_plfs['date'] == latest_plfs_date)
+                    ]
+                    if not ur_latest.empty:
+                        val = float(ur_latest['value'].values[0])
+                        # Simple trend: compare last 2 quarters
+                        dates = sorted(df_plfs[df_plfs['series_name'] == ur_name]['date'].unique())
+                        if len(dates) >= 2:
+                            prev = df_plfs[
+                                (df_plfs['series_name'] == ur_name) &
+                                (df_plfs['date'] == dates[-2])
+                            ]
+                            if not prev.empty:
+                                prev_val = float(prev['value'].values[0])
+                                if val > prev_val + 0.3:
+                                    trend = 'UP'
+                                elif val < prev_val - 0.3:
+                                    trend = 'DOWN'
+                                else:
+                                    trend = 'STABLE'
+                            else:
+                                trend = 'STABLE'
                         else:
-                            # Already in percentage format
-                            formatted_value = f"{csv_value:.2f}%"
-                    else:
-                        # usd_inr, pmi_composite - store as is
-                        formatted_value = f"{csv_value:.2f}"
+                            trend = 'STABLE'
+                        self._update_driver('MACRO', 'unemployment_rate',
+                                           f"{val:.1f}%", trend=trend, result=result)
 
-                    # Get current value from MySQL
-                    current = self.mysql.query_one(
-                        "SELECT current_value FROM vs_drivers WHERE driver_level = 'MACRO' AND driver_name = %s",
-                        (driver_name,)
-                    )
-
-                    current_value = current['current_value'] if current else None
-
-                    # Check if changed
-                    if current_value != formatted_value:
-                        logger.info(f"  {driver_name}: {current_value} → {formatted_value}")
-
-                        # Update Google Sheet
-                        if self.gsheet:
-                            self.gsheet.update_driver_value(
-                                'macro_drivers',  # Uses SHEET_NAMES mapping
-                                driver_name,
-                                formatted_value,
-                                column='current_value'
-                            )
-
-                        # Update MySQL
-                        if current:
-                            self.mysql.execute(
-                                """UPDATE vs_drivers
-                                   SET current_value = %s, last_updated = NOW()
-                                   WHERE driver_level = 'MACRO' AND driver_name = %s""",
-                                (formatted_value, driver_name)
-                            )
-                        else:
-                            # Insert if not exists
-                            self.mysql.execute(
-                                """INSERT INTO vs_drivers
-                                   (driver_level, driver_name, current_value, weight, last_updated)
-                                   VALUES ('MACRO', %s, %s, 0.20, NOW())""",
-                                (driver_name, formatted_value)
-                            )
-
-                        result['synced'] += 1
-                    else:
-                        result['unchanged'] += 1
-
-                except Exception as e:
-                    logger.error(f"Error syncing {driver_name}: {e}")
-                    result['errors'].append(f"{driver_name}: {str(e)}")
-
-            logger.info(f"Macro sync complete: {result['synced']} updated, {result['unchanged']} unchanged")
+            logger.info(f"Macro sync complete: {result['synced']} MACRO updated, "
+                        f"{result['group_synced']} GROUP updated, "
+                        f"{result['unchanged']} unchanged")
             result['status'] = 'SUCCESS'
 
         except Exception as e:
@@ -385,6 +503,158 @@ class OrchestratorAgent:
             result['error'] = str(e)
 
         return result
+
+    def _compute_trend(self, df: 'pd.DataFrame', series_name: str, months: int = 3) -> str:
+        """
+        Compute trend (UP/DOWN/STABLE) from last N months of data.
+        Uses simple linear slope of the time series.
+        """
+        series_data = df[df['series_name'] == series_name].sort_values('date')
+        if len(series_data) < 2:
+            return 'STABLE'
+
+        # Take last N data points
+        recent = series_data.tail(months)
+        values = recent['value'].astype(float).tolist()
+
+        if len(values) < 2:
+            return 'STABLE'
+
+        # Simple: compare first and last
+        first_val = values[0]
+        last_val = values[-1]
+
+        if first_val == 0:
+            return 'STABLE'
+
+        pct_change = ((last_val - first_val) / abs(first_val)) * 100
+
+        if pct_change > 2:
+            return 'UP'
+        elif pct_change < -2:
+            return 'DOWN'
+        else:
+            return 'STABLE'
+
+    def _sync_single_macro_driver(self, latest_data, csv_series: str,
+                                  driver_name: str, fmt: str,
+                                  full_df: 'pd.DataFrame', result: dict):
+        """Sync a single macro driver from market_indicators.csv."""
+        try:
+            csv_row = latest_data[latest_data['series_name'] == csv_series]
+            if len(csv_row) == 0:
+                logger.warning(f"Series '{csv_series}' not found in CSV")
+                result['errors'].append(f"{driver_name}: series not found")
+                return
+
+            csv_value = csv_row['value'].values[0]
+
+            if fmt == 'pct':
+                if csv_value < 1:
+                    formatted_value = f"{csv_value * 100:.2f}%"
+                else:
+                    formatted_value = f"{csv_value:.2f}%"
+            else:
+                formatted_value = f"{csv_value:.2f}"
+
+            trend = self._compute_trend(full_df, csv_series, months=3)
+            self._update_driver('MACRO', driver_name, formatted_value,
+                               trend=trend, result=result)
+
+        except Exception as e:
+            logger.error(f"Error syncing {driver_name}: {e}")
+            result['errors'].append(f"{driver_name}: {str(e)}")
+
+    def _update_driver(self, level: str, driver_name: str, value: str,
+                       trend: str = 'STABLE', result: dict = None):
+        """Update a single driver in MySQL and optionally GSheet."""
+        try:
+            current = self.mysql.query_one(
+                "SELECT current_value, trend FROM vs_drivers WHERE driver_level = %s AND driver_name = %s",
+                (level, driver_name)
+            )
+
+            current_value = current['current_value'] if current else None
+
+            if current_value != value or (current and current.get('trend') != trend):
+                logger.info(f"  {driver_name}: {current_value} → {value} (trend={trend})")
+
+                if self.gsheet and level == 'MACRO':
+                    try:
+                        self.gsheet.update_driver_value(
+                            'macro_drivers', driver_name, value, column='current_value')
+                    except Exception as e:
+                        logger.warning(f"GSheet update failed for {driver_name}: {e}")
+
+                if current:
+                    self.mysql.execute(
+                        """UPDATE vs_drivers
+                           SET current_value = %s, trend = %s, last_updated = NOW()
+                           WHERE driver_level = %s AND driver_name = %s""",
+                        (value, trend, level, driver_name)
+                    )
+                else:
+                    self.mysql.execute(
+                        """INSERT INTO vs_drivers
+                           (driver_level, driver_name, current_value, trend, weight, last_updated)
+                           VALUES (%s, %s, %s, %s, 0.0222, NOW())""",
+                        (level, driver_name, value, trend)
+                    )
+
+                if result:
+                    result['synced'] += 1
+            else:
+                if result:
+                    result['unchanged'] += 1
+
+        except Exception as e:
+            logger.error(f"Error updating driver {driver_name}: {e}")
+            if result:
+                result['errors'].append(f"{driver_name}: {str(e)}")
+
+    def _update_group_driver(self, valuation_group: str, driver_name: str,
+                             value: str, trend: str = 'STABLE', result: dict = None):
+        """Update or create a GROUP-level driver for sector-mapped macro data."""
+        try:
+            current = self.mysql.query_one(
+                """SELECT current_value FROM vs_drivers
+                   WHERE driver_level = 'GROUP' AND driver_name = %s
+                   AND valuation_group = %s""",
+                (driver_name, valuation_group)
+            )
+
+            current_value = current['current_value'] if current else None
+
+            if current_value != value:
+                logger.debug(f"  GROUP {valuation_group}/{driver_name}: {current_value} → {value}")
+
+                if current:
+                    self.mysql.execute(
+                        """UPDATE vs_drivers
+                           SET current_value = %s, trend = %s, last_updated = NOW()
+                           WHERE driver_level = 'GROUP' AND driver_name = %s
+                           AND valuation_group = %s""",
+                        (value, trend, driver_name, valuation_group)
+                    )
+                else:
+                    self.mysql.execute(
+                        """INSERT INTO vs_drivers
+                           (driver_level, driver_name, valuation_group, current_value,
+                            trend, weight, impact_direction, updated_by, last_updated)
+                           VALUES ('GROUP', %s, %s, %s, %s, 0.10, 'POSITIVE', 'mospi_sync', NOW())""",
+                        (driver_name, valuation_group, value, trend)
+                    )
+
+                if result:
+                    result['group_synced'] += 1
+            else:
+                if result:
+                    result['unchanged'] += 1
+
+        except Exception as e:
+            logger.error(f"Error updating group driver {valuation_group}/{driver_name}: {e}")
+            if result:
+                result['errors'].append(f"{valuation_group}/{driver_name}: {str(e)}")
 
     # =========================================================================
     # DAILY VALUATION
@@ -528,8 +798,8 @@ class OrchestratorAgent:
         # Get sector outlook
         sector_outlook = {'sector': '', 'outlook_score': 0, 'outlook_label': 'NEUTRAL',
                           'growth_adjustment': 0, 'margin_adjustment': 0}
-        if sector_key in self.sector_analysts:
-            sector_outlook = self.sector_analysts[sector_key].calculate_sector_outlook()
+        if sector_key in self.group_analysts:
+            sector_outlook = self.group_analysts[sector_key].calculate_outlook()
 
         # Get sector config
         sector_config = self.active_sectors.get(sector_key, {})

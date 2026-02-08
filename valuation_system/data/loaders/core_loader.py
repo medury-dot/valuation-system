@@ -32,6 +32,86 @@ logger = logging.getLogger(__name__)
 load_dotenv(os.path.join(os.path.dirname(__file__), '..', '..', 'config', '.env'))
 
 
+# Maps each metric to its available frequencies in the core CSV.
+# Order = preference (first available wins for annualization).
+# Frequencies: 'quarterly' (sales_148), 'half_yearly' (h1_2025_*), 'annual' (2025_*)
+METRIC_FREQUENCY_MAP = {
+    # --- P&L items available at QUARTERLY + ANNUAL ---
+    # Quarterly preferred (annual columns unreliable for ~818 companies)
+    'sales': ['quarterly', 'annual'],
+    'pbidt': ['quarterly', 'annual'],
+    'pat': ['quarterly', 'annual'],
+    'interest': ['quarterly', 'annual'],
+    'op_profit': ['quarterly', 'annual'],
+    'pbt_excp': ['quarterly', 'annual'],
+    'totalincome': ['quarterly', 'annual'],
+    # --- P&L items available at QUARTERLY only ---
+    'empcost': ['quarterly'],
+    'opex': ['quarterly'],
+    'genadminexp': ['quarterly'],
+    'totalexp': ['quarterly'],
+    'pbdt': ['quarterly'],
+    'grs_sales': ['quarterly'],
+    # --- Cash flow items at HALF-YEARLY + ANNUAL ---
+    'cashflow_ops': ['half_yearly', 'annual'],
+    'cashflow_investing': ['half_yearly', 'annual'],
+    'cashflow_financing': ['half_yearly', 'annual'],
+    # --- Cash flow items at HALF-YEARLY only ---
+    'cashflow_purchase_fixedassets': ['half_yearly'],  # = capex (annual equivalent: pur_of_fixed_assets)
+    'cashflow_sale_fixedassets': ['half_yearly'],      # (annual equivalent: sale_of_fixed_assets)
+    # --- Balance sheet items at HALF-YEARLY + ANNUAL (point-in-time) ---
+    'inventories': ['half_yearly', 'annual'],
+    'sundrydebtors': ['half_yearly', 'annual'],
+    'tot_liab': ['half_yearly', 'annual'],
+    'LT_borrow': ['half_yearly', 'annual'],
+    'tot_assets': ['half_yearly', 'annual'],
+    # --- Balance sheet items at HALF-YEARLY only ---
+    'Trade_payables': ['half_yearly'],   # Title case for HY
+    'acc_depr': ['half_yearly'],         # HY only (with 'r')
+    'fixed_assets': ['half_yearly'],
+    'cash_and_bank': ['half_yearly'],    # HY only, no annual
+    # --- Balance sheet / P&L items at ANNUAL only ---
+    'trade_payables': ['annual'],        # lowercase for annual
+    'acc_dep': ['annual'],               # Annual only (no 'r')
+    'pur_of_fixed_assets': ['annual'],   # (HY equivalent: cashflow_purchase_fixedassets)
+    'sale_of_fixed_assets': ['annual'],  # (HY equivalent: cashflow_sale_fixedassets)
+    'debt': ['annual'],
+    'networth': ['annual'],
+    'totalassets': ['annual'],
+    'grsblk': ['annual'],
+    'netblk': ['annual'],
+    'cwip': ['annual'],
+    'share_capital': ['annual'],
+    'total_reserves': ['annual'],
+    'fcf_per_share': ['annual'],
+    # --- Ratios at ANNUAL only ---
+    'roe': ['annual'],
+    'roce': ['annual'],
+    'roa': ['annual'],
+    'gpm': ['annual'],
+    'ebidtm': ['annual'],
+    'pbidtm': ['annual'],
+    'patm': ['annual'],
+    'ptm': ['annual'],
+    'inv_tr': ['annual'],
+    'recv_days': ['annual'],
+    'inv_days': ['annual'],
+    'paybl_days': ['annual'],
+    'debtor_tr': ['annual'],
+    'ccc': ['annual'],
+    'debt_mcap_ratio': ['annual'],
+    # --- Point-in-time at QUARTERLY only ---
+    'actualmcap_in_crores': ['quarterly'],
+    'promoter': ['quarterly'],
+    # --- Banking-specific ---
+    'bank_sales': ['quarterly'],
+    'bank_pbidt': ['quarterly'],
+    'bank_pat': ['quarterly'],
+    'gnpa': ['quarterly', 'annual'],
+    'nnpa': ['quarterly', 'annual'],
+}
+
+
 class CoreDataLoader:
     """
     Load and process the core-all-input CSV for valuation.
@@ -171,6 +251,53 @@ class CoreDataLoader:
 
         row = matches.iloc[0]
 
+        # Extract quarterly series once — reused for both _quarterly keys
+        # and quarterly-derived _annual keys (preferred over year-based columns)
+        sales_qtr = self._extract_quarterly_series(row, 'sales')
+        pbidt_qtr = self._extract_quarterly_series(row, 'pbidt')
+        pat_qtr = self._extract_quarterly_series(row, 'pat')
+        op_profit_qtr = self._extract_quarterly_series(row, 'op_profit')
+        interest_qtr = self._extract_quarterly_series(row, 'interest')
+        pbt_excp_qtr = self._extract_quarterly_series(row, 'pbt_excp')
+
+        # Build annual from quarterly sums (preferred — annual columns are unreliable)
+        # Falls back to year-based columns only if quarterly yields nothing
+        sales_annual = self._annualize_quarterly(sales_qtr) or self._extract_year_series(row, 'sales')
+        pbidt_annual = self._annualize_quarterly(pbidt_qtr) or self._extract_year_series(row, 'pbidt')
+        pat_annual = self._annualize_quarterly(pat_qtr) or self._extract_year_series(row, 'pat')
+        interest_annual = self._annualize_quarterly(interest_qtr) or self._extract_year_series(row, 'interest')
+        op_profit_annual = self._annualize_quarterly(op_profit_qtr) or self._extract_year_series(row, 'op_profit')
+        pbt_excp_annual = self._annualize_quarterly(pbt_excp_qtr) or self._extract_year_series(row, 'pbt_excp')
+
+        # Extract half-yearly cash flow series — annualize for yearly keys
+        cfo_hy = self._extract_halfyearly_series(row, 'cashflow_ops')
+        cfi_hy = self._extract_halfyearly_series(row, 'cashflow_investing')
+        cff_hy = self._extract_halfyearly_series(row, 'cashflow_financing')
+        capex_hy = self._extract_halfyearly_series(row, 'cashflow_purchase_fixedassets')
+        asset_sales_hy = self._extract_halfyearly_series(row, 'cashflow_sale_fixedassets')
+        acc_depr_hy = self._extract_halfyearly_series(row, 'acc_depr')
+
+        # Cash flow annual: prefer half-yearly sums, then annual columns
+        cashflow_ops_annual = (self._annualize_halfyearly(cfo_hy)
+                               or self._extract_year_series(row, 'cashflow_ops'))
+        cashflow_inv_annual = (self._annualize_halfyearly(cfi_hy)
+                               or self._extract_year_series(row, 'cashflow_investing'))
+        cashflow_fin_annual = (self._annualize_halfyearly(cff_hy)
+                               or self._extract_year_series(row, 'cashflow_financing'))
+        # Capex annual: prefer half-yearly sums, then annual columns
+        pur_fa_annual = (self._annualize_halfyearly(capex_hy)
+                         or self._extract_year_series(row, 'pur_of_fixed_assets'))
+        sale_fa_annual = (self._annualize_halfyearly(asset_sales_hy)
+                          or self._extract_year_series(row, 'sale_of_fixed_assets'))
+        # Accumulated depreciation annual: prefer half-yearly (use latest h2 value per FY)
+        # acc_dep is a balance sheet item (point-in-time), not a flow — use year-end (h2)
+        acc_dep_annual = self._extract_year_series(row, 'acc_dep')
+        if acc_depr_hy:
+            # For acc_dep, use h2 (year-end) values from half-yearly as they're more current
+            for (yr, half), val in acc_depr_hy.items():
+                if half == 2:  # h2 = year-end balance
+                    acc_dep_annual[yr] = val
+
         return {
             # Identification
             'company_name': row['Company Name'],
@@ -182,27 +309,27 @@ class CoreDataLoader:
             'chairman': row.get('CD_Chairman', ''),
             'auditor': row.get('CD_Auditor', ''),
 
-            # Income Statement — ANNUAL (year-based, preferred for DCF)
-            'sales_annual': self._extract_year_series(row, 'sales'),
-            'pbidt_annual': self._extract_year_series(row, 'pbidt'),
-            'pat_annual': self._extract_year_series(row, 'pat'),
+            # Income Statement — ANNUAL (quarterly-derived, falls back to year-based)
+            'sales_annual': sales_annual,
+            'pbidt_annual': pbidt_annual,
+            'pat_annual': pat_annual,
             'total_income': self._extract_year_series(row, 'totalincome'),
             'net_profit': self._extract_year_series(row, 'netprofit'),
 
             # Income Statement — QUARTERLY (index-based)
-            'sales_quarterly': self._extract_quarterly_series(row, 'sales'),
-            'pbidt_quarterly': self._extract_quarterly_series(row, 'pbidt'),
-            'pat_quarterly': self._extract_quarterly_series(row, 'pat'),
-            'op_profit_quarterly': self._extract_quarterly_series(row, 'op_profit'),
+            'sales_quarterly': sales_qtr,
+            'pbidt_quarterly': pbidt_qtr,
+            'pat_quarterly': pat_qtr,
+            'op_profit_quarterly': op_profit_qtr,
 
             # P&L Detail — QUARTERLY only (no year-based columns exist)
             'employee_cost_quarterly': self._extract_quarterly_series(row, 'empcost'),
             'operating_expenses_quarterly': self._extract_quarterly_series(row, 'opex'),
             'gen_admin_expenses_quarterly': self._extract_quarterly_series(row, 'genadminexp'),
             'total_expenditure_quarterly': self._extract_quarterly_series(row, 'totalexp'),
-            'interest_quarterly': self._extract_quarterly_series(row, 'interest'),
+            'interest_quarterly': interest_qtr,
             'pbdt_quarterly': self._extract_quarterly_series(row, 'pbdt'),
-            'pbt_excp_quarterly': self._extract_quarterly_series(row, 'pbt_excp'),
+            'pbt_excp_quarterly': pbt_excp_qtr,
 
             # Balance Sheet (year-based annual)
             'debt': self._extract_year_series(row, 'debt'),
@@ -211,7 +338,9 @@ class CoreDataLoader:
             'gross_block': self._extract_year_series(row, 'grsblk'),
             'net_block': self._extract_year_series(row, 'netblk'),
             'cwip': self._extract_year_series(row, 'cwip'),
-            'lt_borrowings': self._extract_year_series(row, 'LT_borrow'),
+            'LT_borrow': self._extract_year_series(row, 'LT_borrow'),  # For NWC calculation
+            'lt_borrowings': self._extract_year_series(row, 'LT_borrow'),  # Alias
+            'tot_liab': self._extract_year_series(row, 'tot_liab'),  # Total liabilities for NWC
             'trade_payables': self._extract_year_series(row, 'trade_payables'),
             'accumulated_depreciation': self._extract_year_series(row, 'acc_dep'),
             'inventories': self._extract_year_series(row, 'inventories'),
@@ -219,12 +348,12 @@ class CoreDataLoader:
             'share_capital': self._extract_year_series(row, 'share_capital'),
             'total_reserves': self._extract_year_series(row, 'total_reserves'),
 
-            # Actual Capex & Asset Sales (year-based annual)
-            'pur_of_fixed_assets': self._extract_year_series(row, 'pur_of_fixed_assets'),
-            'sale_of_fixed_assets': self._extract_year_series(row, 'sale_of_fixed_assets'),
+            # Actual Capex & Asset Sales (half-yearly-derived, falls back to annual)
+            'pur_of_fixed_assets': pur_fa_annual,
+            'sale_of_fixed_assets': sale_fa_annual,
 
-            # Actual Accumulated Depreciation — yearly column is 'acc_dep' (no 'r')
-            'acc_dep_yearly': self._extract_year_series(row, 'acc_dep'),
+            # Actual Accumulated Depreciation (h2 half-yearly preferred, falls back to annual)
+            'acc_dep_yearly': acc_dep_annual,
 
             # Cash Flow — QUARTERLY (index-based)
             'cfo_quarterly': self._extract_quarterly_series(row, 'cashflow_ops'),
@@ -234,15 +363,15 @@ class CoreDataLoader:
             'asset_sales_quarterly': self._extract_quarterly_series(
                 row, 'cashflow_sale_fixedassets'),
 
-            # Cash Flow — YEARLY (actual annual totals, not derived from quarterly)
-            'cashflow_ops_yearly': self._extract_year_series(row, 'cashflow_ops'),
-            'cashflow_investing_yearly': self._extract_year_series(row, 'cashflow_investing'),
-            'cashflow_financing_yearly': self._extract_year_series(row, 'cashflow_financing'),
+            # Cash Flow — YEARLY (half-yearly-derived, falls back to annual columns)
+            'cashflow_ops_yearly': cashflow_ops_annual,
+            'cashflow_investing_yearly': cashflow_inv_annual,
+            'cashflow_financing_yearly': cashflow_fin_annual,
 
-            # Actual P&L Items — YEARLY
-            'pbt_excp_yearly': self._extract_year_series(row, 'pbt_excp'),
-            'interest_yearly': self._extract_year_series(row, 'interest'),
-            'op_profit_yearly': self._extract_year_series(row, 'op_profit'),
+            # Actual P&L Items — YEARLY (quarterly-derived, falls back to annual)
+            'pbt_excp_yearly': pbt_excp_annual,
+            'interest_yearly': interest_annual,
+            'op_profit_yearly': op_profit_annual,
 
             # FCF per share (yearly, limited: recent years only)
             'fcf_per_share_yearly': self._extract_year_series(row, 'fcf_per_share'),
@@ -250,8 +379,12 @@ class CoreDataLoader:
             # Half-yearly data (h1=Apr-Sep, h2=Oct-Mar of fiscal year)
             'cash_and_bank_hy': self._extract_halfyearly_series(row, 'cash_and_bank'),
             'inventories_hy': self._extract_halfyearly_series(row, 'inventories'),
+            'sundry_debtors_hy': self._extract_halfyearly_series(row, 'sundrydebtors'),
+            'trade_payables_hy': self._extract_halfyearly_series(row, 'Trade_payables'),  # Note: Title case!
             'fixed_assets_hy': self._extract_halfyearly_series(row, 'fixed_assets'),
             'tot_assets_hy': self._extract_halfyearly_series(row, 'tot_assets'),
+            'tot_liab_hy': self._extract_halfyearly_series(row, 'tot_liab'),  # Total liabilities for NWC
+            'LT_borrow_hy': self._extract_halfyearly_series(row, 'LT_borrow'),  # LT borrowings for NWC
 
             # Profitability Ratios (year-based annual)
             'roe': self._extract_year_series(row, 'roe'),
@@ -290,11 +423,11 @@ class CoreDataLoader:
             'gnpa': self._extract_year_series(row, 'gnpa'),
             'nnpa': self._extract_year_series(row, 'nnpa'),
 
-            # === BACKWARD COMPAT ALIASES (use annual where available) ===
-            'sales': self._extract_year_series(row, 'sales'),
-            'pbidt': self._extract_year_series(row, 'pbidt'),
-            'pat': self._extract_year_series(row, 'pat'),
-            'op_profit': self._extract_quarterly_series(row, 'op_profit'),
+            # === BACKWARD COMPAT ALIASES (quarterly-derived, same as _annual keys) ===
+            'sales': sales_annual,
+            'pbidt': pbidt_annual,
+            'pat': pat_annual,
+            'op_profit': op_profit_qtr,
             'cfo': self._annualize_quarterly(
                 self._extract_quarterly_series(row, 'cashflow_ops')),
             'cfi': self._annualize_quarterly(
@@ -303,14 +436,12 @@ class CoreDataLoader:
                 self._extract_quarterly_series(row, 'cashflow_purchase_fixedassets')),
             'asset_sales': self._annualize_quarterly(
                 self._extract_quarterly_series(row, 'cashflow_sale_fixedassets')),
-            'interest_expense': self._annualize_quarterly(
-                self._extract_quarterly_series(row, 'interest')),
+            'interest_expense': self._annualize_quarterly(interest_qtr),
             'employee_cost': self._annualize_quarterly(
                 self._extract_quarterly_series(row, 'empcost')),
             'operating_expenses': self._annualize_quarterly(
                 self._extract_quarterly_series(row, 'opex')),
-            'pbt_excl_exceptional': self._annualize_quarterly(
-                self._extract_quarterly_series(row, 'pbt_excp')),
+            'pbt_excl_exceptional': self._annualize_quarterly(pbt_excp_qtr),
             'market_cap': self._extract_quarterly_series(row, 'actualmcap_in_crores'),
             'promoter_holding': self._extract_quarterly_series(row, 'promoter'),
             'promoter_pledged': self._extract_quarterly_series(
@@ -389,6 +520,33 @@ class CoreDataLoader:
         for fy, quarters in sorted(fy_groups.items()):
             if len(quarters) == 4:
                 result[fy] = round(sum(quarters.values()), 2)
+
+        return result
+
+    def _annualize_halfyearly(self, halfyearly_series: dict) -> dict:
+        """
+        Convert half-yearly series to annual fiscal-year-keyed dict.
+        Sums h1 + h2 for each fiscal year (flow items only).
+        Only includes complete fiscal years (both h1 and h2 present).
+
+        Input: {(year, 1): value, (year, 2): value, ...}
+        Returns: {fiscal_year: annual_sum}
+        """
+        if not halfyearly_series:
+            return {}
+
+        # Group by fiscal year
+        fy_groups = {}
+        for (year, half), val in halfyearly_series.items():
+            if year not in fy_groups:
+                fy_groups[year] = {}
+            fy_groups[year][half] = val
+
+        # Sum complete fiscal years (both h1 and h2)
+        result = {}
+        for fy, halves in sorted(fy_groups.items()):
+            if len(halves) == 2 and 1 in halves and 2 in halves:
+                result[fy] = round(halves[1] + halves[2], 2)
 
         return result
 

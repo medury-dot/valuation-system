@@ -1,16 +1,18 @@
 """
-Excel Report Generator for Valuation System (v2)
+Excel Report Generator for Valuation System (v3)
 Generates a comprehensive .xlsx with:
 - Assumptions as Single Source of Truth (all other sheets reference it)
 - Cross-sheet formulas (no hardcoded values in DCF/Relative/Summary)
 - Data Validation dropdowns (Sector Outlook, Peer Y/N)
 - Ratio numerator/denominator in remarks
-- 3 driver tabs (Macro, Sector, Company)
-- 9 sheets total
+- 4 driver tabs (Macro 15%, Group 20%, Subgroup 35%, Company 30%)
+- 10 sheets total (4-level driver hierarchy)
 """
 
 import os
+import re
 import logging
+import zipfile
 from datetime import date, datetime
 
 from openpyxl import Workbook
@@ -51,6 +53,9 @@ def _style_header(ws, row, max_col):
         cell.font = HEADER_FONT
         cell.fill = HEADER_FILL
         cell.alignment = Alignment(horizontal='center')
+        # Set empty string to avoid invalid XML with styled but empty cells
+        if cell.value is None:
+            cell.value = ''
 
 
 def _style_section(ws, row, max_col, label=None):
@@ -58,6 +63,9 @@ def _style_section(ws, row, max_col, label=None):
         cell = ws.cell(row=row, column=col)
         cell.font = SECTION_FONT
         cell.fill = SECTION_FILL
+        # Set empty string to avoid invalid XML with styled but empty cells
+        if cell.value is None:
+            cell.value = ''
     if label:
         ws.cell(row=row, column=1, value=label)
 
@@ -185,26 +193,50 @@ def generate_valuation_excel(result: dict, output_path: str = None) -> str:
     ws_sens = wb.create_sheet('Sensitivity')
     _build_sensitivity_sheet(ws_sens, result, refs)
 
-    ws_macro = wb.create_sheet('Macro Drivers')
-    _build_macro_drivers_sheet(ws_macro, result, refs)
-
-    ws_sector = wb.create_sheet('Sector Drivers')
-    _build_sector_drivers_sheet(ws_sector, result, refs)
-
-    ws_company = wb.create_sheet('Company Drivers')
-    _build_company_drivers_sheet(ws_company, result, refs)
+    # Consolidated Driver Hierarchy sheet (replaces 4 separate driver sheets)
+    ws_drivers = wb.create_sheet('Driver Hierarchy')
+    _build_driver_hierarchy_sheet(ws_drivers, result, refs)
 
     # Summary is the active (first) sheet — built last since it references others
     ws_summary = wb.active
     ws_summary.title = 'Summary'
     _build_summary_sheet(ws_summary, result, refs)
 
-    # Move Summary to position 0
-    wb.move_sheet('Summary', offset=-8)
+    # Move Summary to position 0 (now 7 sheets: Summary + 6 others)
+    wb.move_sheet('Summary', offset=-6)
 
     wb.save(output_path)
+
+    # Post-process: Fix openpyxl bug where formula cells get empty <v></v> tags
+    # which can cause Excel repair warnings
+    _fix_empty_formula_values(output_path)
+
     logger.info(f"Valuation Excel saved to: {output_path}")
     return output_path
+
+
+def _fix_empty_formula_values(xlsx_path: str):
+    """
+    Remove empty <v></v> tags from formula cells in xlsx.
+    openpyxl generates these but some Excel versions don't like them.
+    """
+    temp_path = xlsx_path + '.tmp'
+    try:
+        with zipfile.ZipFile(xlsx_path, 'r') as zin:
+            with zipfile.ZipFile(temp_path, 'w', zipfile.ZIP_DEFLATED) as zout:
+                for item in zin.infolist():
+                    data = zin.read(item.filename)
+                    if item.filename.startswith('xl/worksheets/') and item.filename.endswith('.xml'):
+                        content = data.decode('utf-8')
+                        # Remove empty <v></v> tags after formula elements
+                        content = re.sub(r'(<f>[^<]*</f>)<v></v>', r'\1', content)
+                        data = content.encode('utf-8')
+                    zout.writestr(item, data)
+        os.replace(temp_path, xlsx_path)
+    except Exception as e:
+        logger.warning(f"Failed to fix formula values in xlsx: {e}")
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
 
 
 # ── Sheet 2: Assumptions (Single Source of Truth) ───────────────────────────
@@ -226,7 +258,7 @@ def _build_assumptions_sheet(ws, result, refs):
     # ── MACRO LEVEL ──
     r = 3
     _style_section(ws, r, 3, 'MACRO LEVEL')
-    _remark(ws, r, 3, 'Weight: 20% of driver hierarchy')
+    _remark(ws, r, 3, 'Weight: 15% of driver hierarchy')
     r += 1
     ws.cell(row=r, column=1, value='Risk-Free Rate (Rf)')
     refs['rf_rate'] = r
@@ -238,10 +270,10 @@ def _build_assumptions_sheet(ws, result, refs):
     _inp(ws, r, 2, assumptions.get('equity_risk_premium', assumptions.get('erp', dcf_assum.get('erp', 0.0708))), PCT_FMT)
     _remark(ws, r, 3, '[ACTUAL: Damodaran India ERP]')
 
-    # ── SECTOR LEVEL ──
+    # ── GROUP LEVEL ──
     r += 3
-    _style_section(ws, r, 3, 'SECTOR LEVEL')
-    _remark(ws, r, 3, 'Weight: 55% of driver hierarchy')
+    _style_section(ws, r, 3, 'GROUP LEVEL')
+    _remark(ws, r, 3, 'Weight: 20% of driver hierarchy (valuation_group)')
     r += 1
     ws.cell(row=r, column=1, value='Beta (Levered)')
     refs['beta'] = r
@@ -314,10 +346,60 @@ def _build_assumptions_sheet(ws, result, refs):
     refs['peer_ps_median'] = r
     _inp(ws, r, 2, _get_peer_median(result, 'ps'), '0.00')
 
+    # ── SUBGROUP LEVEL ──
+    r += 3
+    _style_section(ws, r, 3, 'SUBGROUP LEVEL')
+    _remark(ws, r, 3, 'Weight: 35% of driver hierarchy (valuation_subgroup)')
+
+    r += 1
+    ws.cell(row=r, column=1, value='Valuation Subgroup')
+    refs['valuation_subgroup'] = r
+    subgroup = result.get('valuation_subgroup', outlook.get('valuation_subgroup', ''))
+    _inp(ws, r, 2, subgroup or '(none)')
+    _remark(ws, r, 3, 'E.g., INDUSTRIALS_DEFENSE, INDUSTRIALS_ENGINEERING')
+
+    r += 1
+    ws.cell(row=r, column=1, value='Subgroup Score')
+    refs['subgroup_score'] = r
+    subgroup_score = result.get('subgroup_outlook', outlook.get('subgroup_score', 0))
+    _inp(ws, r, 2, subgroup_score, '0.0000')
+    _remark(ws, r, 3, 'Weighted avg of subgroup-specific drivers')
+
+    r += 1
+    ws.cell(row=r, column=1, value='Subgroup Growth Adjustment')
+    refs['subgroup_growth_adj'] = r
+    _fml(ws, r, 2, f'=B{refs["subgroup_score"]}*0.03', PCT_FMT)
+    _remark(ws, r, 3, '= Subgroup Score * 3% (max +/-3%)')
+
+    r += 1
+    ws.cell(row=r, column=1, value='Subgroup Margin Adjustment')
+    refs['subgroup_margin_adj'] = r
+    _fml(ws, r, 2, f'=B{refs["subgroup_score"]}*0.01', PCT_FMT)
+    _remark(ws, r, 3, '= Subgroup Score * 1% (max +/-1%)')
+
+    r += 1
+    ws.cell(row=r, column=1, value='Combined Group+Subgroup Score')
+    refs['combined_score'] = r
+    combined = outlook.get('outlook_score', 0)
+    _fml(ws, r, 2, f'=(B{refs["outlook_score"]}*0.20 + B{refs["subgroup_score"]}*0.35)/0.55', '0.0000')
+    _remark(ws, r, 3, '(Group×20% + Subgroup×35%) / 55%')
+
+    r += 1
+    ws.cell(row=r, column=1, value='Total Growth Adjustment')
+    refs['total_growth_adj'] = r
+    _fml(ws, r, 2, f'=B{refs["growth_adj"]}*0.20/0.55 + B{refs["subgroup_growth_adj"]}*0.35/0.55', PCT_FMT)
+    _remark(ws, r, 3, 'Weighted: Group 20% + Subgroup 35%')
+
+    r += 1
+    ws.cell(row=r, column=1, value='Total Margin Adjustment')
+    refs['total_margin_adj'] = r
+    _fml(ws, r, 2, f'=B{refs["margin_adj"]}*0.20/0.55 + B{refs["subgroup_margin_adj"]}*0.35/0.55', PCT_FMT)
+    _remark(ws, r, 3, 'Weighted: Group 20% + Subgroup 35%')
+
     # ── COMPANY LEVEL ──
     r += 3
     _style_section(ws, r, 3, 'COMPANY LEVEL')
-    _remark(ws, r, 3, 'Weight: 25% of driver hierarchy')
+    _remark(ws, r, 3, 'Weight: 30% of driver hierarchy')
 
     r += 1
     ws.cell(row=r, column=1, value='Revenue Base (Rs Cr)')
@@ -1017,7 +1099,7 @@ def _build_macro_drivers_sheet(ws, result, refs):
     hierarchy = result.get('driver_hierarchy', {})
 
     r = 1
-    ws.cell(row=r, column=1, value=f'Macro Drivers (Weight: {hierarchy.get("macro_weight", 0.20):.0%})').font = TITLE_FONT
+    ws.cell(row=r, column=1, value=f'Macro Drivers (Weight: {hierarchy.get("macro_weight", 0.15):.0%})').font = TITLE_FONT
     r += 1
     ws.cell(row=r, column=1, value=hierarchy.get('principle', 'Macro sets the ceiling and floor.')).font = REMARK_FONT
 
@@ -1072,16 +1154,16 @@ def _build_sector_drivers_sheet(ws, result, refs):
     ws.column_dimensions['D'].width = 15
     ws.column_dimensions['E'].width = 16
 
-    sector_cfg = result.get('sector_drivers_config', {})
+    group_cfg = result.get('sector_drivers_config', {})
     hierarchy = result.get('driver_hierarchy', {})
     outlook = result.get('sector_outlook', {})
-    sector_name = sector_cfg.get('csv_sector_name', result.get('sector', ''))
+    sector_name = group_cfg.get('csv_sector_name', result.get('sector', ''))
     positives = set(outlook.get('key_positives', []))
     negatives = set(outlook.get('key_negatives', []))
 
     r = 1
     ws.cell(row=r, column=1,
-            value=f'Sector Drivers: {sector_name} (Weight: {hierarchy.get("sector_weight", 0.55):.0%})').font = TITLE_FONT
+            value=f'Group Drivers: {sector_name} (Weight: {hierarchy.get("group_weight", 0.20):.0%})').font = TITLE_FONT
 
     r += 2
     ws.cell(row=r, column=1, value='Category')
@@ -1098,11 +1180,13 @@ def _build_sector_drivers_sheet(ws, result, refs):
 
     r += 1
     driver_start = r
+    has_drivers = False
     for category in ['demand_drivers', 'cost_drivers', 'regulatory_drivers',
-                     'sector_specific_drivers']:
-        drivers = sector_cfg.get(category, [])
+                     'group_specific_drivers']:
+        drivers = group_cfg.get(category, [])
         cat_label = category.replace('_', ' ').title().replace('Drivers', '').strip()
         for driver in drivers:
+            has_drivers = True
             name = driver.get('name', '')
             weight = driver.get('weight', 0)
             # Set initial direction from outlook
@@ -1122,18 +1206,32 @@ def _build_sector_drivers_sheet(ws, result, refs):
             _fml(ws, r, 5,
                  f'=IF(D{r}="POSITIVE",1,IF(D{r}="NEGATIVE",-1,0))*C{r}', '0.0000')
             r += 1
-    driver_end = r - 1
+
+    # Handle empty driver list
+    if not has_drivers:
+        ws.cell(row=r, column=1, value='No drivers configured')
+        ws.cell(row=r, column=1).font = REMARK_FONT
+        r += 1
+
+    driver_end = max(r - 1, driver_start)
 
     # Totals
     r += 1
     ws.cell(row=r, column=2, value='Total Weight').font = BOLD_FONT
     total_wt_row = r
-    _fml(ws, r, 3, f'=SUM(C{driver_start}:C{driver_end})', '0.00')
+    if has_drivers:
+        _fml(ws, r, 3, f'=SUM(C{driver_start}:C{driver_end})', '0.00')
+    else:
+        ws.cell(row=r, column=3, value=0).number_format = '0.00'
 
     r += 1
     ws.cell(row=r, column=2, value='Outlook Score').font = BOLD_FONT
     score_row = r
-    _fml(ws, r, 5, f'=SUM(E{driver_start}:E{driver_end})/C{total_wt_row}', '0.0000')
+    if has_drivers:
+        # Use IFERROR to avoid division by zero
+        _fml(ws, r, 5, f'=IFERROR(SUM(E{driver_start}:E{driver_end})/C{total_wt_row},0)', '0.0000')
+    else:
+        ws.cell(row=r, column=5, value=0).number_format = '0.0000'
 
     r += 2
     _style_section(ws, r, 5, 'Outlook to Valuation Adjustment')
@@ -1147,7 +1245,7 @@ def _build_sector_drivers_sheet(ws, result, refs):
     _remark(ws, r, 3, 'max +/-1%')
 
     # Porter's Five Forces
-    porter = sector_cfg.get('porter_forces', {})
+    porter = group_cfg.get('porter_forces', {})
     if porter:
         r += 2
         _style_section(ws, r, 5, "Porter's Five Forces")
@@ -1167,6 +1265,81 @@ def _build_sector_drivers_sheet(ws, result, refs):
                 r += 1
 
 
+# ── Sheet 8b: Subgroup Drivers (NEW for 4-level hierarchy) ──────────────────
+
+def _build_subgroup_drivers_sheet(ws, result, refs):
+    """Build the Subgroup Drivers sheet (35% weight in 4-level hierarchy)."""
+    ws.column_dimensions['A'].width = 25
+    ws.column_dimensions['B'].width = 20
+    ws.column_dimensions['C'].width = 25
+    ws.column_dimensions['D'].width = 20
+    ws.column_dimensions['E'].width = 16
+
+    hierarchy = result.get('driver_hierarchy', {})
+    valuation_subgroup = result.get('valuation_subgroup', '')
+    valuation_group = result.get('valuation_group', '')
+
+    r = 1
+    ws.cell(row=r, column=1,
+            value=f'Subgroup Drivers: {valuation_subgroup or "(none)"} (Weight: {hierarchy.get("subgroup_weight", 0.35):.0%})'
+    ).font = TITLE_FONT
+
+    r += 1
+    ws.cell(row=r, column=1, value=f'Parent Group: {valuation_group}').font = REMARK_FONT
+
+    r += 2
+    # Headers
+    headers = ['Driver', 'Category', 'Current State', 'Trend', 'Impact']
+    for c, h in enumerate(headers, 1):
+        ws.cell(row=r, column=c, value=h).font = HEADER_FONT
+        ws.cell(row=r, column=c).fill = HEADER_FILL
+    r += 1
+
+    # Subgroup-specific drivers
+    subgroup_drivers = result.get('subgroup_drivers', {})
+    sector_outlook = result.get('sector_outlook', {})
+
+    # If subgroup_drivers is empty, try to get from sector_outlook
+    if not subgroup_drivers and sector_outlook:
+        subgroup_drivers = sector_outlook.get('subgroup_drivers', {})
+
+    driver_start = r
+    if subgroup_drivers:
+        for driver_key, driver in subgroup_drivers.items():
+            if isinstance(driver, dict):
+                ws.cell(row=r, column=1, value=driver.get('name', driver_key.replace('SUBGROUP_', '')))
+                ws.cell(row=r, column=2, value=driver.get('category', '').replace('_', ' ').title())
+                ws.cell(row=r, column=3, value=str(driver.get('value', 'N/A')))
+                ws.cell(row=r, column=4, value=driver.get('trend', 'STABLE'))
+                ws.cell(row=r, column=5, value=driver.get('direction', driver.get('impact_direction', 'NEUTRAL')))
+                r += 1
+    else:
+        ws.cell(row=r, column=1, value='No subgroup drivers defined')
+        ws.cell(row=r, column=1).font = REMARK_FONT
+        r += 1
+    driver_end = r - 1
+
+    # Summary
+    r += 2
+    _style_section(ws, r, 5, 'Subgroup Outlook')
+    r += 1
+    ws.cell(row=r, column=1, value='Subgroup Score')
+    subgroup_score = result.get('subgroup_outlook', sector_outlook.get('subgroup_score', 0))
+    ws.cell(row=r, column=2, value=subgroup_score).number_format = '0.0000'
+    r += 1
+    ws.cell(row=r, column=1, value='Combined Score')
+    ws.cell(row=r, column=2, value=sector_outlook.get('outlook_score', 0)).number_format = '0.0000'
+
+    r += 2
+    _style_section(ws, r, 5, 'Role in Valuation')
+    r += 1
+    ws.cell(row=r, column=1, value='Subgroups differentiate companies within the same Group.')
+    ws.cell(row=r, column=1).font = REMARK_FONT
+    r += 1
+    ws.cell(row=r, column=1, value='E.g., INDUSTRIALS_DEFENSE vs INDUSTRIALS_ENGINEERING')
+    ws.cell(row=r, column=1).font = REMARK_FONT
+
+
 # ── Sheet 9: Company Drivers (NEW) ──────────────────────────────────────────
 
 def _build_company_drivers_sheet(ws, result, refs):
@@ -1181,7 +1354,7 @@ def _build_company_drivers_sheet(ws, result, refs):
 
     r = 1
     ws.cell(row=r, column=1,
-            value=f'Company Drivers: {company_name} (Weight: {hierarchy.get("company_weight", 0.25):.0%})').font = TITLE_FONT
+            value=f'Company Drivers: {company_name} (Weight: {hierarchy.get("company_weight", 0.30):.0%})').font = TITLE_FONT
 
     # Alpha thesis
     thesis = company_cfg.get('alpha_thesis', {})
@@ -1250,6 +1423,227 @@ def _build_company_drivers_sheet(ws, result, refs):
             _remark(ws, r, 2, f"See 'Relative Val' adjusted value")
 
 
+# ── Consolidated Driver Hierarchy Sheet ──────────────────────────────────────
+
+def _build_driver_hierarchy_sheet(ws, result, refs):
+    """
+    Consolidated 4-level driver hierarchy in one sheet:
+    - MACRO (15%): Interest rates, GDP, currency
+    - GROUP (20%): Industry cycle, structural trends
+    - SUBGROUP (35%): Key differentiators
+    - COMPANY (30%): Alpha thesis, execution
+    """
+    ws.column_dimensions['A'].width = 20
+    ws.column_dimensions['B'].width = 25
+    ws.column_dimensions['C'].width = 14
+    ws.column_dimensions['D'].width = 14
+    ws.column_dimensions['E'].width = 14
+    ws.column_dimensions['F'].width = 30
+
+    hierarchy = result.get('driver_hierarchy', {})
+    outlook = result.get('sector_outlook', {})
+    group_cfg = result.get('sector_drivers_config', {})  # Fallback to config
+    group_drivers = result.get('group_drivers', outlook.get('group_drivers', {}))
+    company_cfg = result.get('company_alpha_config', {})
+
+    r = 1
+    ws.cell(row=r, column=1, value='Driver Hierarchy (4-Level)').font = TITLE_FONT
+    r += 1
+    ws.cell(row=r, column=1,
+            value=hierarchy.get('principle', 'Macro sets ceiling. Group sets cycle. Subgroup differentiates. Company delivers alpha.')
+    ).font = REMARK_FONT
+
+    # ── MACRO LEVEL (15%) ──
+    r += 2
+    _style_section(ws, r, 6, f'MACRO LEVEL (Weight: {hierarchy.get("macro_weight", 0.15):.0%})')
+    r += 1
+    ws.cell(row=r, column=1, value='Parameter')
+    ws.cell(row=r, column=2, value='Value')
+    ws.cell(row=r, column=3, value='Source')
+    _style_header(ws, r, 3)
+
+    r += 1
+    assumptions = result.get('dcf_assumptions', {})
+    ws.cell(row=r, column=1, value='Risk-Free Rate (Rf)')
+    ws.cell(row=r, column=2, value=assumptions.get('risk_free_rate', 0.0674)).number_format = PCT_FMT
+    ws.cell(row=r, column=3, value='Damodaran / RBI')
+    r += 1
+    ws.cell(row=r, column=1, value='Equity Risk Premium (ERP)')
+    ws.cell(row=r, column=2, value=assumptions.get('erp', 0.0708)).number_format = PCT_FMT
+    ws.cell(row=r, column=3, value='Damodaran India')
+    r += 1
+    ws.cell(row=r, column=1, value='Beta (Levered)')
+    ws.cell(row=r, column=2, value=assumptions.get('beta', 1.0)).number_format = '0.00'
+    ws.cell(row=r, column=3, value='Damodaran sector')
+
+    # ── GROUP LEVEL (20%) ──
+    r += 2
+    valuation_group = result.get('valuation_group', group_cfg.get('csv_sector_name', ''))
+    _style_section(ws, r, 6, f'GROUP LEVEL: {valuation_group} (Weight: {hierarchy.get("group_weight", 0.20):.0%})')
+    r += 1
+    ws.cell(row=r, column=1, value='Category')
+    ws.cell(row=r, column=2, value='Driver')
+    ws.cell(row=r, column=3, value='Weight')
+    ws.cell(row=r, column=4, value='Direction')
+    ws.cell(row=r, column=5, value='Score')
+    _style_header(ws, r, 5)
+
+    r += 1
+    positives = set(outlook.get('key_positives', []))
+    negatives = set(outlook.get('key_negatives', []))
+    group_driver_start = r
+    has_group_drivers = False
+
+    # Use loaded group_drivers from DB/outlook, fallback to config
+    if group_drivers:
+        for driver_key, driver in group_drivers.items():
+            has_group_drivers = True
+            name = driver.get('name', driver_key.replace('GROUP_', ''))
+            weight = driver.get('weight', 0)
+            category = driver.get('category', 'DEMAND')
+            direction = driver.get('impact_direction', 'NEUTRAL')
+
+            ws.cell(row=r, column=1, value=category.title())
+            ws.cell(row=r, column=2, value=name)
+            ws.cell(row=r, column=3, value=weight).number_format = '0.00'
+            ws.cell(row=r, column=4, value=direction)
+            score = weight if direction == 'POSITIVE' else (-weight if direction == 'NEGATIVE' else 0)
+            ws.cell(row=r, column=5, value=score).number_format = '0.00'
+            r += 1
+    else:
+        # Fallback to config-based drivers
+        for category in ['demand_drivers', 'cost_drivers', 'regulatory_drivers', 'group_specific_drivers']:
+            drivers = group_cfg.get(category, [])
+            cat_label = category.replace('_', ' ').title().replace('Drivers', '').strip()
+            for driver in drivers:
+                has_group_drivers = True
+                name = driver.get('name', '')
+                weight = driver.get('weight', 0)
+                direction = 'POSITIVE' if name in positives else ('NEGATIVE' if name in negatives else 'NEUTRAL')
+
+                ws.cell(row=r, column=1, value=cat_label)
+                ws.cell(row=r, column=2, value=name)
+                ws.cell(row=r, column=3, value=weight).number_format = '0.00'
+                ws.cell(row=r, column=4, value=direction)
+                score = weight if direction == 'POSITIVE' else (-weight if direction == 'NEGATIVE' else 0)
+                ws.cell(row=r, column=5, value=score).number_format = '0.00'
+                r += 1
+
+    if not has_group_drivers:
+        ws.cell(row=r, column=1, value='No group drivers configured').font = REMARK_FONT
+        r += 1
+
+    r += 1
+    ws.cell(row=r, column=1, value='Group Outlook Score').font = BOLD_FONT
+    ws.cell(row=r, column=5, value=outlook.get('group_score', 0)).number_format = '0.0000'
+
+    # ── SUBGROUP LEVEL (35%) ──
+    r += 2
+    valuation_subgroup = result.get('valuation_subgroup', '')
+    _style_section(ws, r, 6, f'SUBGROUP LEVEL: {valuation_subgroup or "(none)"} (Weight: {hierarchy.get("subgroup_weight", 0.35):.0%})')
+    r += 1
+    ws.cell(row=r, column=1, value='Driver')
+    ws.cell(row=r, column=2, value='Category')
+    ws.cell(row=r, column=3, value='State')
+    ws.cell(row=r, column=4, value='Trend')
+    ws.cell(row=r, column=5, value='Impact')
+    _style_header(ws, r, 5)
+
+    r += 1
+    subgroup_drivers = result.get('subgroup_drivers', outlook.get('subgroup_drivers', {}))
+    if subgroup_drivers:
+        for key, driver in subgroup_drivers.items():
+            if isinstance(driver, dict):
+                ws.cell(row=r, column=1, value=driver.get('name', key.replace('SUBGROUP_', '')))
+                ws.cell(row=r, column=2, value=driver.get('category', '').replace('_', ' ').title())
+                ws.cell(row=r, column=3, value=str(driver.get('value', 'N/A')))
+                ws.cell(row=r, column=4, value=driver.get('trend', 'STABLE'))
+                ws.cell(row=r, column=5, value=driver.get('direction', driver.get('impact_direction', 'NEUTRAL')))
+                r += 1
+    else:
+        ws.cell(row=r, column=1, value='No subgroup drivers defined').font = REMARK_FONT
+        r += 1
+
+    r += 1
+    ws.cell(row=r, column=1, value='Subgroup Score').font = BOLD_FONT
+    ws.cell(row=r, column=5, value=result.get('subgroup_outlook', outlook.get('subgroup_score', 0))).number_format = '0.0000'
+
+    # ── COMPANY LEVEL (30%) ──
+    r += 2
+    company_name = company_cfg.get('csv_name', result.get('company_name', ''))
+    _style_section(ws, r, 6, f'COMPANY LEVEL: {company_name} (Weight: {hierarchy.get("company_weight", 0.30):.0%})')
+
+    # Alpha thesis
+    thesis = company_cfg.get('alpha_thesis', {})
+    if thesis:
+        r += 1
+        ws.cell(row=r, column=1, value='Bull Thesis').font = BOLD_FONT
+        ws.cell(row=r, column=2, value=thesis.get('bull', ''))
+        r += 1
+        ws.cell(row=r, column=1, value='Bear Thesis').font = BOLD_FONT
+        ws.cell(row=r, column=2, value=thesis.get('bear', ''))
+        r += 1
+        ws.cell(row=r, column=1, value='Key Moat').font = BOLD_FONT
+        ws.cell(row=r, column=2, value=thesis.get('key_moat', ''))
+
+    # Alpha drivers
+    alpha_drivers = company_cfg.get('alpha_drivers', {})
+    if alpha_drivers:
+        r += 2
+        ws.cell(row=r, column=1, value='Category')
+        ws.cell(row=r, column=2, value='Driver')
+        ws.cell(row=r, column=3, value='Weight')
+        ws.cell(row=r, column=4, value='Impact')
+        _style_header(ws, r, 4)
+
+        r += 1
+        for category, drivers in alpha_drivers.items():
+            cat_label = category.replace('_', ' ').title()
+            if isinstance(drivers, list):
+                for driver in drivers:
+                    ws.cell(row=r, column=1, value=cat_label)
+                    ws.cell(row=r, column=2, value=driver.get('name', ''))
+                    ws.cell(row=r, column=3, value=driver.get('weight', 0)).number_format = '0.00'
+                    ws.cell(row=r, column=4, value=driver.get('impact', ''))
+                    r += 1
+
+    if not thesis and not alpha_drivers:
+        r += 1
+        ws.cell(row=r, column=1, value='No company-specific drivers configured').font = REMARK_FONT
+
+    # ── COMBINED OUTLOOK ──
+    r += 2
+    _style_section(ws, r, 6, 'COMBINED OUTLOOK')
+    r += 1
+    ws.cell(row=r, column=1, value='Level')
+    ws.cell(row=r, column=2, value='Weight')
+    ws.cell(row=r, column=3, value='Score')
+    ws.cell(row=r, column=4, value='Contribution')
+    _style_header(ws, r, 4)
+
+    r += 1
+    ws.cell(row=r, column=1, value='Macro')
+    ws.cell(row=r, column=2, value=hierarchy.get('macro_weight', 0.15)).number_format = PCT_FMT
+    ws.cell(row=r, column=3, value='(embedded in WACC)')
+    r += 1
+    ws.cell(row=r, column=1, value='Group')
+    ws.cell(row=r, column=2, value=hierarchy.get('group_weight', 0.20)).number_format = PCT_FMT
+    ws.cell(row=r, column=3, value=outlook.get('group_score', 0)).number_format = '0.0000'
+    r += 1
+    ws.cell(row=r, column=1, value='Subgroup')
+    ws.cell(row=r, column=2, value=hierarchy.get('subgroup_weight', 0.35)).number_format = PCT_FMT
+    ws.cell(row=r, column=3, value=result.get('subgroup_outlook', outlook.get('subgroup_score', 0))).number_format = '0.0000'
+    r += 1
+    ws.cell(row=r, column=1, value='Company')
+    ws.cell(row=r, column=2, value=hierarchy.get('company_weight', 0.30)).number_format = PCT_FMT
+    ws.cell(row=r, column=3, value='(alpha thesis)')
+
+    r += 1
+    ws.cell(row=r, column=1, value='Combined Outlook').font = BOLD_FONT
+    ws.cell(row=r, column=3, value=outlook.get('outlook_score', 0)).number_format = '0.0000'
+    ws.cell(row=r, column=4, value=outlook.get('outlook_label', 'NEUTRAL')).font = BOLD_FONT
+
+
 # ── Sheet 1: Summary ────────────────────────────────────────────────────────
 
 def _build_summary_sheet(ws, result, refs):
@@ -1266,21 +1660,24 @@ def _build_summary_sheet(ws, result, refs):
     ws.cell(row=r, column=1, value=f'{company} ({symbol}) - Valuation Report').font = TITLE_FONT
     r += 1
     ws.cell(row=r, column=1, value=f'Date: {result.get("valuation_date", date.today().isoformat())}')
-    ws.cell(row=r, column=2, value=f'Sector: {result.get("sector", "")}')
+    valuation_group = result.get('valuation_group', result.get('sector', ''))
+    valuation_subgroup = result.get('valuation_subgroup', '')
+    ws.cell(row=r, column=2, value=f'Group: {valuation_group}')
+    ws.cell(row=r, column=3, value=f'Subgroup: {valuation_subgroup}' if valuation_subgroup else '')
 
     # Market data
     r += 2
     _style_section(ws, r, 5, 'Market Data')
     r += 1
     cmp_row = r
+    # CMP with date from daily_date column in core CSV
+    price_date = result.get('price_date', result.get('daily_date', ''))
     ws.cell(row=r, column=1, value='Current Market Price (CMP)')
     ws.cell(row=r, column=2, value=result.get('cmp', 0)).number_format = NUM_FMT
+    ws.cell(row=r, column=3, value=f'as of {price_date}' if price_date else '').font = REMARK_FONT
     r += 1
     ws.cell(row=r, column=1, value='Market Cap (Rs Cr)')
     ws.cell(row=r, column=2, value=result.get('mcap_cr')).number_format = NUM_FMT
-    r += 1
-    ws.cell(row=r, column=1, value='Price Date')
-    ws.cell(row=r, column=2, value=result.get('price_date', ''))
 
     # Valuation verdict
     r += 2
@@ -1361,3 +1758,24 @@ def _build_summary_sheet(ws, result, refs):
     _fml(ws, blended_row, 2, f'=D{blended_formula_row}', NUM_FMT)
     ws.cell(row=blended_row, column=2).font = BOLD_FONT
     _fml(ws, upside_row, 2, f'=B{blended_row}/B{cmp_row}-1', PCT_FMT)
+
+    # Driver Hierarchy (4-level) - Summary only, details in Driver Hierarchy tab
+    r += 2
+    _style_section(ws, r, 5, 'Driver Hierarchy Summary')
+    _remark(ws, r, 5, "See 'Driver Hierarchy' tab for details")
+
+    hierarchy = result.get('driver_hierarchy', {})
+    outlook = result.get('sector_outlook', {})
+
+    r += 1
+    ws.cell(row=r, column=1, value='Outlook')
+    ws.cell(row=r, column=2, value=outlook.get('outlook_label', 'NEUTRAL')).font = BOLD_FONT
+    ws.cell(row=r, column=3, value=f"Score: {outlook.get('outlook_score', 0):.4f}")
+
+    r += 1
+    ws.cell(row=r, column=1, value='Growth Adjustment')
+    ws.cell(row=r, column=2, value=outlook.get('growth_adjustment', 0)).number_format = PCT_FMT
+
+    r += 1
+    ws.cell(row=r, column=1, value='Margin Adjustment')
+    ws.cell(row=r, column=2, value=outlook.get('margin_adjustment', 0)).number_format = PCT_FMT

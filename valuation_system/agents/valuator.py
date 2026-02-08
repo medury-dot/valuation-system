@@ -70,7 +70,7 @@ class ValuatorAgent:
 
         Args:
             company_config: Company config from companies.yaml
-            sector_outlook: Output from SectorAnalystAgent.calculate_sector_outlook()
+            sector_outlook: Output from GroupAnalystAgent.calculate_outlook()
             sector_config: Sector config from sectors.yaml
             overrides: Manual parameter overrides
 
@@ -294,6 +294,14 @@ class ValuatorAgent:
             'sector_drivers_config': sector_config or {},
             'company_alpha_config': company_config,
             'driver_hierarchy': sectors_cfg.get('driver_hierarchy', {}),
+
+            # 4-level hierarchy fields
+            'valuation_group': company_config.get('valuation_group', ''),
+            'valuation_subgroup': company_config.get('valuation_subgroup', ''),
+            'group_outlook': sector_outlook.get('group_score', 0),
+            'subgroup_outlook': sector_outlook.get('subgroup_score', 0),
+            'group_drivers': sector_outlook.get('group_drivers', {}),
+            'subgroup_drivers': sector_outlook.get('subgroup_drivers', {}),
         }
 
         logger.info(f"Valuation complete for {company_name}: "

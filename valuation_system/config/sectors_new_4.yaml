@@ -122,7 +122,7 @@ sectors:
         weight: 0.04
         impact: operational_constraint
 
-    sector_specific_drivers:
+    group_specific_drivers:
       - name: volume_growth_ttm
         metric: "Million cases YoY %"
         source: filings
@@ -275,7 +275,7 @@ sectors:
         weight: 0.04
         impact: pricing_affordability
 
-    sector_specific_drivers:
+    group_specific_drivers:
       - name: volume_growth_units
         metric: "YoY %"
         source: filings
@@ -426,7 +426,7 @@ sectors:
         weight: 0.04
         impact: regional_cost_structure
 
-    sector_specific_drivers:
+    group_specific_drivers:
       - name: volume_dispatches
         metric: "Million tonnes"
         source: filings
@@ -579,7 +579,7 @@ sectors:
         weight: 0.03
         impact: start_stop_battery_upgrade_demand
 
-    sector_specific_drivers:
+    group_specific_drivers:
       - name: volume_growth
         metric: "Million units YoY %"
         source: filings

@@ -108,7 +108,7 @@
         weight: 0.03
         impact: international_revenue
 
-    sector_specific_drivers:
+    group_specific_drivers:
       - name: order_book
         metric: "Rs Cr"
         source: filings
@@ -237,7 +237,7 @@
         weight: 0.02
         impact: category_specific
 
-    sector_specific_drivers:
+    group_specific_drivers:
       - name: volume_growth
         metric: "%"
         source: filings
@@ -366,7 +366,7 @@
         weight: 0.03
         impact: consumer_financing
 
-    sector_specific_drivers:
+    group_specific_drivers:
       - name: channel_mix
         metric: "% Online/Offline/Institutional"
         source: filings
@@ -494,7 +494,7 @@
         weight: 0.03
         impact: green_capex
 
-    sector_specific_drivers:
+    group_specific_drivers:
       - name: capacity_utilization
         metric: "%"
         source: filings
@@ -625,7 +625,7 @@
         weight: 0.03
         impact: transaction_costs
 
-    sector_specific_drivers:
+    group_specific_drivers:
       - name: presales
         metric: "Rs Cr"
         source: filings
@@ -753,7 +753,7 @@
         weight: 0.02
         impact: f&b_profitability
 
-    sector_specific_drivers:
+    group_specific_drivers:
       - name: revpar
         metric: "Rs"
         source: filings

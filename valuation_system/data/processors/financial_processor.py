@@ -642,7 +642,10 @@ class FinancialProcessor:
         Calculate Net Working Capital / Sales.
         ACTUAL → DERIVED → DEFAULT fallback chain.
 
-        NWC = Inventories + Sundry Debtors - Trade Payables
+        NWC = (Inventories + Sundry Debtors) - ALL Current Liabilities
+
+        Where Current Liabilities = Total Liabilities - Long-term Borrowings
+        This captures trade payables, customer advances, provisions, other CL.
 
         For high-growth companies, NWC can be abnormally high due to inventory
         build-up and extended receivables. Normalize to industry standards.
@@ -666,19 +669,91 @@ class FinancialProcessor:
         # High-growth if EITHER condition: CAGR >20% OR recent YoY >50%
         is_high_growth = (recent_cagr_3y and recent_cagr_3y > 0.20) or recent_yoy > 0.50
 
-        # Method 1 [ACTUAL]: Direct from balance sheet items (inventories + debtors - payables)
+        # Method 1A [ACTUAL-HALFYEARLY]: Try half-yearly first (most recent data)
+        inv_hy = financials.get('inventories_hy', {})
+        debtors_hy = financials.get('sundry_debtors_hy', {})
+        tot_liab_hy = financials.get('tot_liab_hy', {})
+        lt_borrow_hy = financials.get('LT_borrow_hy', {})
+
+        # For half-yearly, we need TTM sales to calculate ratio
+        sales_qtr = financials.get('sales_quarterly', {})
+        if sales_qtr and inv_hy and debtors_hy and tot_liab_hy:
+            # Get latest TTM sales
+            qtr_indices = sorted(sales_qtr.keys(), reverse=True)
+            if len(qtr_indices) >= 4:
+                ttm_sales = sum(sales_qtr[qtr_indices[i]] for i in range(4))
+
+                # Get most recent half-year
+                half_years = sorted(tot_liab_hy.keys(), reverse=True)
+                if half_years and ttm_sales > 0:
+                    latest_hy = half_years[0]
+                    inv = inv_hy.get(latest_hy, 0)
+                    debtors = debtors_hy.get(latest_hy, 0)
+                    tot_liab = tot_liab_hy.get(latest_hy, 0)
+                    lt_borrow = lt_borrow_hy.get(latest_hy, 0)
+
+                    if inv > 0 and debtors > 0 and tot_liab > 0:
+                        current_liab = tot_liab - lt_borrow
+                        nwc = inv + debtors - current_liab
+                        ratio = nwc / ttm_sales
+
+                        logger.info(f"  NWC/Sales: {ratio:.4f} [ACTUAL: (inv+debtors-ALL_CL)/sales from {latest_hy}]")
+                        logger.info(f"    Operating CA: Rs {inv + debtors:,.0f} Cr")
+                        logger.info(f"    Current Liab: Rs {current_liab:,.0f} Cr (Total={tot_liab:.0f} - LT={lt_borrow:.0f})")
+                        logger.info(f"    Net WC:       Rs {nwc:,.0f} Cr")
+
+                        # HIGH-GROWTH NORMALIZATION (only if NWC is very positive)
+                        if is_high_growth and ratio > 0.60:
+                            normalized_nwc = 0.30
+                            logger.info(f"  ** NORMALIZED to {normalized_nwc:.4f} for high-growth (3Y CAGR: {recent_cagr_3y:.1%})")
+                            return normalized_nwc
+
+                        return round(ratio, 4)
+
+        # Method 1B [ACTUAL-ANNUAL]: Use annual data (3-year average)
         inventories = financials.get('inventories', {})
         debtors = financials.get('sundry_debtors', {})
-        payables = financials.get('trade_payables', {})
+        tot_liab = financials.get('tot_liab', {})
+        lt_borrow = financials.get('LT_borrow', {})
 
         if not sales:
             pass  # Will fall through to default
-        elif inventories and debtors:
-            # Allow payables to be empty (some companies don't report)
+        elif inventories and debtors and tot_liab:
             # Use intersection of available years
-            common_years = set(inventories.keys()) & set(debtors.keys()) & set(sales.keys())
-            if payables:
-                common_years = common_years & set(payables.keys())
+            common_years = set(inventories.keys()) & set(debtors.keys()) & set(tot_liab.keys()) & set(sales.keys())
+            if common_years:
+                ratios = []
+                for year in sorted(common_years, reverse=True)[:3]:
+                    # Current Liabilities = Total Liabilities - Long-term Borrowings
+                    current_liab = tot_liab.get(year, 0) - lt_borrow.get(year, 0)
+                    nwc = (inventories.get(year, 0) + debtors.get(year, 0) - current_liab)
+
+                    if sales[year] and sales[year] > 0:
+                        ratio = nwc / sales[year]
+                        ratios.append(ratio)
+                        logger.debug(f"  NWC/Sales {year}: Inv={inventories.get(year, 0):.1f} + "
+                                     f"Debtors={debtors.get(year, 0):.1f} - "
+                                     f"CL={current_liab:.1f} = "
+                                     f"NWC={nwc:.1f} / Sales={sales[year]:.1f} = {ratio:.4f}")
+                if ratios:
+                    historical_avg = round(np.mean(ratios), 4)
+
+                    # HIGH-GROWTH NORMALIZATION: Cap NWC at reasonable industry levels
+                    if is_high_growth and historical_avg > 0.60:  # >60% indicates growth phase buildup
+                        # For specialty chemicals, steady-state NWC is typically 25-35%
+                        normalized_nwc = 0.30  # 30% for chemicals
+                        logger.info(f"  NWC/Sales: {normalized_nwc:.4f} [NORMALIZED for high-growth: "
+                                    f"historical {historical_avg:.1%} includes growth-phase buildup, "
+                                    f"using steady-state norm. 3Y CAGR: {recent_cagr_3y:.1%}]")
+                        return normalized_nwc
+                    else:
+                        logger.info(f"  NWC/Sales: {historical_avg:.4f} [ACTUAL: (inv+debtors-ALL_CL)/sales avg {len(ratios)}yr]")
+                        return historical_avg
+
+        # Method 1B [FALLBACK]: If tot_liab not available, use trade payables only (old method)
+        payables = financials.get('trade_payables', {})
+        if inventories and debtors and payables:
+            common_years = set(inventories.keys()) & set(debtors.keys()) & set(payables.keys()) & set(sales.keys())
             if common_years:
                 ratios = []
                 for year in sorted(common_years, reverse=True)[:3]:
@@ -698,12 +773,12 @@ class FinancialProcessor:
                     if is_high_growth and historical_avg > 0.60:  # >60% indicates growth phase buildup
                         # For specialty chemicals, steady-state NWC is typically 25-35%
                         normalized_nwc = 0.30  # 30% for chemicals
-                        logger.info(f"  NWC/Sales: {normalized_nwc:.4f} [NORMALIZED for high-growth: "
-                                    f"historical {historical_avg:.1%} includes growth-phase buildup, "
-                                    f"using steady-state norm. 3Y CAGR: {recent_cagr_3y:.1%}]")
+                        logger.warning(f"  NWC/Sales: {normalized_nwc:.4f} [NORMALIZED for high-growth: "
+                                       f"historical {historical_avg:.1%} using OLD METHOD (payables only), "
+                                       f"using steady-state norm. 3Y CAGR: {recent_cagr_3y:.1%}]")
                         return normalized_nwc
                     else:
-                        logger.info(f"  NWC/Sales: {historical_avg:.4f} [ACTUAL: (inv+debtors-payables)/sales avg {len(ratios)}yr]")
+                        logger.warning(f"  NWC/Sales: {historical_avg:.4f} [ACTUAL: (inv+debtors-payables)/sales avg {len(ratios)}yr - OLD METHOD, may overstate NWC]")
                         return historical_avg
 
         # Method 2 [DERIVED]: Cash Conversion Cycle / 365

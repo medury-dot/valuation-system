@@ -1,14 +1,14 @@
 """
-Google Sheets Client for Driver Tracking
+Google Sheets Client for Driver Tracking (4-Level Hierarchy)
 Reads/writes driver values, weights, and history to Google Sheets.
 Provides collaborative interface for PM to view and override drivers.
 
-Sheets Structure:
-  Sheet 1: Macro Drivers
-  Sheet 2: Sector Drivers - Specialty Chemicals
-  Sheet 3: Sector Drivers - Automobiles
-  Sheet 4: Company Drivers - Aether Industries
-  Sheet 5: Company Drivers - Eicher Motors
+Sheets Structure (4-level driver hierarchy):
+  Sheet 1: Macro Drivers (15% weight)
+  Sheet 2: Valuation Group Drivers (20% weight)
+  Sheet 3: Valuation Subgroup Drivers (35% weight)
+  Sheet 4: Company Drivers (30% weight)
+  Sheet 5: Recent Activity
   Sheet 6: Valuation History
   Sheet 7: Driver History
   Sheet 8: Event Log
@@ -42,14 +42,16 @@ class GSheetClient:
 
     SHEET_NAMES = {
         'macro_drivers': '1. Macro Drivers',
-        'sector_drivers': '2. Sector Drivers',  # Unified - all sectors in one sheet
-        'company_drivers': '3. Company Drivers',  # Unified - all companies in one sheet
-        'recent_activity': '4. Recent Activity',  # 7-day summary
-        # Legacy names (kept for backward compatibility):
-        'sector_chemicals': '2. Sector Drivers',
-        'sector_automobiles': '2. Sector Drivers',
-        'company_aether': '3. Company Drivers',
-        'company_eicher': '3. Company Drivers',
+        'group_drivers': '2. Valuation Group Drivers',  # 4-level hierarchy: GROUP level
+        'subgroup_drivers': '3. Valuation Subgroup Drivers',  # 4-level hierarchy: SUBGROUP level
+        'company_drivers': '4. Company Drivers',  # 4-level hierarchy: COMPANY level
+        'recent_activity': '5. Recent Activity',  # 7-day summary
+        # Legacy aliases (for backward compatibility):
+        'sector_drivers': '2. Valuation Group Drivers',
+        'sector_chemicals': '2. Valuation Group Drivers',
+        'sector_automobiles': '2. Valuation Group Drivers',
+        'company_aether': '4. Company Drivers',
+        'company_eicher': '4. Company Drivers',
     }
 
     def __init__(self, spreadsheet_id: str = None):

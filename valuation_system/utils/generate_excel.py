@@ -16,7 +16,7 @@ from valuation_system.data.loaders.price_loader import PriceLoader
 from valuation_system.data.loaders.damodaran_loader import DamodaranLoader
 from valuation_system.storage.mysql_client import ValuationMySQLClient
 from valuation_system.agents.valuator import ValuatorAgent
-from valuation_system.agents.sector_analyst import SectorAnalystAgent
+from valuation_system.agents.group_analyst import GroupAnalystAgent
 from valuation_system.utils.config_loader import load_sectors_config, load_companies_config
 from valuation_system.utils.excel_report import generate_valuation_excel
 
@@ -60,9 +60,9 @@ def main():
 
     sector_key = company_cfg['sector']
 
-    # Create sector analyst and get outlook
-    sector_analyst = SectorAnalystAgent(sector_key, mysql)
-    sector_outlook = sector_analyst.calculate_sector_outlook()
+    # Create group analyst and get outlook
+    group_analyst = GroupAnalystAgent(valuation_group=sector_key, mysql_client=mysql)
+    sector_outlook = group_analyst.calculate_outlook()
 
     # Create valuator (it builds its own internal components)
     valuator = ValuatorAgent(core, prices, damodaran, mysql)

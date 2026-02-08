@@ -117,7 +117,7 @@ sectors:
         weight: 0.03
         impact: reinvestment_burden
 
-    sector_specific_drivers:
+    group_specific_drivers:
       - name: order_book
         metric: "Rs Cr"
         source: filings
@@ -244,7 +244,7 @@ sectors:
         weight: 0.05
         impact: financing_cost
 
-    sector_specific_drivers:
+    group_specific_drivers:
       - name: monthly_sales_units
         metric: "units"
         source: siam
@@ -380,7 +380,7 @@ sectors:
         weight: 0.02
         impact: renovation_constraint
 
-    sector_specific_drivers:
+    group_specific_drivers:
       - name: occupancy_rate
         metric: "%"
         source: filings
@@ -540,7 +540,7 @@ sectors:
         weight: 0.01
         impact: buyer_affordability
 
-    sector_specific_drivers:
+    group_specific_drivers:
       - name: presales_value
         metric: "Rs Cr"
         source: filings
@@ -701,7 +701,7 @@ sectors:
         weight: 0.02
         impact: cargo_clearance_speed
 
-    sector_specific_drivers:
+    group_specific_drivers:
       - name: cargo_volume
         metric: "Million Tonnes"
         source: filings
@@ -867,7 +867,7 @@ sectors:
         weight: 0.03
         impact: pricing_flexibility
 
-    sector_specific_drivers:
+    group_specific_drivers:
       - name: aum_growth
         metric: "Rs Cr"
         source: filings
@@ -1017,7 +1017,7 @@ sectors:
         weight: 0.03
         impact: capex_subsidy
 
-    sector_specific_drivers:
+    group_specific_drivers:
       - name: anda_filings
         metric: "Count (trailing 12m)"
         source: usfda
@@ -1178,7 +1178,7 @@ sectors:
         weight: 0.03
         impact: credit_cost_spike
 
-    sector_specific_drivers:
+    group_specific_drivers:
       - name: casa_ratio
         metric: "%"
         source: filings
@@ -1338,7 +1338,7 @@ sectors:
         weight: 0.04
         impact: pricing_flexibility
 
-    sector_specific_drivers:
+    group_specific_drivers:
       - name: casa_ratio
         metric: "%"
         source: filings
@@ -1501,7 +1501,7 @@ sectors:
         weight: 0.01
         impact: replacement_demand
 
-    sector_specific_drivers:
+    group_specific_drivers:
       - name: aum_growth
         metric: "Rs Cr YoY %"
         source: filings
@@ -1665,7 +1665,7 @@ sectors:
         weight: 0.06
         impact: project_financing_risk
 
-    sector_specific_drivers:
+    group_specific_drivers:
       - name: aum_growth
         metric: "Rs Cr YoY %"
         source: filings
@@ -1832,7 +1832,7 @@ sectors:
         weight: 0.04
         impact: gold_segment_constraint
 
-    sector_specific_drivers:
+    group_specific_drivers:
       - name: aum_growth
         metric: "Rs Cr YoY %"
         source: filings
@@ -1984,7 +1984,7 @@ sectors:
         weight: 0.05
         impact: investor_demand
 
-    sector_specific_drivers:
+    group_specific_drivers:
       - name: aum_equity
         metric: "Rs Cr"
         source: amfi
@@ -2140,7 +2140,7 @@ sectors:
         weight: 0.04
         impact: savings_product_demand
 
-    sector_specific_drivers:
+    group_specific_drivers:
       - name: gross_written_premium
         metric: "Rs Cr"
         source: filings
@@ -2287,7 +2287,7 @@ sectors:
         weight: 0.04
         impact: conflict_of_interest_scrutiny
 
-    sector_specific_drivers:
+    group_specific_drivers:
       - name: number_of_ratings
         metric: "Count"
         source: filings
@@ -2454,7 +2454,7 @@ sectors:
         weight: 0.01
         impact: compliance_overhead
 
-    sector_specific_drivers:
+    group_specific_drivers:
       - name: order_book
         metric: "Rs Cr"
         source: filings
@@ -2500,10 +2500,11 @@ sectors:
 # Hierarchical Driver Weights
 # =============================================================================
 driver_hierarchy:
-  macro_weight: 0.20
-  sector_weight: 0.55
-  company_weight: 0.25
-  principle: "Macro sets the ceiling and floor. Sectors determine the value. Companies decide who wins."
+  macro_weight: 0.15
+  group_weight: 0.20        # valuation_group level (was sector_weight)
+  subgroup_weight: 0.35     # valuation_subgroup level (NEW)
+  company_weight: 0.30
+  principle: "Macro sets ceiling. Group sets cycle. Subgroup differentiates. Company delivers alpha."
 
   # ---------------------------------------------------------------------------
   # CONSUMER_FOOD_BEVERAGE (VBL - Varun Beverages)
@@ -2615,4 +2616,638 @@ driver_hierarchy:
     regulatory_drivers:
       - {name: emission_norms, metric: "BS compliance", weight: 0.06, impact: r_and_d_capex}
       - {name: pli_scheme, metric: "Eligibility", weight: 0.05, impact: margin_boost}
+
+
+# =============================================================================
+# VALUATION GROUPS MAPPING (13 Groups from GEM Classification)
+# Maps gem valuation_group to sector yaml keys for driver lookups
+# =============================================================================
+valuation_groups:
+
+  # ---------------------------------------------------------------------------
+  # 1. MATERIALS_CHEMICALS (201 investable companies)
+  # ---------------------------------------------------------------------------
+  MATERIALS_CHEMICALS:
+    primary_sector: specialty_chemicals
+    description: "Specialty + commodity chemicals, paints, agrochemicals"
+    subgroups:
+      CHEMICALS_SPECIALTY: specialty_chemicals
+      CHEMICALS_COMMODITY: specialty_chemicals  # Use same drivers, different terminal margins
+      CHEMICALS_PAINTS_COATINGS: specialty_chemicals
+    terminal_assumptions:
+      margin_range: [0.15, 0.22]  # Slightly lower than pure specialty
+      roce_convergence: 0.19
+      reinvestment_rate: 0.35
+
+  # ---------------------------------------------------------------------------
+  # 2. AUTO (185 investable companies)
+  # ---------------------------------------------------------------------------
+  AUTO:
+    primary_sector: automobiles
+    description: "OEMs, auto ancillary, tyres, batteries"
+    subgroups:
+      AUTO_OEM: automobiles
+      AUTO_ANCILLARY: auto_ancillary
+    terminal_assumptions:
+      margin_range: [0.08, 0.15]
+      roce_convergence: 0.16
+      reinvestment_rate: 0.28
+
+  # ---------------------------------------------------------------------------
+  # 3. TECHNOLOGY (143 investable companies)
+  # ---------------------------------------------------------------------------
+  TECHNOLOGY:
+    primary_sector: it_services
+    description: "IT services, BPO, digital infrastructure, product/SaaS"
+    subgroups:
+      TECHNOLOGY_IT_SERVICES: it_services
+      TECHNOLOGY_BPO_ITES: it_services
+      TECHNOLOGY_DIGITAL_INFRA: it_services
+      TECHNOLOGY_PRODUCT_SAAS: it_services
+    terminal_assumptions:
+      margin_range: [0.18, 0.25]
+      roce_convergence: 0.30
+      reinvestment_rate: 0.20  # Low capex intensity
+
+  # ---------------------------------------------------------------------------
+  # 4. FINANCIALS (227 investable companies)
+  # ---------------------------------------------------------------------------
+  FINANCIALS:
+    primary_sector: financials_nbfc_diversified
+    description: "Banks, NBFCs, asset management, insurance"
+    subgroups:
+      FINANCIALS_BANKING_PRIVATE: financials_banking_private
+      FINANCIALS_BANKING_PSU: financials_banking_psu
+      FINANCIALS_NBFC_VEHICLE: financials_nbfc_vehicle
+      FINANCIALS_NBFC_HOUSING: financials_nbfc_housing
+      FINANCIALS_NBFC_DIVERSIFIED: financials_nbfc_diversified
+      FINANCIALS_ASSET_MGMT: financials_asset_mgmt
+      FINANCIALS_INSURANCE: financials_insurance
+      FINANCIALS_OTHER: financials_other
+    terminal_assumptions:
+      margin_range: [0.40, 0.60]  # ROE-based for financials
+      roce_convergence: 0.15
+      reinvestment_rate: 0.10
+
+  # ---------------------------------------------------------------------------
+  # 5. HEALTHCARE (165 investable companies)
+  # Phase 1: Split into 6 subgroups
+  # ---------------------------------------------------------------------------
+  HEALTHCARE:
+    primary_sector: pharma
+    description: "Pharma manufacturing, hospitals, diagnostics, CRO/CDMO, equipment, AYUSH"
+    subgroups:
+      HEALTHCARE_PHARMA_EXPORT: pharma
+      HEALTHCARE_PHARMA_DOMESTIC: pharma
+      HEALTHCARE_HOSPITALS: healthcare_hospitals
+      HEALTHCARE_DIAGNOSTICS: healthcare_diagnostics
+      HEALTHCARE_CRO_CDMO: healthcare_cro_cdmo
+      HEALTHCARE_EQUIPMENT: healthcare_equipment
+      HEALTHCARE_AYUSH: pharma  # Fallback to pharma drivers
+    terminal_assumptions:
+      margin_range: [0.15, 0.25]
+      roce_convergence: 0.22
+      reinvestment_rate: 0.25
+
+  # ---------------------------------------------------------------------------
+  # 6. INDUSTRIALS (256 investable companies)
+  # ---------------------------------------------------------------------------
+  INDUSTRIALS:
+    primary_sector: industrials_defense  # Use as template
+    description: "Capital goods, electricals, engineering, defense"
+    subgroups:
+      INDUSTRIALS_CAPITAL_GOODS: industrials_defense
+      INDUSTRIALS_ELECTRICALS: industrials_defense
+      INDUSTRIALS_ENGINEERING: industrials_defense
+      INDUSTRIALS_DEFENSE: industrials_defense
+    terminal_assumptions:
+      margin_range: [0.10, 0.18]
+      roce_convergence: 0.18
+      reinvestment_rate: 0.30
+
+  # ---------------------------------------------------------------------------
+  # 7. CONSUMER_STAPLES (221 investable companies)
+  # ---------------------------------------------------------------------------
+  CONSUMER_STAPLES:
+    primary_sector: fmcg
+    description: "FMCG, food/beverage, agriculture inputs"
+    subgroups:
+      CONSUMER_FMCG: fmcg
+      CONSUMER_FOOD_BEVERAGE: consumer_food_beverage
+      CONSUMER_AGRI: fmcg
+    terminal_assumptions:
+      margin_range: [0.12, 0.20]
+      roce_convergence: 0.20
+      reinvestment_rate: 0.25
+
+  # ---------------------------------------------------------------------------
+  # 8. CONSUMER_DISCRETIONARY (204 investable companies)
+  # ---------------------------------------------------------------------------
+  CONSUMER_DISCRETIONARY:
+    primary_sector: consumer_durables
+    description: "Textiles, durables, retail"
+    subgroups:
+      CONSUMER_TEXTILE: consumer_durables
+      CONSUMER_DURABLES: consumer_durables
+      CONSUMER_RETAIL: consumer_durables
+    terminal_assumptions:
+      margin_range: [0.08, 0.16]
+      roce_convergence: 0.15
+      reinvestment_rate: 0.25
+
+  # ---------------------------------------------------------------------------
+  # 9. REAL_ESTATE_INFRA (265 investable companies)
+  # ---------------------------------------------------------------------------
+  REAL_ESTATE_INFRA:
+    primary_sector: infra_construction
+    description: "Construction, real estate development, logistics infrastructure"
+    subgroups:
+      INFRA_CONSTRUCTION: infra_construction
+      REALTY_RESIDENTIAL: realty_residential
+      INFRA_LOGISTICS_PORTS: infra_logistics
+    terminal_assumptions:
+      margin_range: [0.12, 0.22]
+      roce_convergence: 0.16
+      reinvestment_rate: 0.40
+
+  # ---------------------------------------------------------------------------
+  # 10. MATERIALS_METALS (156 investable companies)
+  # ---------------------------------------------------------------------------
+  MATERIALS_METALS:
+    primary_sector: metals_steel  # Define below
+    description: "Steel, aluminum, copper, zinc, other metals"
+    subgroups:
+      METALS_STEEL: metals_steel
+      METALS_NON_FERROUS: metals_non_ferrous
+    terminal_assumptions:
+      margin_range: [0.12, 0.20]
+      roce_convergence: 0.15
+      reinvestment_rate: 0.35
+
+  # ---------------------------------------------------------------------------
+  # 11. SERVICES (79 investable companies)
+  # Phase 1: Split into 3 subgroups for Telecom
+  # ---------------------------------------------------------------------------
+  SERVICES:
+    primary_sector: services_hospitality
+    description: "Hospitality, media/entertainment, telecom"
+    subgroups:
+      SERVICES_HOSPITALITY: services_hospitality
+      SERVICES_MEDIA_ENTERTAINMENT: services_media
+      SERVICES_TELECOM: services_telecom
+      TELECOM_OPERATORS: telecom_operators
+      TELECOM_TOWERS: telecom_towers
+      TELECOM_EQUIPMENT: telecom_equipment
+    terminal_assumptions:
+      margin_range: [0.15, 0.25]
+      roce_convergence: 0.18
+      reinvestment_rate: 0.30
+
+  # ---------------------------------------------------------------------------
+  # 12. ENERGY_UTILITIES (58 investable companies)
+  # Phase 1: Split into 3 subgroups for Energy
+  # ---------------------------------------------------------------------------
+  ENERGY_UTILITIES:
+    primary_sector: energy_power
+    description: "Power generation/distribution, oil & gas upstream/downstream"
+    subgroups:
+      ENERGY_POWER_GENERATION: energy_power
+      ENERGY_POWER_DISTRIBUTION: energy_power
+      ENERGY_OIL_GAS: energy_oil_gas
+      ENERGY_UPSTREAM: energy_upstream
+      ENERGY_MIDSTREAM: energy_midstream
+      ENERGY_DOWNSTREAM: energy_downstream
+    terminal_assumptions:
+      margin_range: [0.10, 0.18]
+      roce_convergence: 0.14
+      reinvestment_rate: 0.45
+
+# =============================================================================
+# NEW SECTOR DEFINITIONS (Missing from original file)
+# =============================================================================
+
+sectors_extended:
+
+  # ---------------------------------------------------------------------------
+  # METALS_STEEL
+  # ---------------------------------------------------------------------------
+  metals_steel:
+    csv_sector_name: "Metals & Mining"
+    csv_industry_filter: ["Steel", "Iron Ore Mining"]
+    is_active: true
+    valuation_methods:
+      primary: "EV/EBITDA"
+      secondary: "P/B"
+      blend_weights: {dcf: 0.60, relative: 0.30, monte_carlo: 0.10}
+    terminal_assumptions:
+      margin_range: [0.12, 0.18]
+      roce_convergence: 0.15
+      reinvestment_rate: 0.35
+    demand_drivers:
+      - {name: infrastructure_spending, metric: "YoY %", weight: 0.14, impact: volume}
+      - {name: auto_production, metric: "Units", weight: 0.10, impact: volume}
+      - {name: real_estate_demand, metric: "Housing starts", weight: 0.09, impact: volume}
+      - {name: exports, metric: "MT", weight: 0.08, impact: realization}
+    cost_drivers:
+      - {name: iron_ore_cost, metric: "Rs/ton", weight: 0.15, impact: cogs, sensitivity: -0.6}
+      - {name: coking_coal_cost, metric: "Rs/ton", weight: 0.12, impact: cogs, sensitivity: -0.5}
+      - {name: power_cost, metric: "Rs/unit", weight: 0.08, impact: conversion_cost}
+    regulatory_drivers:
+      - {name: import_duties, metric: "Tariff %", weight: 0.06, impact: pricing_protection}
+      - {name: export_incentives, metric: "Status", weight: 0.04, impact: realization}
+
+  # ---------------------------------------------------------------------------
+  # METALS_NON_FERROUS
+  # ---------------------------------------------------------------------------
+  metals_non_ferrous:
+    csv_sector_name: "Metals & Mining"
+    csv_industry_filter: ["Aluminium", "Copper", "Zinc"]
+    is_active: true
+    valuation_methods:
+      primary: "EV/EBITDA"
+      secondary: "P/B"
+      blend_weights: {dcf: 0.60, relative: 0.30, monte_carlo: 0.10}
+    terminal_assumptions:
+      margin_range: [0.15, 0.22]
+      roce_convergence: 0.16
+      reinvestment_rate: 0.30
+    demand_drivers:
+      - {name: lme_prices, metric: "USD/ton", weight: 0.16, impact: realization}
+      - {name: domestic_demand, metric: "YoY %", weight: 0.12, impact: volume}
+      - {name: ev_demand, metric: "Battery/wiring", weight: 0.10, impact: structural_growth}
+    cost_drivers:
+      - {name: power_cost, metric: "Rs/unit", weight: 0.14, impact: conversion_cost, sensitivity: -0.7}
+      - {name: bauxite_coal_cost, metric: "Input basket", weight: 0.10, impact: cogs}
+    regulatory_drivers:
+      - {name: import_duties, metric: "Tariff %", weight: 0.06, impact: pricing}
+      - {name: environmental_compliance, metric: "Capex", weight: 0.05, impact: reinvestment}
+
+  # ---------------------------------------------------------------------------
+  # HEALTHCARE_HOSPITALS (Phase 1 split)
+  # ---------------------------------------------------------------------------
+  healthcare_hospitals:
+    csv_sector_name: "Healthcare"
+    csv_industry_filter: ["Hospitals", "Medical Equipment"]
+    is_active: true
+    valuation_methods:
+      primary: "EV/EBITDA"
+      secondary: "EV/bed"
+      blend_weights: {dcf: 0.60, relative: 0.30, monte_carlo: 0.10}
+    terminal_assumptions:
+      margin_range: [0.18, 0.25]
+      roce_convergence: 0.20
+      reinvestment_rate: 0.35
+    demand_drivers:
+      - {name: bed_occupancy, metric: "% utilization", weight: 0.15, impact: revenue}
+      - {name: arpob, metric: "Avg revenue/bed", weight: 0.12, impact: realization}
+      - {name: health_insurance_penetration, metric: "% population", weight: 0.10, impact: affordability}
+      - {name: medical_tourism, metric: "Patients", weight: 0.08, impact: occupancy}
+    cost_drivers:
+      - {name: doctor_salaries, metric: "% revenue", weight: 0.12, impact: opex}
+      - {name: consumables_cost, metric: "% revenue", weight: 0.10, impact: cogs}
+      - {name: operating_leverage, metric: "Fixed/var", weight: 0.08, impact: margin}
+    regulatory_drivers:
+      - {name: ayushman_bharat, metric: "Empanelment", weight: 0.08, impact: volume}
+      - {name: price_caps, metric: "Procedures", weight: 0.06, impact: realization}
+
+  # ---------------------------------------------------------------------------
+  # HEALTHCARE_DIAGNOSTICS (Phase 1 split)
+  # ---------------------------------------------------------------------------
+  healthcare_diagnostics:
+    csv_sector_name: "Healthcare"
+    csv_industry_filter: ["Diagnostics", "Pathology"]
+    is_active: true
+    valuation_methods:
+      primary: "EV/EBITDA"
+      secondary: "P/E"
+      blend_weights: {dcf: 0.60, relative: 0.30, monte_carlo: 0.10}
+    terminal_assumptions:
+      margin_range: [0.20, 0.30]
+      roce_convergence: 0.25
+      reinvestment_rate: 0.25
+    demand_drivers:
+      - {name: test_volume, metric: "Tests/day", weight: 0.14, impact: revenue}
+      - {name: preventive_health, metric: "Awareness index", weight: 0.11, impact: demand}
+      - {name: specialization_mix, metric: "Advanced tests %", weight: 0.10, impact: realization}
+      - {name: home_collection, metric: "% of tests", weight: 0.08, impact: convenience_premium}
+    cost_drivers:
+      - {name: lab_technician_cost, metric: "% revenue", weight: 0.10, impact: opex}
+      - {name: reagent_cost, metric: "% revenue", weight: 0.09, impact: cogs}
+      - {name: rent_center_density, metric: "Centers/city", weight: 0.07, impact: fixed_cost}
+    regulatory_drivers:
+      - {name: nabl_accreditation, metric: "Compliance", weight: 0.06, impact: quality_premium}
+      - {name: price_regulation, metric: "NPPA control", weight: 0.05, impact: realization}
+
+  # ---------------------------------------------------------------------------
+  # HEALTHCARE_CRO_CDMO (Phase 1 split - Contract Research/Manufacturing)
+  # ---------------------------------------------------------------------------
+  healthcare_cro_cdmo:
+    csv_sector_name: "Healthcare"
+    csv_industry_filter: ["CRO", "CDMO", "Contract Manufacturing"]
+    is_active: true
+    valuation_methods:
+      primary: "EV/EBITDA"
+      secondary: "P/E"
+      blend_weights: {dcf: 0.60, relative: 0.30, monte_carlo: 0.10}
+    terminal_assumptions:
+      margin_range: [0.15, 0.22]
+      roce_convergence: 0.20
+      reinvestment_rate: 0.30
+    demand_drivers:
+      - {name: contract_pipeline, metric: "Value (Rs Cr)", weight: 0.14, impact: revenue_visibility}
+      - {name: client_diversification, metric: "Top 5 concentration", weight: 0.11, impact: stability}
+      - {name: complex_molecules, metric: "% of portfolio", weight: 0.10, impact: margin}
+      - {name: global_outsourcing, metric: "Trend", weight: 0.09, impact: addressable_market}
+    cost_drivers:
+      - {name: api_raw_material, metric: "% revenue", weight: 0.12, impact: cogs}
+      - {name: scientist_salaries, metric: "% revenue", weight: 0.10, impact: opex}
+      - {name: capacity_utilization, metric: "%", weight: 0.08, impact: margin}
+    regulatory_drivers:
+      - {name: usfda_approvals, metric: "Sites approved", weight: 0.10, impact: eligibility}
+      - {name: ip_protection, metric: "DMF filings", weight: 0.06, impact: moat}
+
+  # ---------------------------------------------------------------------------
+  # HEALTHCARE_EQUIPMENT (Phase 1 split)
+  # ---------------------------------------------------------------------------
+  healthcare_equipment:
+    csv_sector_name: "Healthcare"
+    csv_industry_filter: ["Medical Devices", "Surgical Equipment"]
+    is_active: true
+    valuation_methods:
+      primary: "P/E"
+      secondary: "EV/EBITDA"
+      blend_weights: {dcf: 0.60, relative: 0.30, monte_carlo: 0.10}
+    terminal_assumptions:
+      margin_range: [0.12, 0.20]
+      roce_convergence: 0.18
+      reinvestment_rate: 0.28
+    demand_drivers:
+      - {name: hospital_capex, metric: "YoY %", weight: 0.14, impact: volume}
+      - {name: exports, metric: "% revenue", weight: 0.11, impact: diversification}
+      - {name: product_mix, metric: "Consumables %", weight: 0.10, impact: margin_stability}
+    cost_drivers:
+      - {name: import_dependence, metric: "Components %", weight: 0.12, impact: cogs}
+      - {name: r_and_d_spend, metric: "% revenue", weight: 0.09, impact: innovation}
+    regulatory_drivers:
+      - {name: pli_scheme, metric: "Eligibility", weight: 0.08, impact: margin_boost}
+      - {name: import_substitution, metric: "Policy support", weight: 0.06, impact: market_share}
+
+  # ---------------------------------------------------------------------------
+  # TELECOM_OPERATORS (Phase 1 split)
+  # ---------------------------------------------------------------------------
+  telecom_operators:
+    csv_sector_name: "Telecom"
+    csv_industry_filter: ["Telecom Services"]
+    is_active: true
+    valuation_methods:
+      primary: "EV/EBITDA"
+      secondary: "EV/subscriber"
+      blend_weights: {dcf: 0.60, relative: 0.30, monte_carlo: 0.10}
+    terminal_assumptions:
+      margin_range: [0.35, 0.45]
+      roce_convergence: 0.12
+      reinvestment_rate: 0.40
+    demand_drivers:
+      - {name: arpu, metric: "Rs/user/month", weight: 0.16, impact: realization}
+      - {name: subscriber_growth, metric: "Net adds", weight: 0.12, impact: volume}
+      - {name: data_consumption, metric: "GB/user/month", weight: 0.11, impact: demand}
+      - {name: 5g_adoption, metric: "% subscribers", weight: 0.09, impact: premium_arpu}
+    cost_drivers:
+      - {name: spectrum_cost, metric: "Amortization", weight: 0.14, impact: fixed_cost}
+      - {name: network_opex, metric: "Rs/sub", weight: 0.11, impact: opex}
+      - {name: subscriber_acquisition, metric: "CAC", weight: 0.08, impact: marketing}
+    regulatory_drivers:
+      - {name: tariff_hikes, metric: "Approval", weight: 0.10, impact: arpu}
+      - {name: spectrum_auction, metric: "Price/MHz", weight: 0.07, impact: capex}
+
+  # ---------------------------------------------------------------------------
+  # TELECOM_TOWERS (Phase 1 split)
+  # ---------------------------------------------------------------------------
+  telecom_towers:
+    csv_sector_name: "Telecom"
+    csv_industry_filter: ["Tower Infrastructure"]
+    is_active: true
+    valuation_methods:
+      primary: "EV/EBITDA"
+      secondary: "EV/tower"
+      blend_weights: {dcf: 0.60, relative: 0.30, monte_carlo: 0.10}
+    terminal_assumptions:
+      margin_range: [0.55, 0.65]  # High margin infrastructure
+      roce_convergence: 0.18
+      reinvestment_rate: 0.20
+    demand_drivers:
+      - {name: tenancy_ratio, metric: "Tenants/tower", weight: 0.16, impact: revenue_per_tower}
+      - {name: tower_additions, metric: "Net adds", weight: 0.12, impact: volume}
+      - {name: 5g_densification, metric: "Small cell demand", weight: 0.11, impact: growth}
+    cost_drivers:
+      - {name: power_cost, metric: "Rs/tower/month", weight: 0.13, impact: opex}
+      - {name: maintenance_cost, metric: "% revenue", weight: 0.08, impact: opex}
+    regulatory_drivers:
+      - {name: right_of_way, metric: "Approval ease", weight: 0.08, impact: rollout_speed}
+      - {name: rental_escalations, metric: "% YoY", weight: 0.06, impact: revenue_growth}
+
+  # ---------------------------------------------------------------------------
+  # TELECOM_EQUIPMENT (Phase 1 split)
+  # ---------------------------------------------------------------------------
+  telecom_equipment:
+    csv_sector_name: "Telecom"
+    csv_industry_filter: ["Telecom Equipment"]
+    is_active: true
+    valuation_methods:
+      primary: "P/E"
+      secondary: "EV/EBITDA"
+      blend_weights: {dcf: 0.60, relative: 0.30, monte_carlo: 0.10}
+    terminal_assumptions:
+      margin_range: [0.08, 0.15]
+      roce_convergence: 0.14
+      reinvestment_rate: 0.25
+    demand_drivers:
+      - {name: network_capex_cycle, metric: "Telco spending", weight: 0.15, impact: volume}
+      - {name: 5g_rollout, metric: "Sites planned", weight: 0.13, impact: demand}
+      - {name: exports, metric: "% revenue", weight: 0.10, impact: diversification}
+    cost_drivers:
+      - {name: component_imports, metric: "% COGS", weight: 0.12, impact: cost}
+      - {name: r_and_d_intensity, metric: "% revenue", weight: 0.10, impact: innovation}
+    regulatory_drivers:
+      - {name: pli_scheme, metric: "Incentive %", weight: 0.10, impact: margin}
+      - {name: import_restrictions, metric: "China ban", weight: 0.07, impact: market_share}
+
+  # ---------------------------------------------------------------------------
+  # ENERGY_POWER
+  # ---------------------------------------------------------------------------
+  energy_power:
+    csv_sector_name: "Power"
+    is_active: true
+    valuation_methods:
+      primary: "EV/EBITDA"
+      secondary: "P/B"
+      blend_weights: {dcf: 0.60, relative: 0.30, monte_carlo: 0.10}
+    terminal_assumptions:
+      margin_range: [0.12, 0.20]
+      roce_convergence: 0.13
+      reinvestment_rate: 0.45
+    demand_drivers:
+      - {name: electricity_demand_growth, metric: "YoY %", weight: 0.14, impact: volume}
+      - {name: capacity_utilization, metric: "PLF %", weight: 0.12, impact: realization}
+      - {name: renewable_mix, metric: "% capacity", weight: 0.10, impact: cost_profile}
+    cost_drivers:
+      - {name: coal_cost, metric: "Rs/ton", weight: 0.15, impact: fuel_cost, sensitivity: -0.6}
+      - {name: transmission_losses, metric: "%", weight: 0.09, impact: efficiency}
+    regulatory_drivers:
+      - {name: tariff_determination, metric: "CERC approval", weight: 0.10, impact: realization}
+      - {name: renewable_obligations, metric: "RPO %", weight: 0.07, impact: capex_mix}
+
+  # ---------------------------------------------------------------------------
+  # ENERGY_OIL_GAS
+  # ---------------------------------------------------------------------------
+  energy_oil_gas:
+    csv_sector_name: "Oil & Gas"
+    is_active: true
+    valuation_methods:
+      primary: "EV/EBITDA"
+      secondary: "P/B"
+      blend_weights: {dcf: 0.60, relative: 0.30, monte_carlo: 0.10}
+    terminal_assumptions:
+      margin_range: [0.08, 0.15]
+      roce_convergence: 0.12
+      reinvestment_rate: 0.40
+    demand_drivers:
+      - {name: crude_oil_prices, metric: "USD/bbl", weight: 0.16, impact: realization}
+      - {name: refining_margins, metric: "GRM USD/bbl", weight: 0.14, impact: margin}
+      - {name: fuel_demand, metric: "MMT", weight: 0.11, impact: volume}
+    cost_drivers:
+      - {name: crude_procurement, metric: "Cost/bbl", weight: 0.15, impact: cogs, sensitivity: -0.8}
+      - {name: operating_cost, metric: "USD/bbl", weight: 0.09, impact: conversion}
+    regulatory_drivers:
+      - {name: fuel_price_deregulation, metric: "Freedom", weight: 0.09, impact: pricing_power}
+      - {name: exploration_policy, metric: "Block allocation", weight: 0.06, impact: reserve_growth}
+
+  # ---------------------------------------------------------------------------
+  # ENERGY_UPSTREAM (Phase 1 split - E&P)
+  # ---------------------------------------------------------------------------
+  energy_upstream:
+    csv_sector_name: "Oil & Gas"
+    csv_industry_filter: ["Exploration & Production"]
+    is_active: true
+    valuation_methods:
+      primary: "EV/EBITDA"
+      secondary: "EV/boe"
+      blend_weights: {dcf: 0.60, relative: 0.30, monte_carlo: 0.10}
+    terminal_assumptions:
+      margin_range: [0.40, 0.60]  # High margin exploration
+      roce_convergence: 0.15
+      reinvestment_rate: 0.50
+    demand_drivers:
+      - {name: crude_oil_prices, metric: "USD/bbl", weight: 0.18, impact: realization}
+      - {name: production_volume, metric: "mmboe/day", weight: 0.14, impact: revenue}
+      - {name: reserve_replacement, metric: "Ratio", weight: 0.12, impact: sustainability}
+    cost_drivers:
+      - {name: lifting_cost, metric: "USD/boe", weight: 0.14, impact: opex}
+      - {name: exploration_capex, metric: "USD/well", weight: 0.11, impact: finding_cost}
+    regulatory_drivers:
+      - {name: production_sharing, metric: "Govt take %", weight: 0.10, impact: net_realization}
+      - {name: block_allocation, metric: "Policy", weight: 0.07, impact: growth}
+
+  # ---------------------------------------------------------------------------
+  # ENERGY_MIDSTREAM (Phase 1 split - Pipelines)
+  # ---------------------------------------------------------------------------
+  energy_midstream:
+    csv_sector_name: "Oil & Gas"
+    csv_industry_filter: ["Pipelines", "LNG Terminals"]
+    is_active: true
+    valuation_methods:
+      primary: "EV/EBITDA"
+      secondary: "DCF"
+      blend_weights: {dcf: 0.70, relative: 0.20, monte_carlo: 0.10}  # DCF-heavy for infrastructure
+    terminal_assumptions:
+      margin_range: [0.60, 0.75]  # Very high margin toll-road model
+      roce_convergence: 0.16
+      reinvestment_rate: 0.30
+    demand_drivers:
+      - {name: throughput_volume, metric: "MMSCMD", weight: 0.16, impact: revenue}
+      - {name: capacity_utilization, metric: "%", weight: 0.13, impact: margin}
+      - {name: contract_renewals, metric: "Take-or-pay %", weight: 0.11, impact: revenue_stability}
+    cost_drivers:
+      - {name: maintenance_capex, metric: "% revenue", weight: 0.10, impact: fcf}
+      - {name: operating_cost, metric: "Rs/km", weight: 0.08, impact: opex}
+    regulatory_drivers:
+      - {name: tariff_regulation, metric: "PNGRB approval", weight: 0.12, impact: pricing}
+      - {name: right_of_way, metric: "Ease", weight: 0.07, impact: expansion}
+
+  # ---------------------------------------------------------------------------
+  # ENERGY_DOWNSTREAM (Phase 1 split - Refining)
+  # ---------------------------------------------------------------------------
+  energy_downstream:
+    csv_sector_name: "Oil & Gas"
+    csv_industry_filter: ["Refining", "Marketing"]
+    is_active: true
+    valuation_methods:
+      primary: "EV/EBITDA"
+      secondary: "P/B"
+      blend_weights: {dcf: 0.60, relative: 0.30, monte_carlo: 0.10}
+    terminal_assumptions:
+      margin_range: [0.06, 0.12]  # Lower margin, cyclical
+      roce_convergence: 0.11
+      reinvestment_rate: 0.35
+    demand_drivers:
+      - {name: grm_margins, metric: "USD/bbl", weight: 0.18, impact: profitability}
+      - {name: fuel_demand, metric: "MMT", weight: 0.13, impact: volume}
+      - {name: product_slate, metric: "Diesel/petrol mix", weight: 0.10, impact: realization}
+    cost_drivers:
+      - {name: crude_cost, metric: "USD/bbl", weight: 0.16, impact: cogs, sensitivity: -0.9}
+      - {name: complexity_advantage, metric: "Nelson index", weight: 0.11, impact: margin}
+    regulatory_drivers:
+      - {name: fuel_price_freedom, metric: "Deregulation", weight: 0.10, impact: pricing}
+      - {name: emissions_norms, metric: "BS compliance", weight: 0.07, impact: capex}
+
+  # ---------------------------------------------------------------------------
+  # SERVICES_MEDIA
+  # ---------------------------------------------------------------------------
+  services_media:
+    csv_sector_name: "Media & Entertainment"
+    is_active: true
+    valuation_methods:
+      primary: "EV/EBITDA"
+      secondary: "P/E"
+      blend_weights: {dcf: 0.60, relative: 0.30, monte_carlo: 0.10}
+    terminal_assumptions:
+      margin_range: [0.15, 0.25]
+      roce_convergence: 0.20
+      reinvestment_rate: 0.25
+    demand_drivers:
+      - {name: advertising_spend, metric: "YoY %", weight: 0.14, impact: revenue}
+      - {name: subscription_arpu, metric: "Rs/user", weight: 0.12, impact: realization}
+      - {name: ott_penetration, metric: "% households", weight: 0.11, impact: addressable_market}
+      - {name: content_quality, metric: "Engagement hrs", weight: 0.09, impact: retention}
+    cost_drivers:
+      - {name: content_cost, metric: "% revenue", weight: 0.14, impact: cogs}
+      - {name: licensing_fees, metric: "Sports rights", weight: 0.11, impact: fixed_cost}
+    regulatory_drivers:
+      - {name: content_regulation, metric: "Censorship", weight: 0.06, impact: creative_freedom}
+      - {name: fdi_limits, metric: "% allowed", weight: 0.05, impact: funding}
+
+  # ---------------------------------------------------------------------------
+  # SERVICES_TELECOM (Generic fallback)
+  # ---------------------------------------------------------------------------
+  services_telecom:
+    csv_sector_name: "Telecom"
+    is_active: true
+    valuation_methods:
+      primary: "EV/EBITDA"
+      secondary: "EV/subscriber"
+      blend_weights: {dcf: 0.60, relative: 0.30, monte_carlo: 0.10}
+    terminal_assumptions:
+      margin_range: [0.35, 0.45]
+      roce_convergence: 0.13
+      reinvestment_rate: 0.35
+    demand_drivers:
+      - {name: arpu, metric: "Rs/user/month", weight: 0.15, impact: realization}
+      - {name: subscriber_growth, metric: "Net adds", weight: 0.11, impact: volume}
+      - {name: data_usage, metric: "GB/user", weight: 0.10, impact: demand}
+    cost_drivers:
+      - {name: network_cost, metric: "Capex/opex", weight: 0.13, impact: margin}
+      - {name: spectrum_amortization, metric: "Annual", weight: 0.10, impact: fixed_cost}
+    regulatory_drivers:
+      - {name: tariff_regulation, metric: "TRAI approval", weight: 0.09, impact: pricing}
+      - {name: spectrum_policy, metric: "Allocation", weight: 0.07, impact: capacity}
 
