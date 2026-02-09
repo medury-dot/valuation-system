@@ -13,9 +13,11 @@ Edge Cases Handled:
 """
 
 import os
+import re
 import hashlib
 import logging
 from datetime import datetime, timedelta
+from email.utils import parsedate_to_datetime
 from typing import Optional
 
 import requests
@@ -32,6 +34,28 @@ logger = logging.getLogger(__name__)
 
 load_dotenv(os.path.join(os.path.dirname(__file__), '..', 'config', '.env'))
 
+# ---------------------------------------------------------------------------
+# Semantic dedup helpers (module-level)
+# ---------------------------------------------------------------------------
+_STOPWORDS = {'the', 'a', 'an', 'is', 'are', 'was', 'were', 'in', 'on', 'at', 'to', 'for', 'of',
+              'and', 'or', 'but', 'its', 'it', 'has', 'had', 'by', 'as', 'with', 'from', 'this',
+              'that', 'will', 'may', 'could', 'should', 'would', 'up', 'after', 'new', 'why', 'how',
+              'what', 'stock', 'shares', 'share', 'market', 'india', 'company', 'companies', 'sector',
+              'nse', 'bse'}
+
+
+def _headline_words(headline):
+    """Extract meaningful words from headline for Jaccard comparison."""
+    return set(w for w in re.sub(r'[^a-z0-9\s]', '', (headline or '').lower()).split()
+               if w not in _STOPWORDS and len(w) > 2)
+
+
+def _jaccard(set_a, set_b):
+    """Jaccard similarity between two sets."""
+    if not set_a or not set_b:
+        return 0.0
+    return len(set_a & set_b) / len(set_a | set_b)
+
 
 class NewsScannerAgent:
     """
@@ -41,9 +65,8 @@ class NewsScannerAgent:
     1. Moneycontrol
     2. Economic Times
     3. Business Standard
-    4. BSE Announcements
-    5. NSE Announcements
-    6. Google News (sector/company specific)
+    4. Google News (sector/company specific)
+    5. Microsoft Teams channel (internal research posts)
 
     Flow:
     scan_all_sources() → classify_news() → deduplicate() → store()
@@ -74,6 +97,12 @@ class NewsScannerAgent:
             'type': 'rss',
             'priority': 2,
         },
+        {
+            'name': 'teams_channel',
+            'base_url': '',  # Configured via env vars
+            'type': 'teams',
+            'priority': 3,
+        },
     ]
 
     CLASSIFICATION_PROMPT = """You are an equity research analyst classifying news for valuation purposes.
@@ -94,7 +123,10 @@ Classify with:
 4. affected_sectors: List of sectors affected
 5. scope: MACRO (affects all), SECTOR (affects sector), COMPANY (affects specific company)
 6. valuation_impact_pct: Estimated impact on intrinsic value (-10 to +10)
-7. drivers_affected: Which valuation drivers are impacted (e.g., "revenue_growth", "cost_of_capital")
+7. drivers_affected: Array of objects with driver details:
+   [{"driver": "revenue_growth", "level": "GROUP", "impact_pct": -3.0},
+    {"driver": "cost_of_capital", "level": "MACRO", "impact_pct": +1.5}]
+   level = MACRO/GROUP/SUBGROUP/COMPANY. impact_pct = estimated % impact on that driver.
 8. summary: 2-sentence summary for quick reference
 9. key_data_points: Any specific numbers mentioned (revenue, %, dates)
 
@@ -111,8 +143,30 @@ Return as JSON."""
         self._watched_companies = self._load_watchlist()
         self._watched_sectors = self._load_sectors()
 
-        # Seen headlines for dedup (in-memory cache + DB check)
-        self._seen_headlines = set()
+        # Build fast lookup set for relevance checking (lowercase symbols)
+        self._watched_symbols_lower = set(s.lower() for s in self._watched_companies if s)
+
+        # Seen headlines for dedup: load from DB on init for persistent dedup
+        self._seen_headlines = self._load_seen_headlines()
+
+    def _load_seen_headlines(self) -> set:
+        """Load headline hashes from recent vs_event_timeline entries for persistent dedup."""
+        try:
+            # Load headlines from last 7 days to avoid re-processing
+            rows = self.mysql.query(
+                """SELECT headline FROM vs_event_timeline
+                   WHERE event_date >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)"""
+            )
+            seen = set()
+            for r in rows:
+                h = (r.get('headline') or '').strip().lower()
+                if h:
+                    seen.add(hashlib.md5(h.encode()).hexdigest())
+            logger.info(f"Loaded {len(seen)} seen headlines from DB for dedup")
+            return seen
+        except Exception as e:
+            logger.warning(f"Failed to load seen headlines from DB: {e}")
+            return set()
 
     def _load_watchlist(self) -> list:
         """Load watched companies from MySQL."""
@@ -187,6 +241,7 @@ Return as JSON."""
                 classified['headline'] = article.get('headline', '')
                 classified['raw_content'] = article.get('content', '')[:2000]
                 classified['scanned_at'] = datetime.now().isoformat()
+                classified['published_at'] = article.get('published')  # RSS pubDate string or None
 
                 # Store all MEDIUM+ severity events
                 severity = classified.get('severity', 'LOW')
@@ -256,12 +311,57 @@ Return as JSON."""
             articles = self._scan_rss(source, search_terms)
         elif source['type'] == 'scrape':
             articles = self._scan_web(source)
+        elif source['type'] == 'teams':
+            articles = self._scan_teams(catchup_hours)
 
         # Tag source
         for article in articles:
             article['source'] = source['name']
 
         return articles
+
+    def _scan_teams(self, catchup_hours: int = None) -> list:
+        """Scan Microsoft Teams channel for news/research posts.
+        Uses teams_message_id for persistent dedup — only returns messages
+        not already in vs_event_timeline."""
+        try:
+            from valuation_system.integrations.teams_channel_reader import TeamsChannelReader
+        except ImportError as e:
+            logger.debug(f"Teams reader import failed (requests/bs4 missing?): {e}")
+            return []
+
+        try:
+            reader = TeamsChannelReader()
+            if not reader.enabled:
+                logger.debug("Teams reader not configured, skipping")
+                return []
+
+            hours = catchup_hours or 24
+            messages = reader.read_recent_messages(hours=hours, max_messages=50)
+
+            # Persistent dedup: skip Teams messages already stored in DB
+            # We check source_url which contains the message ID
+            if messages and self.mysql:
+                try:
+                    existing = self.mysql.query(
+                        """SELECT source_url FROM vs_event_timeline
+                           WHERE source = 'teams_channel'
+                             AND event_date >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)"""
+                    )
+                    existing_urls = set(r.get('source_url', '') for r in existing)
+                    before = len(messages)
+                    messages = [m for m in messages if m.get('url', '') not in existing_urls]
+                    if before > len(messages):
+                        logger.info(f"Teams dedup: {before} → {len(messages)} (skipped {before - len(messages)} already processed)")
+                except Exception as e:
+                    logger.debug(f"Teams dedup check failed, proceeding with all messages: {e}")
+
+            logger.info(f"Teams channel: {len(messages)} new messages in last {hours}h")
+            return messages
+
+        except Exception as e:
+            logger.error(f"Teams channel scan failed: {e}", exc_info=True)
+            return []
 
     @retry_with_backoff(max_retries=2, base_delay=3.0, exceptions=(requests.RequestException,))
     def _scan_web(self, source: dict) -> list:
@@ -315,11 +415,19 @@ Return as JSON."""
                     pub_date = item.find('pubDate')
 
                     if title:
+                        # Parse RSS pubDate to datetime string
+                        pub_dt = None
+                        if pub_date:
+                            try:
+                                pub_dt = parsedate_to_datetime(pub_date.get_text(strip=True))
+                            except Exception:
+                                pub_dt = None
+
                         articles.append({
                             'headline': title.get_text(strip=True),
                             'url': link.get_text(strip=True) if link else '',
                             'content': title.get_text(strip=True),
-                            'published': pub_date.get_text(strip=True) if pub_date else '',
+                            'published': pub_dt.strftime('%Y-%m-%d %H:%M:%S') if pub_dt else None,
                         })
             except Exception as e:
                 logger.warning(f"RSS scan failed for term '{term}': {e}")
@@ -346,45 +454,153 @@ Return as JSON."""
         ])
         return terms
 
+    # Keywords that always mark a headline as relevant (macro, sector, market)
+    _RELEVANCE_KEYWORDS = {
+        'chemical', 'pharma', 'agrochemical',
+        'automobile', 'auto', 'eicher', 'enfield',
+        'rbi', 'gdp', 'inflation', 'crude',
+        'fii', 'fpi', 'nifty', 'sensex',
+        'earnings', 'quarterly', 'results', 'guidance',
+        'merger', 'acquisition', 'demerger', 'buyback',
+        'sebi', 'regulation', 'policy', 'tariff',
+        'defence', 'defense', 'infra', 'infrastructure',
+        'banking', 'nbfc', 'insurance', 'fintech',
+        'it', 'software', 'saas', 'digital',
+        'metal', 'steel', 'cement', 'mining',
+        'power', 'energy', 'solar', 'renewable',
+        'capex', 'investment', 'fund', 'ipo',
+    }
+
     def _is_relevant(self, headline: str) -> bool:
-        """Quick relevance check for a headline."""
+        """Quick relevance check using word-level matching against watched symbols and keywords."""
         headline_lower = headline.lower()
+        # Extract words for O(1) set intersection
+        words = set(headline_lower.split())
 
-        # Check company names/symbols
-        for symbol in self._watched_companies:
-            if symbol.lower() in headline_lower:
-                return True
+        # Check company symbols (word-level match, O(1) set intersection)
+        if words & self._watched_symbols_lower:
+            return True
 
-        # Check sector keywords
-        sector_keywords = [
-            'chemical', 'specialty chemical', 'pharma api', 'agrochemical',
-            'automobile', 'two wheeler', '2 wheeler', 'eicher', 'royal enfield',
-            'aether',
-            # Macro keywords
-            'rbi', 'interest rate', 'gdp', 'inflation', 'crude oil',
-            'fii', 'fpi', 'nifty', 'sensex',
+        # Check sector/macro keywords
+        if words & self._RELEVANCE_KEYWORDS:
+            return True
+
+        # Multi-word keyword checks (can't do set intersection)
+        multi_word = [
+            'interest rate', 'two wheeler', '2 wheeler',
+            'royal enfield', 'rate cut', 'market cap',
         ]
-        for keyword in sector_keywords:
-            if keyword in headline_lower:
+        for kw in multi_word:
+            if kw in headline_lower:
                 return True
 
         return False
 
     def _deduplicate(self, articles: list) -> list:
-        """Deduplicate articles by headline hash."""
-        unique = []
+        """Deduplicate articles by headline hash + semantic similarity.
+        Pass 1: Exact MD5 dedup (existing persistent check).
+        Pass 2: Jaccard similarity within this batch to avoid sending
+        near-duplicate headlines to the LLM (saves tokens)."""
+        # Pass 1: Exact MD5 dedup
+        md5_unique = []
         for article in articles:
             headline = article.get('headline', '').strip().lower()
             headline_hash = hashlib.md5(headline.encode()).hexdigest()
-
             if headline_hash not in self._seen_headlines:
                 self._seen_headlines.add(headline_hash)
-                unique.append(article)
+                md5_unique.append(article)
 
-        return unique
+        # Pass 2: Semantic dedup within this batch (Jaccard on headline words)
+        threshold = float(os.getenv('NEWS_SEMANTIC_DEDUP_THRESHOLD', '0.4'))
+        kept = []
+        for article in md5_unique:
+            words = _headline_words(article.get('headline', ''))
+            is_dup = False
+            for existing in kept:
+                existing_words = _headline_words(existing.get('headline', ''))
+                if _jaccard(words, existing_words) > threshold:
+                    is_dup = True
+                    # Keep the one with longer content
+                    if len(article.get('content', '')) > len(existing.get('content', '')):
+                        kept.remove(existing)
+                        kept.append(article)
+                    break
+            if not is_dup:
+                kept.append(article)
+
+        if len(md5_unique) != len(kept):
+            logger.info(f"Semantic dedup: {len(md5_unique)} → {len(kept)} "
+                        f"(removed {len(md5_unique) - len(kept)} similar)")
+        return kept
+
+    # Valid ENUM values for vs_event_timeline
+    _VALID_SCOPES = {'MACRO', 'GROUP', 'SUBGROUP', 'COMPANY'}
+    _VALID_SEVERITIES = {'CRITICAL', 'HIGH', 'MEDIUM', 'LOW'}
+    _VALID_EVENT_TYPES = {'NEWS', 'EARNINGS', 'MANAGEMENT_CHANGE', 'REGULATORY', 'POLICY',
+                          'MACRO', 'SECTOR_DEVELOPMENT', 'COMPETITOR', 'VALUATION_UPDATE'}
+    # Map LLM scope outputs to valid ENUM values
+    _SCOPE_MAP = {
+        'MACRO': 'MACRO', 'MARKET': 'MACRO', 'ECONOMY': 'MACRO', 'GLOBAL': 'MACRO',
+        'SECTOR': 'GROUP', 'GROUP': 'GROUP', 'INDUSTRY': 'GROUP',
+        'SUBGROUP': 'SUBGROUP', 'SUB_SECTOR': 'SUBGROUP',
+        'COMPANY': 'COMPANY', 'STOCK': 'COMPANY', 'INDIVIDUAL': 'COMPANY',
+    }
+
+    def _normalize_scope(self, scope: str) -> str:
+        """Normalize LLM-returned scope to valid ENUM value."""
+        if not scope:
+            return 'GROUP'
+        scope_upper = scope.upper().strip()
+        return self._SCOPE_MAP.get(scope_upper, 'GROUP')
+
+    def _normalize_severity(self, severity: str) -> str:
+        """Normalize LLM-returned severity to valid ENUM value."""
+        if not severity:
+            return 'LOW'
+        sev_upper = severity.upper().strip()
+        return sev_upper if sev_upper in self._VALID_SEVERITIES else 'LOW'
+
+    def _find_semantic_group(self, headline, company_id, scope, sector, event_date):
+        """Find existing event that's semantically similar (Layer 2: cross-run grouping).
+        COMPANY: same company_id + same day + headline overlap
+        GROUP/SUBGROUP: same scope-level + similar sector + same day + headline overlap
+        MACRO: same scope + same day + headline overlap
+        Returns semantic_group_id of the matching primary event, or None."""
+        threshold = float(os.getenv('NEWS_SEMANTIC_DEDUP_THRESHOLD', '0.4'))
+        new_words = _headline_words(headline)
+        if not new_words:
+            return None
+
+        try:
+            if scope == 'COMPANY' and company_id:
+                existing = self.mysql.query(
+                    """SELECT id, headline, semantic_group_id FROM vs_event_timeline
+                       WHERE event_date = %s AND company_id = %s""",
+                    (event_date, company_id))
+            elif scope in ('GROUP', 'SUBGROUP') and sector:
+                existing = self.mysql.query(
+                    """SELECT id, headline, semantic_group_id FROM vs_event_timeline
+                       WHERE event_date = %s AND scope IN ('GROUP','SUBGROUP') AND sector = %s""",
+                    (event_date, sector))
+            elif scope == 'MACRO':
+                existing = self.mysql.query(
+                    """SELECT id, headline, semantic_group_id FROM vs_event_timeline
+                       WHERE event_date = %s AND scope = 'MACRO'""",
+                    (event_date,))
+            else:
+                return None
+
+            for row in existing:
+                existing_words = _headline_words(row.get('headline', ''))
+                if _jaccard(new_words, existing_words) > threshold:
+                    return row.get('semantic_group_id') or row['id']
+        except Exception as e:
+            logger.debug(f"Semantic group lookup failed: {e}")
+
+        return None
 
     def _store_event(self, classified: dict):
-        """Store a classified news event in MySQL."""
+        """Store a classified news event in MySQL with LLM metadata and semantic grouping."""
         try:
             # Find company_id if specific company affected
             company_id = None
@@ -394,22 +610,54 @@ Return as JSON."""
                 if company:
                     company_id = company['id']
 
-            self.mysql.insert('vs_event_timeline', {
-                'event_date': datetime.now().date().isoformat(),
+            # Normalize LLM outputs to valid ENUM values
+            scope = self._normalize_scope(classified.get('scope', ''))
+            severity = self._normalize_severity(classified.get('severity', ''))
+            sector = classified.get('affected_sectors', [''])[0] if isinstance(classified.get('affected_sectors'), list) else ''
+            event_date = datetime.now().date().isoformat()
+
+            # Clamp valuation_impact_pct to valid range
+            impact = classified.get('valuation_impact_pct')
+            if impact is not None:
+                try:
+                    impact = max(-99.99, min(99.99, float(impact)))
+                except (ValueError, TypeError):
+                    impact = None
+
+            new_id = self.mysql.insert('vs_event_timeline', {
+                'event_date': event_date,
                 'event_type': 'NEWS',
-                'scope': classified.get('scope', 'SECTOR'),
-                'sector': classified.get('affected_sectors', [''])[0] if isinstance(classified.get('affected_sectors'), list) else '',
+                'scope': scope,
+                'sector': sector,
                 'company_id': company_id,
                 'headline': classified.get('headline', '')[:500],
                 'summary': classified.get('summary', ''),
-                'severity': classified.get('severity', 'LOW'),
+                'severity': severity,
                 'drivers_affected': classified.get('drivers_affected'),
-                'valuation_impact_pct': classified.get('valuation_impact_pct'),
+                'valuation_impact_pct': impact,
                 'source': classified.get('source', ''),
                 'source_url': classified.get('source_url', ''),
                 'grok_synopsis': classified.get('summary', ''),
+                'published_at': classified.get('published_at'),
+                'llm_model': self.llm.last_call_metadata.get('model', ''),
+                'llm_tokens': self.llm.last_call_metadata.get('total_tokens'),
                 'processed': False,
             })
+
+            # Layer 2: Cross-run semantic grouping
+            group_id = self._find_semantic_group(
+                classified.get('headline', ''), company_id, scope, sector, event_date)
+            if group_id:
+                self.mysql.execute(
+                    "UPDATE vs_event_timeline SET semantic_group_id = %s WHERE id = %s",
+                    (group_id, new_id))
+                logger.debug(f"Event {new_id} grouped with semantic_group_id={group_id}")
+            else:
+                # Primary event — points to itself
+                self.mysql.execute(
+                    "UPDATE vs_event_timeline SET semantic_group_id = %s WHERE id = %s",
+                    (new_id, new_id))
+
         except Exception as e:
             logger.error(f"Failed to store event: {e}", exc_info=True)
             # Queue for retry

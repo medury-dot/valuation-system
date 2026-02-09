@@ -40,7 +40,8 @@ class CompanyDriverCalculator:
         Call once before batch valuation loop.
 
         Args:
-            companies: list of dicts with 'csv_name', 'valuation_subgroup', 'symbol'
+            companies: list of dicts with 'csv_name', 'valuation_subgroup', 'symbol' (NSE accord_code),
+                       'bse_code' (BSE scrip_code) — both used for price lookup fallback
         """
         logger.info("Pre-computing subgroup medians for company drivers...")
 
@@ -59,7 +60,8 @@ class CompanyDriverCalculator:
 
             for comp in sg_companies:
                 csv_name = comp.get('csv_name', '')
-                symbol = comp.get('symbol', '')
+                symbol = comp.get('symbol', '')  # NSE accord_code
+                bse_code = comp.get('bse_code', '')  # BSE scrip_code
                 if not csv_name:
                     continue
 
@@ -82,9 +84,9 @@ class CompanyDriverCalculator:
                     if cagr is not None:
                         revenue_cagrs.append(cagr)
 
-                    # P/E from prices
-                    if symbol:
-                        price_data = self.prices.get_latest_data(symbol)
+                    # P/E from prices (with BSE code fallback)
+                    if symbol or bse_code:
+                        price_data = self.prices.get_latest_data(symbol, bse_code=bse_code, company_name=csv_name)
                         pe = price_data.get('pe') if price_data else None
                         if pe and pe > 0:
                             pe_values.append(pe)

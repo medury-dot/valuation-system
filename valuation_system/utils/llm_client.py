@@ -29,6 +29,7 @@ class LLMClient:
         self.provider = os.getenv('LLM_PROVIDER', 'grok')
         self.model = os.getenv('LLM_MODEL', 'grok-2-1212')
         self.fallback_chain = os.getenv('LLM_FALLBACK_CHAIN', 'grok,ollama,openai').split(',')
+        self.last_call_metadata = {}
 
         # Initialize clients for each provider
         self._clients = {}
@@ -54,7 +55,7 @@ class LLMClient:
                 api_key='ollama',
                 base_url=f'{ollama_url}/v1',
             ),
-            'model': 'llama3.1',
+            'model': os.getenv('OLLAMA_MODEL', 'mistral:7b'),
         }
 
         # OpenAI
@@ -150,6 +151,18 @@ class LLMClient:
         logger.debug(f"Calling LLM provider '{provider}' (model={model})")
 
         response = client.chat.completions.create(**kwargs)
+
+        # Extract usage metadata (zero extra API calls — already in response)
+        usage = getattr(response, 'usage', None)
+        self.last_call_metadata = {
+            'model': getattr(response, 'model', model),
+            'prompt_tokens': getattr(usage, 'prompt_tokens', 0) if usage else 0,
+            'completion_tokens': getattr(usage, 'completion_tokens', 0) if usage else 0,
+            'total_tokens': getattr(usage, 'total_tokens', 0) if usage else 0,
+        }
+        logger.debug(f"LLM usage: model={self.last_call_metadata['model']}, "
+                      f"tokens={self.last_call_metadata['total_tokens']}")
+
         content = response.choices[0].message.content
 
         if not content:

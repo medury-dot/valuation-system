@@ -3,13 +3,15 @@ Google Sheets Client for Driver Tracking (4-Level Hierarchy)
 Reads/writes driver values, weights, and history to Google Sheets.
 Provides collaborative interface for PM to view and override drivers.
 
-Sheets Structure (6 tabs):
+Sheets Structure (8 tabs):
   Sheet 1: Macro Drivers (15% weight)
   Sheet 2: Valuation Group Drivers (20% weight)
   Sheet 3: Valuation Subgroup Drivers (35% weight)
   Sheet 4: Company Drivers (30% weight)
   Sheet 5: Recent Activity
   Sheet 6: Active Companies
+  Sheet 7: Discovered Drivers (PM approval workflow)
+  Sheet 9: Materiality Dashboard (read-only alerts)
 """
 
 import os
@@ -45,6 +47,9 @@ class GSheetClient:
         'company_drivers': '4. Company Drivers',  # 4-level hierarchy: COMPANY level
         'recent_activity': '5. Recent Activity',  # 7-day summary
         'active_companies': '6. Active Companies',
+        'discovered_drivers': '7. Discovered Drivers',  # PM approval workflow
+        'news_events': '8. News Events',  # Recent news intelligence from all sources
+        'materiality_dashboard': '9. Materiality Dashboard',  # Read-only alerts dashboard
         # Legacy aliases (for backward compatibility):
         'sector_drivers': '2. Valuation Group Drivers',
         'sector_chemicals': '2. Valuation Group Drivers',

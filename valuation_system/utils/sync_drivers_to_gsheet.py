@@ -7,6 +7,8 @@ Sync Driver Definitions to Google Sheet
 
 import os
 import sys
+import json
+import time
 import mysql.connector
 import gspread
 from google.oauth2.service_account import Credentials
@@ -406,7 +408,8 @@ def sync_company_drivers(gc, sheet_id):
 
 
 def sync_discovered_drivers(gc, sheet_id):
-    """Sync discovered drivers (agent suggestions) to Tab 7 '7. Discovered Drivers'."""
+    """Sync discovered drivers (agent suggestions) to Tab 7 '7. Discovered Drivers'.
+    PM edits Status column to APPROVED/REJECTED to approve/reject suggestions."""
     sh = gc.open_by_key(sheet_id)
 
     # Create tab if it doesn't exist
@@ -429,9 +432,10 @@ def sync_discovered_drivers(gc, sheet_id):
     cursor.execute("""
         SELECT id, driver_level, valuation_group, valuation_subgroup,
                driver_category, driver_name, suggested_weight, reasoning,
-               source_headline, confidence, status, discovered_at, reviewed_by
+               source_headline, confidence, status, discovered_at, reviewed_by, pm_notes
         FROM vs_discovered_drivers
         ORDER BY status ASC, discovered_at DESC
+        LIMIT 500
     """)
 
     discoveries = cursor.fetchall()
@@ -441,15 +445,16 @@ def sync_discovered_drivers(gc, sheet_id):
     print(f"  Found {len(discoveries)} discovered drivers in MySQL")
 
     headers = [
-        'ID', 'Level', 'Valuation Group', 'Valuation Subgroup', 'Category',
+        'ID', 'Discovered At', 'Level', 'Valuation Group', 'Valuation Subgroup', 'Category',
         'Driver Name', 'Weight', 'Reasoning', 'Source Headline',
-        'Confidence', 'Status', 'Discovered At', 'Reviewed By'
+        'Confidence', 'Status', 'Reviewed By', 'PM Notes'
     ]
     rows = [headers]
 
     for d in discoveries:
         rows.append([
             d['id'],
+            str(d['discovered_at']) if d['discovered_at'] else '',
             d['driver_level'] or '',
             d['valuation_group'] or '',
             d['valuation_subgroup'] or '',
@@ -460,13 +465,329 @@ def sync_discovered_drivers(gc, sheet_id):
             d['source_headline'] or '',
             d['confidence'] or 'MEDIUM',
             d['status'] or 'PENDING',
-            str(d['discovered_at']) if d['discovered_at'] else '',
-            d['reviewed_by'] or ''
+            d['reviewed_by'] or '',
+            d.get('pm_notes', '') or ''
         ])
 
     ws.clear()
     ws.update(range_name='A1', values=rows)
+
+    # Add data validation for Status column (column L, row 2 onwards)
+    try:
+        from gspread_formatting import DataValidationRule, BooleanCondition, set_data_validation_for_cell_range
+        validation_rule = DataValidationRule(
+            BooleanCondition('ONE_OF_LIST', ['PENDING', 'APPROVED', 'REJECTED']),
+            showCustomUi=True,
+            strict=True
+        )
+        set_data_validation_for_cell_range(ws, 'L2:L500', validation_rule)
+    except ImportError:
+        print("  Warning: gspread_formatting not installed, skipping data validation")
+    except Exception as e:
+        print(f"  Warning: Could not add data validation to Status column: {e}")
+
     print(f"  Synced {len(rows)-1} discovered drivers to Tab 7")
+    return len(rows) - 1
+
+
+def _format_drivers_affected(drivers_json):
+    """Format drivers_affected JSON for GSheet display.
+    Old format: ["revenue_growth", "stock_price"] → "revenue_growth, stock_price"
+    New format: [{"driver":"revenue_growth","level":"GROUP","impact_pct":-3}]
+                → "revenue_growth(GROUP:-3.0%)"
+    """
+    if not drivers_json:
+        return ''
+    if isinstance(drivers_json, str):
+        try:
+            drivers_json = json.loads(drivers_json)
+        except json.JSONDecodeError:
+            return drivers_json  # Return as-is if not valid JSON
+
+    parts = []
+    for item in drivers_json:
+        if isinstance(item, str):
+            parts.append(item)
+        elif isinstance(item, dict):
+            name = item.get('driver', '?')
+            level = item.get('level', '')
+            pct = item.get('impact_pct')
+            if level and pct is not None:
+                parts.append(f"{name}({level}:{pct:+.1f}%)")
+            elif level:
+                parts.append(f"{name}({level})")
+            else:
+                parts.append(name)
+    return ', '.join(parts)
+
+
+def sync_news_events(gc, sheet_id):
+    """Sync recent news events to Tab 8 '8. News Events' with expanded columns.
+    Shows vs_event_timeline data from last 7 days for PM review.
+    17 columns: Scraped At, Published At, Severity, Scope, Valuation Subgroup,
+    Headline, Summary, Drivers Affected, Valuation Impact %, Source, URL,
+    Company, Related, LLM, Tokens, PM Reviewed, PM Notes"""
+    sh = gc.open_by_key(sheet_id)
+
+    # Create tab if it doesn't exist
+    try:
+        ws = sh.worksheet("8. News Events")
+    except gspread.exceptions.WorksheetNotFound:
+        ws = sh.add_worksheet("8. News Events", rows=500, cols=17)
+        print("  Created new tab '8. News Events'")
+
+    # Get news events from MySQL (last 7 days) - only primary events (no dupes)
+    conn = mysql.connector.connect(
+        host=os.getenv('MYSQL_HOST', 'localhost'),
+        port=int(os.getenv('MYSQL_PORT', 3306)),
+        user=os.getenv('MYSQL_USER', 'root'),
+        password=os.getenv('MYSQL_PASSWORD', ''),
+        database=os.getenv('MYSQL_DATABASE', 'rag')
+    )
+    cursor = conn.cursor(dictionary=True)
+
+    cursor.execute("""
+        SELECT
+            e.event_timestamp,
+            e.published_at,
+            e.severity,
+            e.scope,
+            COALESCE(ac.valuation_subgroup, '') as valuation_subgroup,
+            e.headline,
+            COALESCE(e.grok_synopsis, e.summary, '') as summary,
+            e.drivers_affected,
+            e.valuation_impact_pct,
+            e.source,
+            e.source_url,
+            COALESCE(ac.nse_symbol, '') as company_symbol,
+            e.semantic_group_id,
+            e.id,
+            e.llm_model,
+            e.llm_tokens,
+            e.pm_reviewed,
+            e.pm_notes,
+            (SELECT COUNT(*) FROM vs_event_timeline e2
+             WHERE e2.semantic_group_id = e.id AND e2.id != e.id) as related_count
+        FROM vs_event_timeline e
+        LEFT JOIN vs_active_companies ac ON e.company_id = ac.company_id
+        WHERE e.event_date >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+          AND (e.semantic_group_id IS NULL OR e.semantic_group_id = e.id)
+        ORDER BY
+            FIELD(e.severity, 'CRITICAL', 'HIGH', 'MEDIUM', 'LOW'),
+            e.event_timestamp DESC
+        LIMIT 200
+    """)
+
+    events = cursor.fetchall()
+    cursor.close()
+    conn.close()
+
+    print(f"  Found {len(events)} news events (last 7 days, primary events only)")
+
+    headers = [
+        'Scraped At', 'Published At', 'Severity', 'Scope', 'Valuation Subgroup',
+        'Headline', 'Summary', 'Drivers Affected', 'Valuation Impact %',
+        'Source', 'URL', 'Company', 'Related', 'LLM', 'Tokens',
+        'PM Reviewed', 'PM Notes'
+    ]
+    rows = [headers]
+
+    for ev in events:
+        # Format timestamps with HH:MM:SS
+        scraped = ev.get('event_timestamp')
+        scraped_str = scraped.strftime('%Y-%m-%d %H:%M:%S') if scraped else ''
+
+        published = ev.get('published_at')
+        published_str = published.strftime('%Y-%m-%d %H:%M:%S') if published else ''
+
+        # Format drivers_affected
+        drivers_str = _format_drivers_affected(ev.get('drivers_affected'))
+
+        # Valuation impact
+        impact = ev.get('valuation_impact_pct')
+        impact_str = f"{impact:.1f}%" if impact is not None else ''
+
+        # Related count
+        related_count = ev.get('related_count', 0)
+        related_str = f"(+{related_count})" if related_count > 0 else ''
+
+        # LLM tokens formatted with commas
+        tokens = ev.get('llm_tokens')
+        tokens_str = f"{tokens:,}" if tokens else ''
+
+        rows.append([
+            scraped_str,
+            published_str,
+            ev.get('severity', ''),
+            ev.get('scope', ''),
+            ev.get('valuation_subgroup', ''),
+            ev.get('headline', ''),
+            (ev.get('summary', '') or '')[:300],  # Truncate long summaries
+            drivers_str,
+            impact_str,
+            ev.get('source', ''),
+            ev.get('source_url', ''),
+            ev.get('company_symbol', ''),
+            related_str,
+            ev.get('llm_model', ''),
+            tokens_str,
+            'YES' if ev.get('pm_reviewed') else '',
+            ev.get('pm_notes', '') or '',
+        ])
+
+    ws.clear()
+
+    # Batch write in chunks to avoid rate limits
+    chunk_size = 100
+    for i in range(0, len(rows), chunk_size):
+        chunk = rows[i:i + chunk_size]
+        start_row = i + 1
+        ws.update(range_name=f'A{start_row}', values=chunk)
+        if i + chunk_size < len(rows):
+            time.sleep(1)
+
+    # Apply conditional formatting for severity (updated range to Q for 17 cols)
+    try:
+        from gspread_formatting import ConditionalFormatRule, BooleanRule, BooleanCondition, CellFormat, Color, GridRange
+        from gspread_formatting import set_conditional_format_rules
+
+        rules = []
+        severity_colors = {
+            'CRITICAL': Color(1.0, 0.8, 0.8),
+            'HIGH':     Color(1.0, 0.9, 0.7),
+            'MEDIUM':   Color(1.0, 1.0, 0.8),
+        }
+
+        for severity, color in severity_colors.items():
+            rules.append(ConditionalFormatRule(
+                ranges=[GridRange.from_a1_range('A2:Q500', ws)],
+                booleanRule=BooleanRule(
+                    condition=BooleanCondition('CUSTOM_FORMULA', [f'=$C2="{severity}"']),
+                    format=CellFormat(backgroundColor=color)
+                )
+            ))
+
+        set_conditional_format_rules(ws, rules)
+    except ImportError:
+        print("  Warning: gspread_formatting not installed, skipping color coding")
+    except Exception as e:
+        print(f"  Warning: Could not apply color coding: {e}")
+
+    print(f"  Synced {len(rows)-1} news events to Tab 8")
+    return len(rows) - 1
+
+
+def sync_materiality_dashboard(gc, sheet_id):
+    """Sync materiality alerts to Tab 9 '9. Materiality Dashboard'.
+    Read-only dashboard showing critical alerts from last 7 days, color-coded by severity."""
+    sh = gc.open_by_key(sheet_id)
+
+    # Create tab if it doesn't exist
+    try:
+        ws = sh.worksheet("9. Materiality Dashboard")
+    except gspread.exceptions.WorksheetNotFound:
+        ws = sh.add_worksheet("9. Materiality Dashboard", rows=1000, cols=13)
+        print("  Created new tab '9. Materiality Dashboard'")
+
+    # Get materiality alerts from MySQL (last 7 days)
+    conn = mysql.connector.connect(
+        host=os.getenv('MYSQL_HOST', 'localhost'),
+        port=int(os.getenv('MYSQL_PORT', 3306)),
+        user=os.getenv('MYSQL_USER', 'root'),
+        password=os.getenv('MYSQL_PASSWORD', ''),
+        database=os.getenv('MYSQL_DATABASE', 'rag')
+    )
+    cursor = conn.cursor(dictionary=True)
+
+    cursor.execute("""
+        SELECT
+            ma.alert_type,
+            ma.severity,
+            COALESCE(ac.nse_symbol, ma.valuation_group, ma.valuation_subgroup, 'MACRO') as scope_name,
+            ma.driver_affected,
+            ma.current_value,
+            ma.baseline_value,
+            ma.deviation_pct,
+            ma.suggested_action,
+            COALESCE(ma.reasoning, ma.signal_description) as reasoning,
+            ma.created_at,
+            ma.pm_reviewed,
+            ma.pm_notes
+        FROM vs_materiality_alerts ma
+        LEFT JOIN vs_active_companies ac ON ma.company_id = ac.company_id
+        WHERE ma.created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+        ORDER BY
+            FIELD(ma.severity, 'CRITICAL', 'HIGH', 'MEDIUM', 'LOW'),
+            ma.created_at DESC
+    """)
+
+    alerts = cursor.fetchall()
+    cursor.close()
+    conn.close()
+
+    print(f"  Found {len(alerts)} materiality alerts (last 7 days)")
+
+    headers = [
+        'Alert Type', 'Severity', 'Company/Sector', 'Driver Affected',
+        'Current Value', 'Baseline', 'Change %', 'Suggested Action',
+        'Reasoning', 'Created At', 'PM Reviewed', 'PM Notes', 'Review Link'
+    ]
+    rows = [headers]
+
+    for a in alerts:
+        change_pct = a.get('deviation_pct')
+        change_str = f"{change_pct:.1f}%" if change_pct is not None else 'N/A'
+
+        rows.append([
+            a['alert_type'] or '',
+            a['severity'] or 'MEDIUM',
+            a['scope_name'] or '',
+            a['driver_affected'] or '',
+            str(a['current_value']) if a['current_value'] is not None else '',
+            str(a['baseline_value']) if a['baseline_value'] is not None else '',
+            change_str,
+            a['suggested_action'] or '',
+            a['reasoning'] or '',
+            str(a['created_at']) if a['created_at'] else '',
+            'YES' if a.get('pm_reviewed') else 'NO',
+            a.get('pm_notes', '') or '',
+            ''  # Review Link (can be populated with GSheet formula later)
+        ])
+
+    ws.clear()
+    ws.update(range_name='A1', values=rows)
+
+    # Apply conditional formatting rules (4 rules, 1 API call batch — not per-row)
+    try:
+        from gspread_formatting import ConditionalFormatRule, BooleanRule, BooleanCondition, CellFormat, Color, GridRange
+
+        ws_id = ws.id
+        rules = []
+        severity_colors = {
+            'CRITICAL': Color(1.0, 0.8, 0.8),   # Light red
+            'HIGH':     Color(1.0, 0.9, 0.7),    # Light orange
+            'MEDIUM':   Color(1.0, 1.0, 0.8),    # Light yellow
+            'LOW':      Color(0.9, 1.0, 0.9),    # Light green
+        }
+
+        for severity, color in severity_colors.items():
+            rules.append(ConditionalFormatRule(
+                ranges=[GridRange.from_a1_range(f'A2:M1000', ws)],
+                booleanRule=BooleanRule(
+                    condition=BooleanCondition('CUSTOM_FORMULA', [f'=$B2="{severity}"']),
+                    format=CellFormat(backgroundColor=color)
+                )
+            ))
+
+        from gspread_formatting import set_conditional_format_rules
+        set_conditional_format_rules(ws, rules)
+    except ImportError:
+        # gspread_formatting not installed, skip color coding
+        print("  Warning: gspread_formatting not installed, skipping color coding")
+    except Exception as e:
+        print(f"  Warning: Could not apply color coding: {e}")
+
+    print(f"  Synced {len(rows)-1} materiality alerts to Tab 9")
     return len(rows) - 1
 
 
@@ -507,6 +828,14 @@ def main():
     print("\n[7] Syncing discovered drivers to Tab 7...")
     discovered_count = sync_discovered_drivers(gc, sheet_id)
 
+    # Sync news events
+    print("\n[8] Syncing news events to Tab 8...")
+    news_count = sync_news_events(gc, sheet_id)
+
+    # Sync materiality dashboard
+    print("\n[9] Syncing materiality dashboard to Tab 9...")
+    materiality_count = sync_materiality_dashboard(gc, sheet_id)
+
     print("\n" + "=" * 70)
     print("SUMMARY")
     print("=" * 70)
@@ -516,9 +845,10 @@ def main():
     print(f"COMPANY drivers synced: {company_driver_count}")
     print(f"Active companies synced: {company_count}")
     print(f"Discovered drivers synced: {discovered_count}")
+    print(f"Materiality alerts synced: {materiality_count}")
     print(f"\nGSheet URL: https://docs.google.com/spreadsheets/d/{sheet_id}")
 
-    return macro_count, group_count, subgroup_count, company_driver_count, company_count, discovered_count
+    return macro_count, group_count, subgroup_count, company_driver_count, company_count, discovered_count, materiality_count
 
 
 if __name__ == '__main__':

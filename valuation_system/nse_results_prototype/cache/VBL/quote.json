@@ -1,0 +1,186 @@
+{
+  "info": {
+    "symbol": "VBL",
+    "companyName": "Varun Beverages Limited",
+    "industry": "Other Beverages",
+    "activeSeries": [
+      "EQ",
+      "T0"
+    ],
+    "debtSeries": [],
+    "isFNOSec": true,
+    "isCASec": false,
+    "isSLBSec": true,
+    "isDebtSec": false,
+    "isSuspended": false,
+    "tempSuspendedSeries": [],
+    "isETFSec": false,
+    "isDelisted": false,
+    "isin": "INE200M01039",
+    "slb_isin": "INE200M01039",
+    "listingDate": "2016-11-08",
+    "isMunicipalBond": false,
+    "isHybridSymbol": false,
+    "segment": "EQUITY",
+    "isTop10": false,
+    "identifier": "VBLEQN"
+  },
+  "metadata": {
+    "series": "EQ",
+    "symbol": "VBL",
+    "isin": "INE200M01039",
+    "status": "Listed",
+    "listingDate": "08-Nov-2016",
+    "industry": "Other Beverages",
+    "lastUpdateTime": "09-Feb-2026 13:34:59",
+    "pdSectorPe": 48.4,
+    "pdSymbolPe": 48.4,
+    "pdSectorInd": "NIFTY NEXT 50",
+    "pdSectorIndAll": [
+      "NIFTY NEXT 50",
+      "NIFTY500 MULTICAP 50:25:25",
+      "NIFTY100 ENHANCED ESG",
+      "NIFTY100 QUALITY 30",
+      "NIFTY 100",
+      "NIFTY 200",
+      "NIFTY 500",
+      "NIFTY FMCG",
+      "NIFTY INDIA CONSUMPTION",
+      "NIFTY INDIA FPI 150",
+      "NIFTY NON-CYCLICAL CONSUMER",
+      "NIFTY TOTAL MARKET",
+      "NIFTY100 EQUAL WEIGHT",
+      "NIFTY500 EQUAL WEIGHT",
+      "NIFTY500 LARGEMIDSMALL EQUAL-CAP WEIGHTED",
+      "NIFTY LARGEMIDCAP 250",
+      "NIFTY100 ESG"
+    ]
+  },
+  "securityInfo": {
+    "boardStatus": "Main",
+    "tradingStatus": "Active",
+    "tradingSegment": "Normal Market",
+    "sessionNo": "-",
+    "slb": "Yes",
+    "classOfShare": "Equity",
+    "derivatives": "Yes",
+    "surveillance": {
+      "surv": null,
+      "desc": null
+    },
+    "faceValue": 2,
+    "issuedSize": 3381988769
+  },
+  "sddDetails": {
+    "SDDAuditor": "-",
+    "SDDStatus": "-"
+  },
+  "currentMarketType": "NM",
+  "priceInfo": {
+    "lastPrice": 456.7,
+    "change": 17.649999999999977,
+    "pChange": 4.020043275253383,
+    "previousClose": 439.05,
+    "open": 443.45,
+    "close": 0,
+    "vwap": 449.84,
+    "stockIndClosePrice": 0,
+    "lowerCP": "395.15",
+    "upperCP": "482.95",
+    "pPriceBand": "No Band",
+    "basePrice": 439.05,
+    "intraDayHighLow": {
+      "min": 439.1,
+      "max": 457.1,
+      "value": 456.7
+    },
+    "weekHighLow": {
+      "min": 419.55,
+      "minDate": "03-Mar-2025",
+      "max": 585.85,
+      "maxDate": "06-Feb-2025",
+      "value": 456.7
+    },
+    "iNavValue": null,
+    "checkINAV": false,
+    "tickSize": 0.05,
+    "ieq": ""
+  },
+  "industryInfo": {
+    "macro": "Fast Moving Consumer Goods",
+    "sector": "Fast Moving Consumer Goods",
+    "industry": "Beverages",
+    "basicIndustry": "Other Beverages"
+  },
+  "preOpenMarket": {
+    "preopen": [
+      {
+        "price": 442.25,
+        "buyQty": 25,
+        "sellQty": 0
+      },
+      {
+        "price": 443,
+        "buyQty": 52,
+        "sellQty": 0
+      },
+      {
+        "price": 443.05,
+        "buyQty": 10,
+        "sellQty": 0
+      },
+      {
+        "price": 443.1,
+        "buyQty": 400,
+        "sellQty": 0
+      },
+      {
+        "price": 443.4,
+        "buyQty": 17,
+        "sellQty": 0
+      },
+      {
+        "price": 443.45,
+        "buyQty": 0,
+        "sellQty": 926,
+        "iep": true
+      },
+      {
+        "price": 443.55,
+        "buyQty": 0,
+        "sellQty": 50
+      },
+      {
+        "price": 443.85,
+        "buyQty": 0,
+        "sellQty": 500
+      },
+      {
+        "price": 443.9,
+        "buyQty": 0,
+        "sellQty": 2
+      },
+      {
+        "price": 444,
+        "buyQty": 0,
+        "sellQty": 1481
+      }
+    ],
+    "ato": {
+      "buy": 0,
+      "sell": 0
+    },
+    "IEP": 443.45,
+    "totalTradedVolume": 6537,
+    "finalPrice": 443.45,
+    "finalQuantity": 6537,
+    "lastUpdateTime": "09-Feb-2026 09:07:11",
+    "totalBuyQuantity": 97129,
+    "totalSellQuantity": 201199,
+    "atoBuyQty": 0,
+    "atoSellQty": 0,
+    "Change": 4.4,
+    "perChange": 1,
+    "prevClose": 439.05
+  }
+}

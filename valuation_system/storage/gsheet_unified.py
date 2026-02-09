@@ -458,7 +458,7 @@ class GSheetUnifiedClient:
     def detect_pm_edits(self, mysql_client) -> List[Dict]:
         """
         Poll GSheet for PM edits across ALL driver sheets, sync to MySQL (every 5 mins).
-        Checks: Macro, Group, Subgroup, and Company driver sheets.
+        Checks: Macro, Group, Subgroup, Company driver sheets, and Discovered Drivers.
 
         Returns:
             List of detected changes
@@ -476,6 +476,9 @@ class GSheetUnifiedClient:
 
         # Check COMPANY drivers (Sheet 4)
         changes.extend(self._detect_edits_for_level(mysql_client, 'company', 'COMPANY'))
+
+        # Check DISCOVERED DRIVERS (Sheet 7) - PM approval workflow
+        changes.extend(self._detect_discovered_driver_edits(mysql_client))
 
         if changes:
             logger.info(f"Detected {len(changes)} PM edits across all driver sheets, synced to MySQL")
@@ -619,6 +622,81 @@ class GSheetUnifiedClient:
                     changelog_entry['company_id'] = row.get('company_id') or row.get('Company ID')
 
                 mysql_client.insert('vs_driver_changelog', changelog_entry)
+
+        return changes
+
+    def _detect_discovered_driver_edits(self, mysql_client) -> List[Dict]:
+        """
+        Detect PM edits in Tab 7 (Discovered Drivers).
+        When PM changes Status from PENDING → APPROVED/REJECTED, update MySQL.
+        """
+        changes = []
+
+        try:
+            # Read from GSheet Tab 7
+            sh = self.spreadsheet
+            ws = sh.worksheet('7. Discovered Drivers')
+            rows = ws.get_all_records()
+        except Exception as e:
+            logger.warning(f"Failed to read Tab 7 (Discovered Drivers): {e}")
+            return changes
+
+        for row in rows:
+            driver_id = row.get('ID')
+            new_status = row.get('Status', '').strip().upper()
+            pm_notes = row.get('PM Notes', '').strip()
+
+            if not driver_id or new_status not in ('APPROVED', 'REJECTED'):
+                continue
+
+            # Check if status changed in MySQL
+            db_row = mysql_client.query_one(
+                "SELECT status, reviewed_by FROM vs_discovered_drivers WHERE id = %s",
+                (driver_id,)
+            )
+
+            if not db_row:
+                continue
+
+            db_status = db_row.get('status', '').upper()
+            if db_status == new_status:
+                # No change, skip
+                continue
+
+            # Status changed → update MySQL
+            mysql_client.execute("""
+                UPDATE vs_discovered_drivers
+                SET status = %s, reviewed_by = 'PM', reviewed_at = NOW(), pm_notes = %s
+                WHERE id = %s
+            """, (new_status, pm_notes, driver_id))
+
+            # Log to vs_driver_changelog
+            mysql_client.execute("""
+                INSERT INTO vs_driver_changelog
+                (driver_level, driver_name, valuation_group, valuation_subgroup,
+                 old_value, new_value, triggered_by, change_reason, change_timestamp)
+                VALUES (
+                    (SELECT driver_level FROM vs_discovered_drivers WHERE id = %s),
+                    (SELECT driver_name FROM vs_discovered_drivers WHERE id = %s),
+                    (SELECT valuation_group FROM vs_discovered_drivers WHERE id = %s),
+                    (SELECT valuation_subgroup FROM vs_discovered_drivers WHERE id = %s),
+                    %s, %s, 'PM_REVIEW', %s, NOW()
+                )
+            """, (driver_id, driver_id, driver_id, driver_id,
+                  db_status, new_status,
+                  f"PM reviewed discovered driver: {db_status} → {new_status}. Notes: {pm_notes}"))
+
+            change = {
+                'change_type': 'DISCOVERED_DRIVER_REVIEW',
+                'driver_id': driver_id,
+                'old_status': db_status,
+                'new_status': new_status,
+                'pm_notes': pm_notes,
+                'timestamp': datetime.now(),
+            }
+            changes.append(change)
+
+            logger.info(f"Tab 7 edit detected: Discovered driver ID={driver_id} status changed {db_status} → {new_status}")
 
         return changes
 

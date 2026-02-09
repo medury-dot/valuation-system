@@ -1,0 +1,205 @@
+{
+  "info": {
+    "symbol": "EICHERMOT",
+    "companyName": "Eicher Motors Limited",
+    "industry": "2/3 Wheelers",
+    "activeSeries": [
+      "EQ"
+    ],
+    "debtSeries": [],
+    "isFNOSec": true,
+    "isCASec": false,
+    "isSLBSec": true,
+    "isDebtSec": false,
+    "isSuspended": false,
+    "tempSuspendedSeries": [],
+    "isETFSec": false,
+    "isDelisted": false,
+    "isin": "INE066A01021",
+    "slb_isin": "INE066A01021",
+    "listingDate": "2004-09-07",
+    "isMunicipalBond": false,
+    "isHybridSymbol": false,
+    "segment": "EQUITY",
+    "isTop10": false,
+    "identifier": "EICHERMOTEQN"
+  },
+  "metadata": {
+    "series": "EQ",
+    "symbol": "EICHERMOT",
+    "isin": "INE066A01021",
+    "status": "Listed",
+    "listingDate": "07-Sep-2004",
+    "industry": "2/3 Wheelers",
+    "lastUpdateTime": "09-Feb-2026 13:34:10",
+    "pdSectorPe": 44.71,
+    "pdSymbolPe": 44.71,
+    "pdSectorInd": "NIFTY 50",
+    "pdSectorIndAll": [
+      "NIFTY 50",
+      "NIFTY500 MULTIFACTOR MQVLV 50",
+      "NIFTY ALPHA QUALITY VALUE LOW-VOLATILITY 30",
+      "NIFTY LARGEMIDCAP 250",
+      "NIFTY QUALITY LOW-VOLATILITY 30",
+      "NIFTY100 ALPHA 30",
+      "NIFTY100 ESG",
+      "NIFTY100 ENHANCED ESG",
+      "NIFTY100 QUALITY 30",
+      "NIFTY50 EQUAL WEIGHT",
+      "NIFTY 100",
+      "NIFTY 200",
+      "NIFTY 500",
+      "NIFTY ALPHA 50",
+      "NIFTY AUTO",
+      "NIFTY EV & NEW AGE AUTOMOTIVE",
+      "NIFTY INDIA CONSUMPTION",
+      "NIFTY INDIA FPI 150",
+      "NIFTY INDIA MANUFACTURING",
+      "NIFTY INDIA NEW AGE CONSUMPTION",
+      "NIFTY MOBILITY",
+      "NIFTY RURAL",
+      "NIFTY TOTAL MARKET",
+      "NIFTY TOTAL MARKET MOMENTUM QUALITY 50",
+      "NIFTY TRANSPORTATION & LOGISTICS",
+      "NIFTY100 EQUAL WEIGHT",
+      "NIFTY200 ALPHA 30",
+      "NIFTY200 MOMENTUM 30",
+      "NIFTY500 EQUAL WEIGHT",
+      "NIFTY500 LARGEMIDSMALL EQUAL-CAP WEIGHTED",
+      "NIFTY500 LOW VOLATILITY 50",
+      "NIFTY500 MOMENTUM 50",
+      "NIFTY500 MULTICAP 50:25:25",
+      "NIFTY500 MULTICAP INDIA MANUFACTURING 50:30:20",
+      "NIFTY500 MULTICAP MOMENTUM QUALITY 50",
+      "NIFTY ALPHA LOW-VOLATILITY 30",
+      "NIFTY ALPHA QUALITY LOW-VOLATILITY 30"
+    ]
+  },
+  "securityInfo": {
+    "boardStatus": "Main",
+    "tradingStatus": "Active",
+    "tradingSegment": "Normal Market",
+    "sessionNo": "-",
+    "slb": "Yes",
+    "classOfShare": "Equity",
+    "derivatives": "Yes",
+    "surveillance": {
+      "surv": null,
+      "desc": null
+    },
+    "faceValue": 1,
+    "issuedSize": 274299237
+  },
+  "sddDetails": {
+    "SDDAuditor": "-",
+    "SDDStatus": "-"
+  },
+  "currentMarketType": "NM",
+  "priceInfo": {
+    "lastPrice": 7197.5,
+    "change": 20,
+    "pChange": 0.2786485545106235,
+    "previousClose": 7177.5,
+    "open": 7116,
+    "close": 0,
+    "vwap": 7163.88,
+    "stockIndClosePrice": 0,
+    "lowerCP": "6460.00",
+    "upperCP": "7895.00",
+    "pPriceBand": "No Band",
+    "basePrice": 7177.5,
+    "intraDayHighLow": {
+      "min": 7063.5,
+      "max": 7219.5,
+      "value": 7197.5
+    },
+    "weekHighLow": {
+      "min": 4646,
+      "minDate": "17-Feb-2025",
+      "max": 7613.5,
+      "maxDate": "09-Jan-2026",
+      "value": 7197.5
+    },
+    "iNavValue": null,
+    "checkINAV": false,
+    "tickSize": 0.5,
+    "ieq": ""
+  },
+  "industryInfo": {
+    "macro": "Consumer Discretionary",
+    "sector": "Automobile and Auto Components",
+    "industry": "Automobiles",
+    "basicIndustry": "2/3 Wheelers"
+  },
+  "preOpenMarket": {
+    "preopen": [
+      {
+        "price": 7110,
+        "buyQty": 11,
+        "sellQty": 0
+      },
+      {
+        "price": 7110.5,
+        "buyQty": 2,
+        "sellQty": 0
+      },
+      {
+        "price": 7113.5,
+        "buyQty": 4,
+        "sellQty": 0
+      },
+      {
+        "price": 7115,
+        "buyQty": 1,
+        "sellQty": 0
+      },
+      {
+        "price": 7116,
+        "buyQty": 14,
+        "sellQty": 0,
+        "iep": true
+      },
+      {
+        "price": 7135,
+        "buyQty": 0,
+        "sellQty": 1
+      },
+      {
+        "price": 7140,
+        "buyQty": 0,
+        "sellQty": 210
+      },
+      {
+        "price": 7141.5,
+        "buyQty": 0,
+        "sellQty": 3
+      },
+      {
+        "price": 7142,
+        "buyQty": 0,
+        "sellQty": 56
+      },
+      {
+        "price": 7150,
+        "buyQty": 0,
+        "sellQty": 56
+      }
+    ],
+    "ato": {
+      "buy": 0,
+      "sell": 0
+    },
+    "IEP": 7116,
+    "totalTradedVolume": 2338,
+    "finalPrice": 7116,
+    "finalQuantity": 2338,
+    "lastUpdateTime": "09-Feb-2026 09:07:21",
+    "totalBuyQuantity": 3816,
+    "totalSellQuantity": 6448,
+    "atoBuyQty": 0,
+    "atoSellQty": 0,
+    "Change": -61.5,
+    "perChange": -0.86,
+    "prevClose": 7177.5
+  }
+}

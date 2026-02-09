@@ -1249,15 +1249,15 @@ SUBGROUP_COMPANY_DRIVERS = {
 # link_direction: 'SAME' = macro UP → driver POSITIVE, 'INVERSE' = macro UP → driver NEGATIVE
 # ============================================================================
 MACRO_LINK_MAPPINGS = [
-    # GROUP-level links
+    # GROUP-level links (driver names must match actual vs_drivers.driver_name)
     ('GROUP', 'commodity_prices',       'AUTO',                  'wpi_manufactured',      'INVERSE'),
     ('GROUP', 'interest_rates_retail',  'AUTO',                  'repo_rate',             'INVERSE'),
-    ('GROUP', 'housing_demand',         'REAL_ESTATE_INFRA',     'repo_rate',             'INVERSE'),
-    ('GROUP', 'raw_material_costs',     'MATERIALS_CHEMICALS',   'wpi_primary_articles',  'INVERSE'),
-    ('GROUP', 'fuel_costs',             'ENERGY_UTILITIES',      'wpi_fuel_power',        'INVERSE'),
-    ('GROUP', 'input_costs',            'CONSUMER_STAPLES',      'cpi_food_inflation',    'INVERSE'),
+    ('GROUP', 'real_estate_demand',     'REAL_ESTATE_INFRA',     'repo_rate',             'INVERSE'),  # was housing_demand
+    ('GROUP', 'crude_oil_prices',       'MATERIALS_CHEMICALS',   'wpi_primary_articles',  'SAME'),      # was raw_material_costs
+    ('GROUP', 'fuel_cost',              'ENERGY_UTILITIES',      'wpi_fuel_power',        'INVERSE'),  # was fuel_costs
+    ('GROUP', 'input_cost_inflation',   'CONSUMER_STAPLES',      'cpi_food_inflation',    'INVERSE'),  # was input_costs
     ('GROUP', 'credit_growth',          'FINANCIALS',            'repo_rate',             'INVERSE'),
-    ('GROUP', 'global_demand',          'TECHNOLOGY',            'pmi_services',          'SAME'),
+    ('GROUP', 'global_it_spending',     'TECHNOLOGY',            'pmi_services',          'SAME'),      # was global_demand
     # SUBGROUP-level links
     ('SUBGROUP', 'steel_prices',        'AUTO_OEM',              'wpi_manufactured',      'INVERSE'),
     ('SUBGROUP', 'interest_rates',      'AUTO_OEM',              'repo_rate',             'INVERSE'),

@@ -128,6 +128,23 @@ class OrchestratorAgent:
                 self.mysql
             )
 
+        # Initialize email sender (for daily digest)
+        self.email_sender = None
+        try:
+            from valuation_system.notifications.email_sender import EmailSender
+            self.email_sender = EmailSender()
+        except Exception as e:
+            logger.warning(f"EmailSender unavailable: {e}")
+
+        # Initialize content agent (for social media posts)
+        self.content_agent = None
+        if self.mysql:
+            try:
+                from valuation_system.agents.content_agent import ContentAgent
+                self.content_agent = ContentAgent(self.mysql, self.gsheet, self.llm)
+            except Exception as e:
+                logger.warning(f"ContentAgent unavailable: {e}")
+
         logger.info(f"Orchestrator initialized. Dependencies: {self.deps}")
         logger.info(f"Active sectors: {list(self.active_sectors.keys())}")
         logger.info(f"Active companies: {list(self.active_companies.keys())}")
@@ -185,6 +202,25 @@ class OrchestratorAgent:
                 logger.warning(f"{len(critical)} CRITICAL events detected!")
                 self._handle_critical_events(critical)
                 result['critical_events'] = len(critical)
+
+                # Send critical alert emails
+                if self.email_sender and self.email_sender.enabled:
+                    for event in critical:
+                        try:
+                            self.email_sender.send_critical_alert(event)
+                        except Exception as e:
+                            logger.error(f"Failed to send critical alert email: {e}")
+
+            # 5. Detect PM edits in GSheet (Tab 1-4 drivers + Tab 7 discovered drivers)
+            if self.gsheet and self.mysql:
+                try:
+                    from valuation_system.storage.gsheet_unified import GSheetUnifiedClient
+                    unified = GSheetUnifiedClient()
+                    pm_edits = unified.detect_pm_edits(self.mysql)
+                    result['pm_edits_detected'] = len(pm_edits)
+                except Exception as e:
+                    logger.error(f"PM edit detection failed: {e}", exc_info=True)
+                    result['pm_edits_detected'] = 0
 
             self.state.record_success('hourly_cycle', result)
             result['status'] = 'SUCCESS'
@@ -1032,6 +1068,27 @@ class OrchestratorAgent:
                 for k, v in valuations.items()
             }
             result['alerts'] = len(alerts)
+
+            # --- News Intelligence & Driver Discovery ---
+
+            # Detect price trend anomalies (PE/PB/EV-EBITDA/PS percentiles)
+            result['price_trends'] = self._detect_price_trends()
+
+            # Auto-fill empty qualitative (SEED) drivers via LLM + news
+            result['qualitative_drivers'] = self._populate_qualitative_drivers()
+
+            # Run trend detection across all group analysts
+            result['trend_detection'] = self._run_trend_detection()
+
+            # Sync Tab 7 (Discovered Drivers) and Tab 9 (Materiality Dashboard)
+            result['dashboard_sync'] = self._sync_dashboard_tabs()
+
+            # Generate social media draft posts
+            result['social_content'] = self._generate_social_content()
+
+            # Send daily intelligence digest email
+            result['daily_digest'] = self._send_daily_digest()
+
             result['status'] = 'SUCCESS'
 
             self.state.record_success('daily_valuation', result)
@@ -1501,6 +1558,152 @@ class OrchestratorAgent:
 
         else:
             logger.warning(f"Unknown queued operation type: {op_type}")
+
+    # =========================================================================
+    # NEWS INTELLIGENCE & DRIVER DISCOVERY
+    # =========================================================================
+
+    def _detect_price_trends(self) -> dict:
+        """Detect monthly PE/PB/evebidta/PS anomalies from price data."""
+        result = {'alerts_created': 0, 'companies_analyzed': 0, 'status': 'SKIPPED'}
+
+        if not self.mysql:
+            return result
+
+        try:
+            from valuation_system.data.processors.price_trend_analyzer import PriceTrendAnalyzer
+
+            analyzer = PriceTrendAnalyzer()
+            run_result = analyzer.run_full_analysis(self.mysql)
+            result.update(run_result)
+            result['status'] = 'SUCCESS'
+            logger.info(f"Price trend detection: {run_result.get('self_relative_alerts', 0)} self-relative + "
+                        f"{run_result.get('sector_relative_alerts', 0)} sector-relative alerts")
+
+        except Exception as e:
+            logger.error(f"Price trend detection failed: {e}", exc_info=True)
+            result['status'] = 'FAILED'
+            result['error'] = str(e)
+
+        return result
+
+    def _populate_qualitative_drivers(self) -> dict:
+        """Auto-fill empty SEED drivers using LLM + recent news analysis."""
+        result = {'companies_processed': 0, 'drivers_filled': 0, 'status': 'SKIPPED'}
+
+        if not self.mysql or not self.llm:
+            return result
+
+        try:
+            from valuation_system.agents.qualitative_driver_agent import QualitativeDriverAgent
+
+            agent = QualitativeDriverAgent(self.mysql, self.llm)
+            batch_result = agent.run_batch(max_companies=60)
+            result.update(batch_result)
+            result['status'] = 'SUCCESS'
+            logger.info(f"Qualitative driver auto-fill: {batch_result.get('drivers_filled', 0)} drivers "
+                        f"filled across {batch_result.get('companies_processed', 0)} companies")
+
+        except Exception as e:
+            logger.error(f"Qualitative driver auto-fill failed: {e}", exc_info=True)
+            result['status'] = 'FAILED'
+            result['error'] = str(e)
+
+        return result
+
+    def _send_daily_digest(self) -> dict:
+        """Generate and send daily intelligence email to PM."""
+        result = {'status': 'SKIPPED', 'sent': False}
+
+        if not self.mysql:
+            return result
+
+        try:
+            from valuation_system.agents.daily_digest_generator import DailyDigestGenerator
+            from valuation_system.notifications.email_sender import EmailSender
+
+            email = self.email_sender or EmailSender()
+            generator = DailyDigestGenerator(self.mysql, email)
+            sent = generator.send_digest()
+            result['sent'] = sent
+            result['status'] = 'SUCCESS' if sent else 'EMAIL_DISABLED'
+
+        except Exception as e:
+            logger.error(f"Daily digest failed: {e}", exc_info=True)
+            result['status'] = 'FAILED'
+            result['error'] = str(e)
+
+        return result
+
+    def _generate_social_content(self) -> dict:
+        """Generate social media draft posts from today's insights."""
+        result = {'posts_generated': 0, 'posts_queued': 0, 'status': 'SKIPPED'}
+
+        if not self.content_agent:
+            return result
+
+        try:
+            posts = self.content_agent.generate_daily_posts()
+            result['posts_generated'] = len(posts)
+
+            if posts:
+                queued = self.content_agent.publish_posts(posts)
+                result['posts_queued'] = sum(1 for p in queued if p.get('queued'))
+
+            result['status'] = 'SUCCESS'
+            logger.info(f"Social content: {result['posts_generated']} generated, "
+                        f"{result['posts_queued']} queued for PM approval")
+
+        except Exception as e:
+            logger.error(f"Social content generation failed: {e}", exc_info=True)
+            result['status'] = 'FAILED'
+            result['error'] = str(e)
+
+        return result
+
+    def _sync_dashboard_tabs(self) -> dict:
+        """Sync Tab 7 (Discovered Drivers), Tab 8 (News Events), Tab 9 (Materiality Dashboard)."""
+        result = {'tab7': 0, 'tab8': 0, 'tab9': 0, 'status': 'SKIPPED'}
+
+        if not self.gsheet:
+            return result
+
+        try:
+            from valuation_system.utils.sync_drivers_to_gsheet import (
+                sync_discovered_drivers, sync_news_events, sync_materiality_dashboard
+            )
+
+            sheet_id = self.gsheet.spreadsheet_id
+            gc = self.gsheet.client
+
+            result['tab7'] = sync_discovered_drivers(gc, sheet_id)
+            result['tab8'] = sync_news_events(gc, sheet_id)
+            result['tab9'] = sync_materiality_dashboard(gc, sheet_id)
+            result['status'] = 'SUCCESS'
+
+        except Exception as e:
+            logger.error(f"Dashboard tab sync failed: {e}", exc_info=True)
+            result['status'] = 'FAILED'
+            result['error'] = str(e)
+
+        return result
+
+    def _run_trend_detection(self) -> dict:
+        """Run detect_trend_developments() on all active group analysts."""
+        result = {'groups_analyzed': 0, 'trends_found': 0}
+
+        for sector_key, analyst in self.group_analysts.items():
+            try:
+                trends = analyst.detect_trend_developments()
+                if trends:
+                    result['trends_found'] += len(trends)
+                result['groups_analyzed'] += 1
+            except Exception as e:
+                logger.error(f"Trend detection failed for {sector_key}: {e}", exc_info=True)
+
+        logger.info(f"Trend detection: {result['trends_found']} trends across "
+                    f"{result['groups_analyzed']} groups")
+        return result
 
     # =========================================================================
     # STATUS & MONITORING
