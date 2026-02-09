@@ -37,7 +37,7 @@ class DamodaranLoader:
         'cost_of_equity': 'https://pages.stern.nyu.edu/~adamodar/New_Home_Page/datafile/ctryprem.html',
     }
 
-    # Map our sector names to Damodaran's industry categories
+    # Map our CSV sector names to Damodaran's industry categories (legacy fallback)
     SECTOR_TO_DAMODARAN = {
         'Chemicals': 'Chemical (Specialty)',
         'Automobile & Ancillaries': 'Auto & Truck',
@@ -45,6 +45,82 @@ class DamodaranLoader:
         'IT': 'Software (System & Application)',
         'Healthcare': 'Drugs (Pharmaceutical)',
         'FMCG': 'Food Processing',
+    }
+
+    # Map our 55 valuation_subgroups → Damodaran India industry names
+    # Used for fallback when computed betas are unavailable
+    SUBGROUP_TO_DAMODARAN_INDIA = {
+        'AUTO_ANCILLARY_BATTERIES': 'Auto Parts',
+        'AUTO_ANCILLARY_COMPONENTS': 'Auto Parts',
+        'AUTO_ANCILLARY_TIRES': 'Rubber& Tires',
+        'AUTO_OEM': 'Auto & Truck',
+        'CHEMICALS_COMMODITY': 'Chemical (Basic)',
+        'CHEMICALS_PAINTS_COATINGS': 'Chemical (Specialty)',
+        'CHEMICALS_SPECIALTY': 'Chemical (Specialty)',
+        'CONSUMER_AGRI': 'Farming/Agriculture',
+        'CONSUMER_DURABLES_BROWN_GOODS': 'Electronics (Consumer & Office)',
+        'CONSUMER_DURABLES_SMALL_APPLIANCES': 'Household Products',
+        'CONSUMER_DURABLES_WHITE_GOODS': 'Household Products',
+        'CONSUMER_FMCG_HPC': 'Household Products',
+        'CONSUMER_FMCG_PACKAGED_FOOD': 'Food Processing',
+        'CONSUMER_FMCG_STAPLES': 'Food Processing',
+        'CONSUMER_FOOD_BEVERAGE': 'Beverage (Soft)',
+        'CONSUMER_RETAIL_OFFLINE': 'Retail (Special Lines)',
+        'CONSUMER_TEXTILE': 'Apparel',
+        'ENERGY_DOWNSTREAM': 'Oil/Gas Distribution',
+        'ENERGY_POWER_DISTRIBUTION': 'Power',
+        'ENERGY_POWER_GENERATION': 'Power',
+        'ENERGY_UPSTREAM': 'Oil/Gas (Production and Exploration)',
+        'FINANCIALS_ASSET_MGMT': 'Investments & Asset Management',
+        'FINANCIALS_BANKING_PRIVATE': 'Bank (Money Center)',
+        'FINANCIALS_BANKING_PSU': 'Bank (Money Center)',
+        'FINANCIALS_EXCHANGES_DEPOSITORIES': 'Brokerage & Investment Banking',
+        'FINANCIALS_INSURANCE_GENERAL': 'Insurance (General)',
+        'FINANCIALS_INSURANCE_HEALTH': 'Insurance (Prop/Cas.)',
+        'FINANCIALS_INSURANCE_LIFE': 'Insurance (Life)',
+        'FINANCIALS_NBFC_DIVERSIFIED': 'Financial Svcs. (Non-bank & Insurance)',
+        'FINANCIALS_NBFC_HOUSING': 'Financial Svcs. (Non-bank & Insurance)',
+        'FINANCIALS_NBFC_VEHICLE': 'Financial Svcs. (Non-bank & Insurance)',
+        'FINANCIALS_RATINGS': 'Information Services',
+        'HEALTHCARE_DIAGNOSTICS': 'Healthcare Support Services',
+        'HEALTHCARE_HOSPITALS': 'Hospitals/Healthcare Facilities',
+        'HEALTHCARE_MEDICAL_EQUIPMENT': 'Healthcare Products',
+        'HEALTHCARE_PHARMA_CRO_CDMO': 'Drugs (Pharmaceutical)',
+        'HEALTHCARE_PHARMA_MFG': 'Drugs (Pharmaceutical)',
+        'INDUSTRIALS_CAPITAL_GOODS': 'Machinery',
+        'INDUSTRIALS_DEFENSE': 'Aerospace/Defense',
+        'INDUSTRIALS_ELECTRICALS': 'Electrical Equipment',
+        'INDUSTRIALS_ENGINEERING': 'Engineering/Construction',
+        'INDUSTRIALS_TELECOM_EQUIPMENT': 'Telecom. Equipment',
+        'INFRA_CONSTRUCTION': 'Engineering/Construction',
+        'INFRA_LOGISTICS_PORTS': 'Transportation',
+        'METALS_COPPER_ZINC': 'Metals & Mining',
+        'METALS_STEEL': 'Steel',
+        'REALTY_RESIDENTIAL': 'Real Estate (Development)',
+        'SERVICES_HOSPITALITY': 'Hotel/Gaming',
+        'SERVICES_MEDIA_BROADCASTING': 'Broadcasting',
+        'SERVICES_TELECOM_OPERATORS': 'Telecom. Services',
+        'SERVICES_TELECOM_TOWERS': 'Telecom. Equipment',
+        'TECHNOLOGY_BPO_ITES': 'Computer Services',
+        'TECHNOLOGY_DIGITAL_INFRA': 'Information Services',
+        'TECHNOLOGY_IT_SERVICES': 'Software (System & Application)',
+        'TECHNOLOGY_PRODUCT_SAAS': 'Software (System & Application)',
+        # New subgroups from NOT_CLASSIFIED reclassification (Feb 2026)
+        'CONSUMER_ALCOHOLIC_BEVERAGES': 'Beverage (Alcoholic)',
+        'CONSUMER_JEWELLERY': 'Retail (Special Lines)',
+        'CONSUMER_RETAIL_ONLINE': 'Retail (General)',
+        'ENERGY_INDUSTRIAL_GAS': 'Oil/Gas Distribution',
+        'INDUSTRIALS_ENVIRONMENTAL': 'Environmental & Waste Services',
+        'INFRA_LOGISTICS': 'Transportation',
+        'INFRA_SHIPPING': 'Shipbuilding & Marine',
+        'MATERIALS_MINING': 'Metals & Mining',
+        'MATERIALS_PAPER': 'Paper/Forest Products',
+        'MATERIALS_PLASTICS': 'Packaging & Container',
+        'SERVICES_AVIATION': 'Air Transport',
+        'SERVICES_BPO': 'Business & Consumer Services',
+        'SERVICES_EDUCATION': 'Education',
+        'SERVICES_PROFESSIONAL': 'Business & Consumer Services',
+        'SERVICES_TRADING': 'Retail (Distributors)',
     }
 
     # Default values (Jan 2026 Damodaran data)
@@ -144,77 +220,207 @@ class DamodaranLoader:
 
     def get_industry_beta(self, sector: str,
                           company_de_ratio: float = None,
-                          company_tax_rate: float = 0.25) -> dict:
+                          company_tax_rate: float = 0.25,
+                          valuation_subgroup: str = None) -> dict:
         """
-        Get beta for a sector/industry.
+        Get beta for a company.
 
-        Uses Damodaran's unlevered beta, then re-levers for company's
-        capital structure.
+        Priority chain:
+        1. Indian subgroup beta (computed from NIFTYBEES regression, dual-window)
+        2. Damodaran India beta (from betaIndia.xls, 93 industries)
+        3. Damodaran US sector beta — legacy fallback
+        4. Market beta = 1.0
 
+        No Blume adjustment — the dual-window (2/3 × 2yr + 1/3 × 5yr) methodology
+        already handles noise via the 5yr component pulling toward structural beta.
+
+        Re-levers unlevered beta for company's own capital structure:
         Levered Beta = Unlevered Beta * (1 + (1-t) * D/E)
         """
-        damodaran_industry = self.SECTOR_TO_DAMODARAN.get(sector, sector)
-        industry_data = self.DEFAULT_INDUSTRY_BETAS.get(damodaran_industry)
+        beta_source = 'default'
+        unlevered_beta = None
+        subgroup_data = None
 
-        if not industry_data:
-            logger.warning(f"No Damodaran beta for '{damodaran_industry}', using market beta=1.0")
-            industry_data = {'unlevered_beta': 1.0, 'de_ratio': 0.20, 'tax_rate': 0.10}
+        # Priority 1: Indian subgroup beta from computed cache
+        if valuation_subgroup:
+            subgroup_data = self._get_subgroup_beta(valuation_subgroup)
+            if subgroup_data:
+                unlevered_beta = subgroup_data['unlevered_beta']
+                beta_source = f'indian_subgroup:{valuation_subgroup}'
+                logger.info(f"Beta from Indian subgroup '{valuation_subgroup}': "
+                           f"β_u={unlevered_beta:.3f} (n={subgroup_data['n_companies']})")
 
-        unlevered_beta = industry_data['unlevered_beta']
+        # Priority 2: Damodaran India beta (from betaIndia.xls)
+        if unlevered_beta is None and valuation_subgroup:
+            india_beta = self._get_damodaran_india_beta(valuation_subgroup)
+            if india_beta is not None:
+                unlevered_beta = india_beta['unlevered_beta']
+                beta_source = f'damodaran_india:{india_beta["industry"]}'
+                logger.info(f"Beta from Damodaran India '{india_beta['industry']}': "
+                           f"β_u={unlevered_beta:.3f} (n={india_beta.get('n_firms', '?')})")
+
+        # Priority 3: Damodaran US sector mapping (legacy)
+        if unlevered_beta is None:
+            damodaran_industry = self.SECTOR_TO_DAMODARAN.get(sector, sector)
+            industry_data = self.DEFAULT_INDUSTRY_BETAS.get(damodaran_industry)
+            if industry_data:
+                unlevered_beta = industry_data['unlevered_beta']
+                beta_source = f'damodaran_us:{damodaran_industry}'
+                logger.info(f"Beta from Damodaran US '{damodaran_industry}': β_u={unlevered_beta:.3f}")
+
+        # Priority 4: Market beta default
+        if unlevered_beta is None:
+            unlevered_beta = 1.0
+            beta_source = 'default_market'
+            logger.warning(f"No beta for sector='{sector}' subgroup='{valuation_subgroup}', using market beta=1.0")
 
         # Re-lever for company's capital structure
-        de_ratio = company_de_ratio if company_de_ratio is not None else industry_data['de_ratio']
+        de_ratio = company_de_ratio if company_de_ratio is not None else 0.20
         levered_beta = unlevered_beta * (1 + (1 - company_tax_rate) * de_ratio)
 
         result = {
-            'damodaran_industry': damodaran_industry,
-            'unlevered_beta': unlevered_beta,
-            'industry_de_ratio': industry_data['de_ratio'],
+            'beta_source': beta_source,
+            'unlevered_beta': round(unlevered_beta, 4),
             'company_de_ratio_used': round(de_ratio, 4),
             'tax_rate_used': company_tax_rate,
             'levered_beta': round(levered_beta, 4),
         }
 
-        logger.debug(f"Beta for {sector}: unlevered={unlevered_beta}, "
-                      f"levered={levered_beta:.4f} (D/E={de_ratio:.2f})")
+        if subgroup_data:
+            result['subgroup_n_companies'] = subgroup_data['n_companies']
+            result['subgroup_range'] = f"[{subgroup_data['min']:.2f}, {subgroup_data['max']:.2f}]"
+
+        logger.info(f"Beta for {sector}/{valuation_subgroup}: unlevered={unlevered_beta:.4f}, "
+                    f"levered={levered_beta:.4f} (D/E={de_ratio:.2f}, source={beta_source})")
 
         return result
+
+    def _get_subgroup_beta(self, valuation_subgroup: str) -> Optional[dict]:
+        """
+        Look up Indian subgroup beta from cached JSON files.
+        Priority: weekly > monthly > legacy (subgroup_betas.json)
+        Returns dict with unlevered_beta, n_companies, min, max or None.
+        """
+        # Try cache files in priority order: weekly first (matches Damodaran methodology),
+        # then monthly, then legacy filename
+        cache_files = [
+            ('weekly', os.path.join(self.cache_dir, 'subgroup_betas_weekly.json')),
+            ('monthly', os.path.join(self.cache_dir, 'subgroup_betas_monthly.json')),
+            ('legacy', os.path.join(self.cache_dir, 'subgroup_betas.json')),
+        ]
+
+        for freq_label, cache_file in cache_files:
+            if not os.path.exists(cache_file):
+                continue
+
+            try:
+                with open(cache_file, 'r') as f:
+                    cache = json.load(f)
+
+                subgroups = cache.get('subgroups', {})
+                # Case-insensitive lookup: cache keys are UPPERCASE, input may be lowercase
+                lookup_key = valuation_subgroup.upper()
+                if lookup_key in subgroups:
+                    entry = subgroups[lookup_key]
+                    logger.debug(f"Subgroup beta for '{lookup_key}' from {freq_label} cache: "
+                                f"β_u={entry['unlevered_beta']:.3f} (n={entry['n_companies']})")
+                    return entry
+            except Exception as e:
+                logger.warning(f"Failed to read {freq_label} subgroup beta cache ({cache_file}): {e}")
+                continue
+
+        logger.debug(f"Subgroup '{valuation_subgroup}' (tried '{valuation_subgroup.upper()}') not found in any beta cache")
+        return None
+
+    def _get_damodaran_india_beta(self, valuation_subgroup: str) -> Optional[dict]:
+        """
+        Look up Damodaran India beta (from betaIndia.xls) for a valuation_subgroup.
+        Uses SUBGROUP_TO_DAMODARAN_INDIA mapping.
+        Returns dict with unlevered_beta, industry name, n_firms, or None.
+        """
+        # Case-insensitive lookup: mapping keys are UPPERCASE
+        damodaran_industry = self.SUBGROUP_TO_DAMODARAN_INDIA.get(valuation_subgroup.upper())
+        if not damodaran_industry:
+            logger.debug(f"No Damodaran India mapping for subgroup '{valuation_subgroup}' (tried '{valuation_subgroup.upper()}')")
+            return None
+
+        cache_file = os.path.join(self.cache_dir, 'damodaran_india_betas.json')
+        if not os.path.exists(cache_file):
+            logger.debug(f"No Damodaran India beta cache at {cache_file}")
+            return None
+
+        try:
+            with open(cache_file, 'r') as f:
+                india_data = json.load(f)
+
+            industries = india_data.get('industries', {})
+            if damodaran_industry in industries:
+                entry = industries[damodaran_industry]
+                ub = entry.get('unlevered_beta')
+                if ub is not None and ub > 0:
+                    return {
+                        'unlevered_beta': ub,
+                        'industry': damodaran_industry,
+                        'n_firms': entry.get('n_firms'),
+                        'levered_beta': entry.get('levered_beta'),
+                        'de_ratio': entry.get('de_ratio'),
+                        'effective_tax_rate': entry.get('effective_tax_rate'),
+                    }
+
+            logger.debug(f"Damodaran India industry '{damodaran_industry}' not found in cache")
+            return None
+        except Exception as e:
+            logger.warning(f"Failed to read Damodaran India cache: {e}")
+            return None
 
     def get_risk_free_rate(self) -> float:
         """
         Get India 10Y G-Sec yield (risk-free rate for DCF).
 
-        Primary: Try Yahoo Finance for ^TNX equivalent
-        Fallback: Use cached/default value
+        Primary: Read from local market_indicators.csv (FRED 10Y bond yield)
+        Fallback: Use cached/default value (0.071)
         """
         try:
-            import yfinance
-            # India 10Y G-Sec - use I10Y.IN or fallback
-            ticker = yfinance.Ticker("^TNX")
-            hist = ticker.history(period='5d')
-            if not hist.empty:
-                us_10y = float(hist['Close'].iloc[-1]) / 100
-                # India premium ~0.5-1% over US 10Y typically
-                india_10y = us_10y + 0.025  # Approximate India-US spread
-                logger.info(f"Risk-free rate: US 10Y={us_10y:.4f}, India 10Y (est)={india_10y:.4f}")
-                return india_10y
-        except Exception as e:
-            logger.warning(f"Failed to get live risk-free rate: {e}")
+            macro_path = os.getenv('MACRO_DATA_PATH', '')
+            indicators_file = os.path.join(macro_path, 'market_indicators.csv')
 
-        return self.DEFAULT_INDIA_PARAMS['risk_free_rate_india']
+            if os.path.exists(indicators_file):
+                df = pd.read_csv(indicators_file, comment='#')
+                # Filter for 10Y bond yield from FRED
+                bond_df = df[df['series_name'].str.contains('10 year bond yield', case=False, na=False)]
+                if not bond_df.empty:
+                    bond_df = bond_df.sort_values('date', ascending=False)
+                    latest_val = float(bond_df.iloc[0]['value'])
+                    latest_date = bond_df.iloc[0]['date']
+                    # FRED stores as raw number (6.62 = 6.62%), convert to decimal
+                    rf = latest_val / 100.0
+                    logger.info(f"Risk-free rate: India 10Y={rf:.4f} ({latest_val:.2f}%) from {latest_date} [ACTUAL: market_indicators.csv]")
+                    return rf
+                else:
+                    logger.warning("No '10 year bond yield' series found in market_indicators.csv")
+            else:
+                logger.warning(f"market_indicators.csv not found at {indicators_file}")
+        except Exception as e:
+            logger.warning(f"Failed to read risk-free rate from macro data: {e}")
+
+        default_rf = self.DEFAULT_INDIA_PARAMS['risk_free_rate_india']
+        logger.info(f"Risk-free rate: {default_rf:.4f} [DEFAULT]")
+        return default_rf
 
     def get_wacc_inputs(self, sector: str,
                         company_de_ratio: float = None,
-                        company_tax_rate: float = 0.25) -> dict:
+                        company_tax_rate: float = 0.25,
+                        valuation_subgroup: str = None) -> dict:
         """
-        Get all WACC inputs for a sector:
+        Get all WACC inputs for a company:
         - Risk-free rate
         - Equity risk premium
-        - Beta (levered)
+        - Beta (levered) — from Indian subgroup or Damodaran fallback
         - Cost of equity (CAPM)
         """
         erp_data = self.get_india_erp()
-        beta_data = self.get_industry_beta(sector, company_de_ratio, company_tax_rate)
+        beta_data = self.get_industry_beta(sector, company_de_ratio, company_tax_rate,
+                                           valuation_subgroup=valuation_subgroup)
         rf = self.get_risk_free_rate()
         erp = erp_data.get('india_total_erp', self.DEFAULT_INDIA_PARAMS['india_total_erp'])
 
@@ -227,8 +433,8 @@ class DamodaranLoader:
             'country_risk_premium': erp_data.get('india_country_risk_premium', 0.019),
             'beta': beta_data['levered_beta'],
             'unlevered_beta': beta_data['unlevered_beta'],
+            'beta_source': beta_data['beta_source'],
             'cost_of_equity': round(cost_of_equity, 4),
-            'damodaran_industry': beta_data['damodaran_industry'],
         }
 
     def _scrape_country_erp(self) -> Optional[dict]:
@@ -358,16 +564,18 @@ class DamodaranLoader:
 
     def get_all_params(self, sector: str,
                        company_de_ratio: float = None,
-                       company_tax_rate: float = 0.25) -> dict:
+                       company_tax_rate: float = 0.25,
+                       valuation_subgroup: str = None) -> dict:
         """
-        Convenience method: get all Damodaran parameters needed for valuation.
+        Convenience method: get all parameters needed for valuation.
+        Uses Indian subgroup beta when available, Damodaran as fallback.
         """
-        wacc_inputs = self.get_wacc_inputs(sector, company_de_ratio, company_tax_rate)
+        wacc_inputs = self.get_wacc_inputs(sector, company_de_ratio, company_tax_rate,
+                                           valuation_subgroup=valuation_subgroup)
         erp_data = self.get_india_erp()
 
         return {
             **wacc_inputs,
             'india_rating': erp_data.get('india_rating', 'Baa3'),
             'india_default_spread': erp_data.get('india_default_spread', 0.0114),
-            'data_source': 'damodaran',
         }

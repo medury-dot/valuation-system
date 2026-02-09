@@ -3,15 +3,13 @@ Google Sheets Client for Driver Tracking (4-Level Hierarchy)
 Reads/writes driver values, weights, and history to Google Sheets.
 Provides collaborative interface for PM to view and override drivers.
 
-Sheets Structure (4-level driver hierarchy):
+Sheets Structure (6 tabs):
   Sheet 1: Macro Drivers (15% weight)
   Sheet 2: Valuation Group Drivers (20% weight)
   Sheet 3: Valuation Subgroup Drivers (35% weight)
   Sheet 4: Company Drivers (30% weight)
   Sheet 5: Recent Activity
-  Sheet 6: Valuation History
-  Sheet 7: Driver History
-  Sheet 8: Event Log
+  Sheet 6: Active Companies
 """
 
 import os
@@ -46,6 +44,7 @@ class GSheetClient:
         'subgroup_drivers': '3. Valuation Subgroup Drivers',  # 4-level hierarchy: SUBGROUP level
         'company_drivers': '4. Company Drivers',  # 4-level hierarchy: COMPANY level
         'recent_activity': '5. Recent Activity',  # 7-day summary
+        'active_companies': '6. Active Companies',
         # Legacy aliases (for backward compatibility):
         'sector_drivers': '2. Valuation Group Drivers',
         'sector_chemicals': '2. Valuation Group Drivers',
@@ -126,18 +125,6 @@ class GSheetClient:
                 'Category', 'Driver', 'Metric', 'Current', 'vs Peers',
                 'Weight', 'Alpha Impact', 'Last Updated', 'Source'
             ],
-            'valuation_history': [
-                'Date', 'Company', 'Intrinsic Value', 'CMP', 'Upside%',
-                'Key Change', 'Driver Impact', 'Event Ref', 'Doc Link', 'Synopsis'
-            ],
-            'driver_history': [
-                'Date', 'Level', 'Driver', 'Old Value', 'New Value',
-                'Reason', 'Impact', 'Source Doc'
-            ],
-            'event_log': [
-                'Event ID', 'Date', 'Type', 'Company', 'Severity',
-                'Headline', 'Synopsis', 'Source URL', 'ChromaDB ID'
-            ],
         }
 
         if sheet_key in headers:
@@ -213,57 +200,6 @@ class GSheetClient:
                     break
 
             logger.info(f"Updated {driver_name}.{column} = {new_value} in {sheet_key}")
-
-    @retry_with_backoff(max_retries=2, base_delay=2.0)
-    def append_valuation_history(self, valuation_data: dict):
-        """Append a row to Valuation History sheet."""
-        ws = self.spreadsheet.worksheet(self.SHEET_NAMES['valuation_history'])
-        row = [
-            valuation_data.get('date', datetime.now().strftime('%Y-%m-%d')),
-            valuation_data.get('company', ''),
-            valuation_data.get('intrinsic_value', ''),
-            valuation_data.get('cmp', ''),
-            valuation_data.get('upside_pct', ''),
-            valuation_data.get('key_change', ''),
-            valuation_data.get('driver_impact', ''),
-            valuation_data.get('event_ref', ''),
-            valuation_data.get('doc_link', ''),
-            valuation_data.get('synopsis', ''),
-        ]
-        ws.append_row(row)
-
-    @retry_with_backoff(max_retries=2, base_delay=2.0)
-    def append_driver_change(self, change_data: dict):
-        """Append a row to Driver History sheet."""
-        ws = self.spreadsheet.worksheet(self.SHEET_NAMES['driver_history'])
-        row = [
-            change_data.get('date', datetime.now().strftime('%Y-%m-%d')),
-            change_data.get('level', ''),
-            change_data.get('driver', ''),
-            change_data.get('old_value', ''),
-            change_data.get('new_value', ''),
-            change_data.get('reason', ''),
-            change_data.get('impact', ''),
-            change_data.get('source_doc', ''),
-        ]
-        ws.append_row(row)
-
-    @retry_with_backoff(max_retries=2, base_delay=2.0)
-    def append_event(self, event_data: dict):
-        """Append a row to Event Log sheet."""
-        ws = self.spreadsheet.worksheet(self.SHEET_NAMES['event_log'])
-        row = [
-            event_data.get('event_id', ''),
-            event_data.get('date', datetime.now().strftime('%Y-%m-%d')),
-            event_data.get('type', ''),
-            event_data.get('company', ''),
-            event_data.get('severity', ''),
-            event_data.get('headline', ''),
-            event_data.get('synopsis', ''),
-            event_data.get('source_url', ''),
-            event_data.get('chromadb_id', ''),
-        ]
-        ws.append_row(row)
 
     def seed_macro_drivers(self):
         """

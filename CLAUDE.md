@@ -8,14 +8,36 @@
 - **3-Tier Fallback**: ACTUAL data first, then DERIVED estimates, then DEFAULT values. Log source with [ACTUAL]/[DERIVED]/[DEFAULT] tags.
 - **Core CSV**: ~4000 columns, ~9000 companies. Use `low_memory=False` when loading with pandas.
 
+## Sector Taxonomy
+- **Use `valuation_group` and `valuation_subgroup` columns** for all sector/industry classification. Ignore `cd_sector` and `cd_industry1` columns — they are legacy Screener.in fields, not our taxonomy.
+
 ## Architecture
 - Valuation blend: DCF 60%, Relative 30%, Monte Carlo 10%
 - Terminal growth: ROCE-linked (g = Reinvestment Rate x ROCE), capped 2%-5%
 - Two-tier peer selection: tight (same industry, 2x weight) + broad (same sector, 1x weight)
+
+## Excel Formula Parity
+- **All valuation math in Python MUST have a corresponding change in Excel formulas.** The Excel workbook is the auditable artifact — if Python computes it, Excel must show it as a formula, not a hardcoded value.
+- Terminal Value section uses NOPAT-based FCFF (5 formula rows: Revenue → EBITDA → Dep → NOPAT → FCFF)
+- Margin improvement is dampened: full → 0 over projection period (prevents unrealistic linear expansion)
+
+## Valuation Pipeline
+- **All valuation runs MUST go through `utils/batch_valuation.py`** — never call DCF/financial_processor directly from ad-hoc scripts. The batch pipeline handles: database saves, Google Sheets updates (Recent Activity tab), correct valuation_subgroup passing, and Excel report generation. Ad-hoc scripts bypass these integrations and cause silent data gaps.
+
+## External API / Rate Limit Policy
+- **Never hit external APIs unnecessarily** during batch runs. Use local data files first (macro CSVs, cached JSONs). External APIs (yfinance, FRED, etc.) should only be called for initial data population scripts, not during per-company valuation loops.
+- **Risk-free rate**: Read from `market_indicators.csv` (MACRO_DATA_PATH in .env), not from yfinance API. The 10Y bond yield from FRED is updated monthly and stored locally.
+- **Google Sheets writes**: Always batch in chunks of 100 rows with a 1-second pause between batches to avoid rate limits. Never write 1000+ rows in a single API call.
+
+## Batch Run Error Logging
+- **Every batch job MUST produce an issues CSV** at `valuation_system/logs/batch_issues_YYYYMMDD_HHMM.csv` capturing all WARNING and ERROR level logs.
+- **CSV columns**: `timestamp, symbol, company_name, valuation_group, valuation_subgroup, level, logger, message, traceback`
+- The issues CSV path and summary counts must be printed at the end of every batch run.
+- This enables post-run analysis of which companies have data issues, missing prices, negative valuations, etc.
 
 ## Config
 - All settings in `.env` file — no hardcoding
 - MySQL: root@localhost:3306/rag
 - ChromaDB: localhost:8001
 
-❯ for sales figure use the sales_* columns (dont see <year>_sales column); use them to calculate TTM sales. same for pbidt, pat also.               
+❯ for sales figure use the sales_* columns (dont see <year>_sales column); use them to calculate TTM sales. same for pbidt, pat also.

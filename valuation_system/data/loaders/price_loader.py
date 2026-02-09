@@ -55,29 +55,46 @@ class PriceLoader:
         self._df = None
         _ = self.df
 
-    def get_latest_data(self, symbol: str) -> dict:
+    def get_latest_data(self, symbol: str, bse_code=None, company_name=None) -> dict:
         """
         Get latest price + multiples for a symbol.
         Returns CMP, P/E, P/B, EV/EBITDA, P/S, MCap all in one call.
+        Lookup order: nse_symbol -> bse_code -> company_name -> Yahoo fallback.
         """
-        latest_date = self.df['daily_date'].max()
-        row = self.df[
-            (self.df['nse_symbol'] == symbol) &
-            (self.df['daily_date'] == latest_date)
-        ]
+        # Sanitize: pandas nan comes through as string 'nan' from core CSV
+        import math
+        if not symbol or symbol == 'nan' or (isinstance(symbol, float) and math.isnan(symbol)):
+            symbol = ''
 
-        if row.empty:
-            # Try with BSE code
-            row = self.df[
-                (self.df['bse_code'].astype(str) == str(symbol)) &
-                (self.df['daily_date'] == latest_date)
-            ]
+        # Use per-symbol latest date, not global max (some records have future dates)
+        symbol_rows = self.df[self.df['nse_symbol'] == symbol] if symbol else pd.DataFrame()
 
-        if row.empty:
-            logger.warning(f"No local price data for {symbol}, falling back to Yahoo")
-            return self._get_from_yahoo(symbol)
+        if symbol_rows.empty and bse_code:
+            # Try with explicit BSE code (numeric only — skip non-numeric scrip_codes)
+            try:
+                bse_code_num = float(bse_code)
+                symbol_rows = self.df[self.df['bse_code'] == bse_code_num]
+                if not symbol_rows.empty:
+                    logger.info(f"Found {symbol} via BSE code {bse_code}")
+            except (ValueError, TypeError):
+                logger.debug(f"Non-numeric BSE code '{bse_code}' for {symbol}, skipping BSE lookup")
 
-        row = row.iloc[0]
+        if symbol_rows.empty and company_name:
+            # Try by company name (exact match first, then contains)
+            symbol_rows = self.df[self.df['Company Name'] == company_name]
+            if symbol_rows.empty:
+                symbol_rows = self.df[self.df['Company Name'].str.contains(company_name.split(' ')[0], case=False, na=False)]
+            if not symbol_rows.empty:
+                logger.info(f"Found {symbol} via company name lookup")
+
+        if symbol_rows.empty:
+            display_name = symbol or company_name or 'unknown'
+            logger.warning(f"No local price data for {display_name} (bse_code={bse_code}), falling back to Yahoo")
+            return self._get_from_yahoo(symbol if symbol else display_name)
+
+        # Get the most recent row for this symbol
+        row = symbol_rows.sort_values('daily_date', ascending=False).iloc[0]
+
         return {
             'company_name': row.get('Company Name', ''),
             'cmp': self._safe_float(row.get('close')),

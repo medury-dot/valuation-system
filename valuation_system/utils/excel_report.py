@@ -42,6 +42,12 @@ THIN_BORDER = Border(
     left=Side(style='thin'), right=Side(style='thin'),
     top=Side(style='thin'), bottom=Side(style='thin')
 )
+# Log sheet styles
+WARNING_FILL = PatternFill(start_color='FFF2CC', end_color='FFF2CC', fill_type='solid')
+ERROR_FILL = PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid')
+DEBUG_FONT = Font(color='808080', size=9)
+LOG_FONT = Font(name='Courier New', size=9)
+
 PCT_FMT = '0.00%'
 NUM_FMT = '#,##0.00'
 INT_FMT = '#,##0'
@@ -187,6 +193,19 @@ def generate_valuation_excel(result: dict, output_path: str = None) -> str:
     ws_rel = wb.create_sheet('Relative Val')
     _build_relative_sheet(ws_rel, result, refs)
 
+    # Patch Assumptions peer medians to reference Relative Val filtered medians
+    if refs.get('filtered_median_row'):
+        fmr = refs['filtered_median_row']
+        rel_sheet = "'Relative Val'"
+        # I=PE, J=PB, K=EV/EBITDA, L=P/S in the peer table
+        for ref_key, col_letter in [('peer_pe_median', 'I'), ('peer_pb_median', 'J'),
+                                     ('peer_eveb_median', 'K'), ('peer_ps_median', 'L')]:
+            assumptions_row = refs.get(ref_key)
+            if assumptions_row:
+                cell = ws_assumptions.cell(row=assumptions_row, column=2)
+                cell.value = f'={rel_sheet}!{col_letter}{fmr}'
+                cell.number_format = '0.00'
+
     ws_mc = wb.create_sheet('Monte Carlo')
     _build_monte_carlo_sheet(ws_mc, result, refs)
 
@@ -197,13 +216,17 @@ def generate_valuation_excel(result: dict, output_path: str = None) -> str:
     ws_drivers = wb.create_sheet('Driver Hierarchy')
     _build_driver_hierarchy_sheet(ws_drivers, result, refs)
 
+    # Computation Log sheet (captures all log entries from the valuation run)
+    ws_log = wb.create_sheet('Computation Log')
+    _build_log_sheet(ws_log, result, refs)
+
     # Summary is the active (first) sheet — built last since it references others
     ws_summary = wb.active
     ws_summary.title = 'Summary'
     _build_summary_sheet(ws_summary, result, refs)
 
-    # Move Summary to position 0 (now 7 sheets: Summary + 6 others)
-    wb.move_sheet('Summary', offset=-6)
+    # Move Summary to position 0 (now 8 sheets: Summary + 7 others)
+    wb.move_sheet('Summary', offset=-7)
 
     wb.save(output_path)
 
@@ -654,7 +677,17 @@ def _build_dcf_sheet(ws, result, refs):
         cur_col = get_column_letter(col)
         _fml(ws, r, col, f'={prev_col}{rev_row}*(1+{cur_col}{growth_row})', NUM_FMT)
 
-    # Row: EBITDA Margin
+    # Row: Margin Damping Factor (full → 0 over projection period)
+    r += 1
+    damping_row = r
+    ws.cell(row=r, column=1, value='Margin Damping Factor')
+    damping_factors = [1.0, 0.75, 0.50, 0.25, 0.0]
+    for i in range(n_years):
+        factor = damping_factors[i] if i < len(damping_factors) else 0.0
+        _inp(ws, r, 3 + i, factor, '0.00')
+    _remark(ws, r, 2 + n_years + 1, 'Dampens margin improvement: full → 0')
+
+    # Row: EBITDA Margin (dampened: prev + improvement * damping_factor, capped ±3pp)
     r += 1
     margin_row = r
     ws.cell(row=r, column=1, value='EBITDA Margin')
@@ -662,8 +695,13 @@ def _build_dcf_sheet(ws, result, refs):
     for i in range(n_years):
         col = 3 + i
         prev_col = get_column_letter(col - 1)
+        c = get_column_letter(col)
+        # Margin = prev_margin + improvement * damping, capped at base ± 3pp
+        base_ref = f"'Assumptions'!B{refs['ebitda_margin']}"
+        imp_ref = f"'Assumptions'!B{refs['margin_improvement']}"
         _fml(ws, r, col,
-             f"={prev_col}{margin_row}+'Assumptions'!B{refs['margin_improvement']}", PCT_FMT)
+             f"=MAX({base_ref}-0.03,MIN({base_ref}+0.03,"
+             f"{prev_col}{margin_row}+{imp_ref}*{c}{damping_row}))", PCT_FMT)
 
     # Row: EBITDA
     r += 1
@@ -774,17 +812,59 @@ def _build_dcf_sheet(ws, result, refs):
     _remark(ws, r, 3, '= MIN(5%, MAX(2%, ROCE * Reinvestment))')
     refs['terminal_growth'] = tg_row
 
-    r += 1
     last_fcff_col = get_column_letter(2 + n_years)
-    fcff_n1_row = r
-    ws.cell(row=r, column=1, value='FCFF (n+1)')
-    _fml(ws, r, 2, f'={last_fcff_col}{fcff_row}*(1+B{tg_row})', NUM_FMT)
+    last_rev_col = last_fcff_col
+    last_margin_col = last_fcff_col
 
+    # Terminal Revenue
+    r += 1
+    term_rev_row = r
+    ws.cell(row=r, column=1, value='Terminal Revenue')
+    _fml(ws, r, 2, f'={last_rev_col}{rev_row}*(1+B{tg_row})', NUM_FMT)
+    _remark(ws, r, 3, '= Year5 Revenue * (1 + g)')
+
+    # Terminal EBITDA
+    r += 1
+    term_ebitda_row = r
+    ws.cell(row=r, column=1, value='Terminal EBITDA')
+    _fml(ws, r, 2, f'=B{term_rev_row}*{last_margin_col}{margin_row}', NUM_FMT)
+    _remark(ws, r, 3, '= Terminal Revenue * Year5 EBITDA Margin')
+
+    # Terminal Depreciation
+    r += 1
+    term_dep_row = r
+    ws.cell(row=r, column=1, value='Terminal Depreciation')
+    _fml(ws, r, 2, f"=B{term_rev_row}*'Assumptions'!B{refs['depr_to_sales']}", NUM_FMT)
+    _remark(ws, r, 3, '= Terminal Revenue * Dep/Sales')
+
+    # Terminal NOPAT
+    r += 1
+    term_nopat_row = r
+    ws.cell(row=r, column=1, value='Terminal NOPAT')
+    _fml(ws, r, 2, f"=(B{term_ebitda_row}-B{term_dep_row})*(1-'Assumptions'!B{refs['tax_rate']})", NUM_FMT)
+    _remark(ws, r, 3, '= (EBITDA - Dep) * (1 - Tax)')
+
+    # Terminal FCFF (NOPAT-based)
+    r += 1
+    fcff_n1_row = r
+    ws.cell(row=r, column=1, value='Terminal FCFF')
+    _fml(ws, r, 2, f"=B{term_nopat_row}*(1-'Assumptions'!B{refs['terminal_reinvestment']})", NUM_FMT)
+    _remark(ws, r, 3, '= NOPAT * (1 - Reinvestment Rate)')
+
+    # Old method comparison row for audit transparency
+    r += 1
+    old_fcff_row = r
+    ws.cell(row=r, column=1, value='Old Method FCFF(n+1)')
+    _fml(ws, r, 2, f'={last_fcff_col}{fcff_row}*(1+B{tg_row})', NUM_FMT)
+    ws.cell(row=r, column=1).font = REMARK_FONT
+    _remark(ws, r, 3, 'Audit: old approach = Year5 FCFF * (1+g)')
+
+    # Terminal Value
     r += 1
     tv_row = r
     ws.cell(row=r, column=1, value='Terminal Value')
     _fml(ws, r, 2, f'=B{fcff_n1_row}/(B{wacc_row}-B{tg_row})', NUM_FMT)
-    _remark(ws, r, 3, '= FCFF(n+1) / (WACC - g)')
+    _remark(ws, r, 3, '= Terminal FCFF / (WACC - g)')
 
     r += 1
     pv_tv_row = r
@@ -946,39 +1026,87 @@ def _build_relative_sheet(ws, result, refs):
     peer_list = rel.get('peer_multiples_list', [])
     if peer_list:
         r += 2
-        _style_section(ws, r, 8, f'Peer Detail ({len(peer_list)} peers)')
+        # Column layout: A=Symbol B=Name C=Tier D=ValGroup E=ValSubgroup
+        #   F=CD_Sector G=CD_Industry H=MCap I=P/E J=P/B K=EV/EBITDA L=P/S M=Include
+        PEER_COLS = 13
+        tight_count = sum(1 for p in peer_list if p.get('tier') == 'tight')
+        broad_count = len(peer_list) - tight_count
+        _style_section(ws, r, PEER_COLS,
+                        f'Peer Detail ({len(peer_list)} peers: {tight_count} tight, {broad_count} broad)')
+
+        # Widen taxonomy columns
+        ws.column_dimensions['C'].width = 8
+        ws.column_dimensions['D'].width = 16
+        ws.column_dimensions['E'].width = 20
+        ws.column_dimensions['F'].width = 18
+        ws.column_dimensions['G'].width = 22
+        ws.column_dimensions['H'].width = 14
+        for col_letter in 'IJKLM':
+            ws.column_dimensions[col_letter].width = 12
+
         r += 1
         peer_header_row = r
-        for col_idx, header in enumerate(['Symbol', 'Name', 'MCap (Cr)',
-                                           'P/E', 'P/B', 'EV/EBITDA', 'P/S', 'Include'], 1):
+        peer_headers = ['Symbol', 'Name', 'Tier', 'Val Group', 'Val Subgroup',
+                        'CD Sector', 'CD Industry', 'MCap (Cr)',
+                        'P/E', 'P/B', 'EV/EBITDA', 'P/S', 'Include']
+        for col_idx, header in enumerate(peer_headers, 1):
             ws.cell(row=r, column=col_idx, value=header)
-        _style_header(ws, r, 8)
+        _style_header(ws, r, PEER_COLS)
 
         # Y/N dropdown validation
         yn_dv = DataValidation(type='list', formula1='"Y,N"', allow_blank=False)
         ws.add_data_validation(yn_dv)
 
+        TIGHT_FILL = PatternFill(start_color='E8F5E9', end_color='E8F5E9', fill_type='solid')
+        BROAD_FILL = PatternFill(start_color='FFF3E0', end_color='FFF3E0', fill_type='solid')
+
         r += 1
         peer_start_row = r
-        for peer in peer_list:
+        # Sort: tight peers first, then broad
+        sorted_peers = sorted(peer_list, key=lambda p: (0 if p.get('tier') == 'tight' else 1,
+                                                          -(p.get('mcap') or 0)))
+        for peer in sorted_peers:
+            tier = peer.get('tier', 'broad')
+            row_fill = TIGHT_FILL if tier == 'tight' else BROAD_FILL
             ws.cell(row=r, column=1, value=peer.get('nse_symbol', ''))
             ws.cell(row=r, column=2, value=peer.get('Company Name', ''))
-            ws.cell(row=r, column=3, value=peer.get('mcap', 0)).number_format = INT_FMT
-            ws.cell(row=r, column=4, value=peer.get('pe', 0) or 0).number_format = '0.00'
-            ws.cell(row=r, column=5, value=peer.get('pb', 0) or 0).number_format = '0.00'
-            ws.cell(row=r, column=6, value=peer.get('evebidta', 0) or 0).number_format = '0.00'
-            ws.cell(row=r, column=7, value=peer.get('ps', 0) or 0).number_format = '0.00'
-            include_cell = ws.cell(row=r, column=8, value='Y')
+            ws.cell(row=r, column=3, value=tier.title())
+            ws.cell(row=r, column=4, value=peer.get('valuation_group', ''))
+            ws.cell(row=r, column=5, value=peer.get('valuation_subgroup', ''))
+            ws.cell(row=r, column=6, value=peer.get('cd_sector', ''))
+            ws.cell(row=r, column=7, value=peer.get('cd_industry', ''))
+            ws.cell(row=r, column=8, value=peer.get('mcap', 0)).number_format = INT_FMT
+            ws.cell(row=r, column=9, value=peer.get('pe', 0) or 0).number_format = '0.00'
+            ws.cell(row=r, column=10, value=peer.get('pb', 0) or 0).number_format = '0.00'
+            ws.cell(row=r, column=11, value=peer.get('evebidta', 0) or 0).number_format = '0.00'
+            ws.cell(row=r, column=12, value=peer.get('ps', 0) or 0).number_format = '0.00'
+            include_cell = ws.cell(row=r, column=13, value='Y')
             include_cell.fill = INPUT_FILL
             yn_dv.add(include_cell)
+            # Apply tier shading to info columns
+            for c in range(1, 8):
+                ws.cell(row=r, column=c).fill = row_fill
             r += 1
         peer_end_row = r - 1
         refs['peer_start'] = peer_start_row
         refs['peer_end'] = peer_end_row
 
-        # Now set ArrayFormulas in Assumptions for peer medians
-        # (Can't do this directly across sheets in openpyxl in all Excel versions,
-        #  so we write the formula as a string that Excel will evaluate)
+        # ── Filtered Peer Medians (driven by Include Y/N) ──
+        # MEDIAN(IF()) array formulas so Assumptions can reference them
+        r += 1
+        ws.cell(row=r, column=8, value='Filtered Medians →').font = BOLD_FONT
+        incl_col = 'M'  # Include column
+        pe_col, pb_col, eveb_col, ps_col = 'I', 'J', 'K', 'L'
+        for col_letter, col_idx in [(pe_col, 9), (pb_col, 10), (eveb_col, 11), (ps_col, 12)]:
+            # Array formula: MEDIAN(IF(Include="Y", metric_range))
+            fml = (f'MEDIAN(IF({incl_col}{peer_start_row}:{incl_col}{peer_end_row}="Y",'
+                   f'{col_letter}{peer_start_row}:{col_letter}{peer_end_row}))')
+            cell = ws.cell(row=r, column=col_idx)
+            cell.value = ArrayFormula(ref=f'{col_letter}{r}', text=fml)
+            cell.number_format = '0.00'
+            cell.font = BOLD_FONT
+        filtered_median_row = r
+        refs['filtered_median_row'] = filtered_median_row
 
 
 # ── Sheet 5: Monte Carlo ────────────────────────────────────────────────────
@@ -1308,7 +1436,7 @@ def _build_subgroup_drivers_sheet(ws, result, refs):
         for driver_key, driver in subgroup_drivers.items():
             if isinstance(driver, dict):
                 ws.cell(row=r, column=1, value=driver.get('name', driver_key.replace('SUBGROUP_', '')))
-                ws.cell(row=r, column=2, value=driver.get('category', '').replace('_', ' ').title())
+                ws.cell(row=r, column=2, value=(driver.get('category') or '').replace('_', ' ').title())
                 ws.cell(row=r, column=3, value=str(driver.get('value', 'N/A')))
                 ws.cell(row=r, column=4, value=driver.get('trend', 'STABLE'))
                 ws.cell(row=r, column=5, value=driver.get('direction', driver.get('impact_direction', 'NEUTRAL')))
@@ -1500,7 +1628,7 @@ def _build_driver_hierarchy_sheet(ws, result, refs):
             has_group_drivers = True
             name = driver.get('name', driver_key.replace('GROUP_', ''))
             weight = driver.get('weight', 0)
-            category = driver.get('category', 'DEMAND')
+            category = driver.get('category') or 'DEMAND'
             direction = driver.get('impact_direction', 'NEUTRAL')
 
             ws.cell(row=r, column=1, value=category.title())
@@ -1555,7 +1683,7 @@ def _build_driver_hierarchy_sheet(ws, result, refs):
         for key, driver in subgroup_drivers.items():
             if isinstance(driver, dict):
                 ws.cell(row=r, column=1, value=driver.get('name', key.replace('SUBGROUP_', '')))
-                ws.cell(row=r, column=2, value=driver.get('category', '').replace('_', ' ').title())
+                ws.cell(row=r, column=2, value=(driver.get('category') or '').replace('_', ' ').title())
                 ws.cell(row=r, column=3, value=str(driver.get('value', 'N/A')))
                 ws.cell(row=r, column=4, value=driver.get('trend', 'STABLE'))
                 ws.cell(row=r, column=5, value=driver.get('direction', driver.get('impact_direction', 'NEUTRAL')))
@@ -1573,43 +1701,90 @@ def _build_driver_hierarchy_sheet(ws, result, refs):
     company_name = company_cfg.get('csv_name', result.get('company_name', ''))
     _style_section(ws, r, 6, f'COMPANY LEVEL: {company_name} (Weight: {hierarchy.get("company_weight", 0.30):.0%})')
 
-    # Alpha thesis
-    thesis = company_cfg.get('alpha_thesis', {})
-    if thesis:
-        r += 1
-        ws.cell(row=r, column=1, value='Bull Thesis').font = BOLD_FONT
-        ws.cell(row=r, column=2, value=thesis.get('bull', ''))
-        r += 1
-        ws.cell(row=r, column=1, value='Bear Thesis').font = BOLD_FONT
-        ws.cell(row=r, column=2, value=thesis.get('bear', ''))
-        r += 1
-        ws.cell(row=r, column=1, value='Key Moat').font = BOLD_FONT
-        ws.cell(row=r, column=2, value=thesis.get('key_moat', ''))
+    company_drivers = result.get('company_drivers', {})
+    company_adj = result.get('company_adjustment', {})
 
-    # Alpha drivers
-    alpha_drivers = company_cfg.get('alpha_drivers', {})
-    if alpha_drivers:
-        r += 2
-        ws.cell(row=r, column=1, value='Category')
-        ws.cell(row=r, column=2, value='Driver')
-        ws.cell(row=r, column=3, value='Weight')
-        ws.cell(row=r, column=4, value='Impact')
-        _style_header(ws, r, 4)
+    if company_drivers:
+        # Split into auto and qualitative
+        auto_drivers = {k: v for k, v in company_drivers.items()
+                        if isinstance(v, dict) and v.get('source') == 'AUTO'}
+        qual_drivers = {k: v for k, v in company_drivers.items()
+                        if isinstance(v, dict) and v.get('source') != 'AUTO'}
 
-        r += 1
-        for category, drivers in alpha_drivers.items():
-            cat_label = category.replace('_', ' ').title()
-            if isinstance(drivers, list):
-                for driver in drivers:
-                    ws.cell(row=r, column=1, value=cat_label)
-                    ws.cell(row=r, column=2, value=driver.get('name', ''))
-                    ws.cell(row=r, column=3, value=driver.get('weight', 0)).number_format = '0.00'
-                    ws.cell(row=r, column=4, value=driver.get('impact', ''))
-                    r += 1
+        # Auto-computed drivers table
+        if auto_drivers:
+            r += 1
+            ws.cell(row=r, column=1, value='Auto-Computed Drivers (affect growth + margin)').font = BOLD_FONT
+            r += 1
+            ws.cell(row=r, column=1, value='Driver Name')
+            ws.cell(row=r, column=2, value='Category')
+            ws.cell(row=r, column=3, value='Current Value')
+            ws.cell(row=r, column=4, value='Direction')
+            ws.cell(row=r, column=5, value='Trend')
+            ws.cell(row=r, column=6, value='Weight')
+            _style_header(ws, r, 6)
 
-    if not thesis and not alpha_drivers:
+            r += 1
+            for key, driver in sorted(auto_drivers.items()):
+                ws.cell(row=r, column=1, value=driver.get('name', key.replace('COMPANY_', '')))
+                ws.cell(row=r, column=2, value=(driver.get('category') or '').replace('_', ' ').title())
+                ws.cell(row=r, column=3, value=str(driver.get('value', 'N/A')))
+                ws.cell(row=r, column=4, value=driver.get('impact_direction', 'NEUTRAL'))
+                ws.cell(row=r, column=5, value=driver.get('trend', 'STABLE'))
+                ws.cell(row=r, column=6, value=driver.get('weight', 0)).number_format = '0.0000'
+                r += 1
+
+        # PM-curated qualitative drivers table
+        if qual_drivers:
+            r += 1
+            ws.cell(row=r, column=1, value='PM-Curated Qualitative Drivers (affect terminal ROCE/reinvestment)').font = BOLD_FONT
+            r += 1
+            ws.cell(row=r, column=1, value='Driver Name')
+            ws.cell(row=r, column=2, value='Category')
+            ws.cell(row=r, column=3, value='Current Value')
+            ws.cell(row=r, column=4, value='Direction')
+            ws.cell(row=r, column=5, value='Trend')
+            ws.cell(row=r, column=6, value='Weight')
+            _style_header(ws, r, 6)
+
+            r += 1
+            for key, driver in sorted(qual_drivers.items()):
+                ws.cell(row=r, column=1, value=driver.get('name', key.replace('COMPANY_', '')))
+                ws.cell(row=r, column=2, value=(driver.get('category') or '').replace('_', ' ').title())
+                val = driver.get('value')
+                ws.cell(row=r, column=3, value=str(val) if val else 'Not set')
+                direction = driver.get('impact_direction', 'NEUTRAL')
+                ws.cell(row=r, column=4, value=direction)
+                ws.cell(row=r, column=5, value=driver.get('trend', 'STABLE'))
+                ws.cell(row=r, column=6, value=driver.get('weight', 0)).number_format = '0.0000'
+                # Highlight if NEUTRAL (PM hasn't set a view)
+                if direction == 'NEUTRAL':
+                    ws.cell(row=r, column=4).font = REMARK_FONT
+                r += 1
+
+        # Adjustments Applied
         r += 1
-        ws.cell(row=r, column=1, value='No company-specific drivers configured').font = REMARK_FONT
+        ws.cell(row=r, column=1, value='Adjustments Applied').font = BOLD_FONT
+        r += 1
+        ws.cell(row=r, column=1, value='Growth Adjustment (auto drivers)')
+        ws.cell(row=r, column=3, value=company_adj.get('growth_adj', 0)).number_format = '0.00%'
+        r += 1
+        ws.cell(row=r, column=1, value='Margin Adjustment (auto drivers)')
+        ws.cell(row=r, column=3, value=company_adj.get('margin_adj', 0)).number_format = '0.00%'
+        r += 1
+        ws.cell(row=r, column=1, value='Terminal ROCE Adjustment (PM qualitative)')
+        ws.cell(row=r, column=3, value=company_adj.get('terminal_roce_adj', 0)).number_format = '0.00%'
+        r += 1
+        ws.cell(row=r, column=1, value='Terminal Reinvestment Adjustment (PM qualitative)')
+        ws.cell(row=r, column=3, value=company_adj.get('terminal_reinv_adj', 0)).number_format = '0.00%'
+
+    else:
+        r += 1
+        ws.cell(row=r, column=1, value='No company drivers populated yet').font = REMARK_FONT
+
+    r += 1
+    ws.cell(row=r, column=1, value='Company Score').font = BOLD_FONT
+    ws.cell(row=r, column=5, value=company_adj.get('company_score', 0)).number_format = '0.0000'
 
     # ── COMBINED OUTLOOK ──
     r += 2
@@ -1636,12 +1811,79 @@ def _build_driver_hierarchy_sheet(ws, result, refs):
     r += 1
     ws.cell(row=r, column=1, value='Company')
     ws.cell(row=r, column=2, value=hierarchy.get('company_weight', 0.30)).number_format = PCT_FMT
-    ws.cell(row=r, column=3, value='(alpha thesis)')
+    company_score = result.get('company_adjustment', {}).get('company_score', 0)
+    ws.cell(row=r, column=3, value=company_score).number_format = '0.0000'
 
     r += 1
     ws.cell(row=r, column=1, value='Combined Outlook').font = BOLD_FONT
     ws.cell(row=r, column=3, value=outlook.get('outlook_score', 0)).number_format = '0.0000'
     ws.cell(row=r, column=4, value=outlook.get('outlook_label', 'NEUTRAL')).font = BOLD_FONT
+
+
+# ── Computation Log Sheet ───────────────────────────────────────────────────
+
+def _build_log_sheet(ws, result, refs):
+    """Build the Computation Log sheet with timestamped log entries."""
+    ws.column_dimensions['A'].width = 22
+    ws.column_dimensions['B'].width = 35
+    ws.column_dimensions['C'].width = 10
+    ws.column_dimensions['D'].width = 120
+
+    r = 1
+    ws.cell(row=r, column=1, value='Computation Log').font = TITLE_FONT
+    r += 1
+    ws.cell(row=r, column=1,
+            value=f'Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}').font = REMARK_FONT
+
+    r += 2
+    ws.cell(row=r, column=1, value='Timestamp')
+    ws.cell(row=r, column=2, value='Module')
+    ws.cell(row=r, column=3, value='Level')
+    ws.cell(row=r, column=4, value='Message')
+    _style_header(ws, r, 4)
+
+    log_records = result.get('_computation_logs', [])
+    r += 1
+    for record in log_records:
+        # Timestamp
+        if hasattr(record, 'created'):
+            ts = datetime.fromtimestamp(record.created).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+        else:
+            ts = ''
+        ws.cell(row=r, column=1, value=ts).font = LOG_FONT
+
+        # Module
+        module = getattr(record, 'name', '') if hasattr(record, 'name') else ''
+        ws.cell(row=r, column=2, value=module).font = LOG_FONT
+
+        # Level
+        level = getattr(record, 'levelname', '') if hasattr(record, 'levelname') else ''
+        level_cell = ws.cell(row=r, column=3, value=level)
+        level_cell.font = LOG_FONT
+
+        # Message
+        msg = getattr(record, 'getMessage', lambda: '')() if hasattr(record, 'getMessage') else str(record)
+        msg_cell = ws.cell(row=r, column=4, value=msg[:2000])  # Truncate long messages
+        msg_cell.font = LOG_FONT
+
+        # Color-code by level
+        if level == 'WARNING':
+            for col in range(1, 5):
+                ws.cell(row=r, column=col).fill = WARNING_FILL
+        elif level == 'ERROR' or level == 'CRITICAL':
+            for col in range(1, 5):
+                ws.cell(row=r, column=col).fill = ERROR_FILL
+        elif level == 'DEBUG':
+            for col in range(1, 5):
+                ws.cell(row=r, column=col).font = DEBUG_FONT
+
+        r += 1
+
+    # Freeze header row
+    ws.freeze_panes = 'A5'
+
+    if not log_records:
+        ws.cell(row=r, column=1, value='No computation logs captured').font = REMARK_FONT
 
 
 # ── Sheet 1: Summary ────────────────────────────────────────────────────────

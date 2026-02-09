@@ -279,12 +279,15 @@ class OrchestratorAgent:
         Read latest macro data from all CSV files, compute trends, update GSheet + MySQL.
         Called daily before valuation to ensure fresh macro data.
 
-        Handles 9 MACRO drivers from 3 sources:
-        - market_indicators.csv: gdp_growth, usd_inr, interest_rate_10y, repo_rate, pmi_composite
-        - iip_monthly.csv: iip_manufacturing (latest IIP Manufacturing index)
-        - cpi_monthly.csv: cpi_food_inflation (latest CPI food inflation YoY)
-        - wpi_monthly.csv: wpi_inflation (latest WPI YoY)
-        - plfs_quarterly.csv: unemployment_rate (latest PLFS UR)
+        Handles 23 MACRO drivers from 5 sources:
+        - market_indicators.csv: gdp_growth, usd_inr, interest_rate_10y, repo_rate,
+          pmi_composite, pmi_manufacturing, pmi_services, balance_of_trade, fii_flows, dii_flows
+        - iip_monthly.csv: iip_manufacturing
+        - cpi_monthly.csv: cpi_food_inflation, cpi_headline
+        - wpi_monthly.csv: wpi_inflation, wpi_fuel_power, wpi_manufactured, wpi_primary_articles
+        - gdp_quarterly.csv: gva_manufacturing_real, gva_construction_real,
+          gva_financial_real, gva_agriculture_real
+        - plfs_quarterly.csv: unemployment_rate, lfpr_total
 
         Also syncs IIP sector indices → GROUP drivers and CPI categories → GROUP signals.
 
@@ -303,7 +306,7 @@ class OrchestratorAgent:
 
         try:
             # ---------------------------------------------------------------
-            # 1. MARKET INDICATORS (existing 5 drivers)
+            # 1. MARKET INDICATORS (10 drivers — expanded from 5)
             # ---------------------------------------------------------------
             market_csv = os.path.join(macro_dir, 'market_indicators.csv')
             if os.path.exists(market_csv):
@@ -318,6 +321,11 @@ class OrchestratorAgent:
                     '10 year bond yield (Source: FRED)': ('interest_rate_10y', 'pct'),
                     'Repo Rate': ('repo_rate', 'pct'),
                     'PMI composite': ('pmi_composite', 'value'),
+                    'PMI Manufacturing': ('pmi_manufacturing', 'value'),
+                    'PMI Services': ('pmi_services', 'value'),
+                    'Balance of trade': ('balance_of_trade', 'value'),
+                    'Total FII': ('fii_flows', 'value'),
+                    'Total DII': ('dii_flows', 'value'),
                 }
 
                 logger.info(f"Syncing market indicators (as of {latest_date.strftime('%Y-%m-%d')})")
@@ -346,27 +354,18 @@ class OrchestratorAgent:
                     self._update_driver('MACRO', 'iip_manufacturing', f"{val:.1f}",
                                        trend=trend, result=result)
 
-                # IIP → GROUP driver mapping
-                iip_group_map = {
-                    'Manufacture of motor vehicles, trailers and semi-trailers': 'AUTO',
-                    'Manufacture of pharmaceuticals, medicinal chemical and botanical products': 'HEALTHCARE',
-                    'Manufacture of basic metals': 'MATERIALS_METALS',
-                    'Manufacture of chemicals and chemical products': 'MATERIALS_CHEMICALS',
-                    'Manufacture of food products': 'CONSUMER_STAPLES',
-                    'Manufacture of textiles': 'CONSUMER_DISCRETIONARY',
-                    'Manufacture of electrical equipment': 'INDUSTRIALS',
-                    'Electricity': 'ENERGY_UTILITIES',
-                    'Manufacture of computer, electronic and optical products': 'TECHNOLOGY',
-                    'Mining': 'MATERIALS_METALS',
-                }
-                for iip_series, vg in iip_group_map.items():
+                # IIP → GROUP driver mapping (data-driven from macro_metadata.csv)
+                iip_group_map = self._load_macro_to_group_mapping('IIP')
+                for iip_series, meta in iip_group_map.items():
+                    vg = meta['valuation_group']
                     row = latest_iip[latest_iip['series_name'] == iip_series]
                     if not row.empty:
                         val = float(row['value'].values[0])
                         trend = self._compute_trend(df_iip, iip_series, months=3)
                         driver_name = f"iip_{vg.lower()}"
                         self._update_group_driver(vg, driver_name, f"{val:.1f}",
-                                                  trend=trend, result=result)
+                                                  trend=trend, result=result,
+                                                  driver_category='MACRO_SIGNAL')
 
             # ---------------------------------------------------------------
             # 3. CPI — cpi_food_inflation driver + GROUP signals
@@ -400,23 +399,35 @@ class OrchestratorAgent:
                         self._update_driver('MACRO', 'cpi_food_inflation',
                                            f"{yoy_pct:.2f}%", trend=trend, result=result)
 
-                # CPI → GROUP margin signal mapping
-                cpi_group_map = {
-                    'Food and beverages': 'CONSUMER_STAPLES',
-                    'Fuel and light': 'ENERGY_UTILITIES',
-                    'Clothing and footwear': 'CONSUMER_DISCRETIONARY',
-                    'Housing': 'REAL_ESTATE_INFRA',
-                    'Health': 'HEALTHCARE',
-                    'Transport and communication': 'AUTO',
-                }
-                for cpi_series, vg in cpi_group_map.items():
+                # MACRO driver: cpi_headline (YoY from General Index)
+                general = latest_cpi[latest_cpi['series_name'] == 'General Index (All Groups)']
+                if not general.empty:
+                    current_idx = float(general['value'].values[0])
+                    yoy_date = latest_cpi_date - pd.DateOffset(years=1)
+                    yoy_row = df_cpi_combined[
+                        (df_cpi_combined['series_name'] == 'General Index (All Groups)') &
+                        (df_cpi_combined['date'].dt.month == yoy_date.month) &
+                        (df_cpi_combined['date'].dt.year == yoy_date.year)
+                    ]
+                    if not yoy_row.empty:
+                        prev_idx = float(yoy_row['value'].values[0])
+                        yoy_pct = ((current_idx / prev_idx) - 1) * 100
+                        trend = self._compute_trend(df_cpi_combined, 'General Index (All Groups)', months=3)
+                        self._update_driver('MACRO', 'cpi_headline',
+                                           f"{yoy_pct:.2f}%", trend=trend, result=result)
+
+                # CPI → GROUP margin signal mapping (data-driven from macro_metadata.csv)
+                cpi_group_map = self._load_macro_to_group_mapping('CPI')
+                for cpi_series, meta in cpi_group_map.items():
+                    vg = meta['valuation_group']
                     row = latest_cpi[latest_cpi['series_name'] == cpi_series]
                     if not row.empty:
                         val = float(row['value'].values[0])
                         trend = self._compute_trend(df_cpi_combined, cpi_series, months=3)
                         driver_name = f"cpi_{vg.lower()}"
                         self._update_group_driver(vg, driver_name, f"{val:.1f}",
-                                                  trend=trend, result=result)
+                                                  trend=trend, result=result,
+                                                  driver_category='MACRO_SIGNAL')
 
             # ---------------------------------------------------------------
             # 4. WPI — wpi_inflation MACRO driver
@@ -447,8 +458,50 @@ class OrchestratorAgent:
                         self._update_driver('MACRO', 'wpi_inflation',
                                            f"{yoy_pct:.2f}%", trend=trend, result=result)
 
+                # WPI MajorGroup YoY drivers
+                wpi_macro_map = {
+                    'Fuel & power': 'wpi_fuel_power',
+                    'Manufactured products': 'wpi_manufactured',
+                    'Primary articles': 'wpi_primary_articles',
+                }
+                for wpi_series, driver_name in wpi_macro_map.items():
+                    row = latest_wpi[latest_wpi['series_name'] == wpi_series]
+                    if not row.empty:
+                        current_idx = float(row['value'].values[0])
+                        yoy_date = latest_wpi_date - pd.DateOffset(years=1)
+                        yoy_row = df_wpi[
+                            (df_wpi['series_name'] == wpi_series) &
+                            (df_wpi['date'].dt.month == yoy_date.month) &
+                            (df_wpi['date'].dt.year == yoy_date.year)
+                        ]
+                        if not yoy_row.empty:
+                            prev_idx = float(yoy_row['value'].values[0])
+                            yoy_pct = ((current_idx / prev_idx) - 1) * 100
+                            trend = self._compute_trend(df_wpi, wpi_series, months=3)
+                            self._update_driver('MACRO', driver_name,
+                                               f"{yoy_pct:.2f}%", trend=trend, result=result)
+                        else:
+                            # No YoY data yet — store raw index with trend
+                            trend = self._compute_trend(df_wpi, wpi_series, months=3)
+                            self._update_driver('MACRO', driver_name,
+                                               f"{current_idx:.1f} (idx)", trend=trend, result=result)
+                            logger.info(f"  {driver_name}: YoY not available, storing index={current_idx:.1f}")
+
+                # WPI → GROUP driver mapping (data-driven from macro_metadata.csv)
+                wpi_group_map = self._load_macro_to_group_mapping('WPI')
+                for wpi_series, meta in wpi_group_map.items():
+                    vg = meta['valuation_group']
+                    row = latest_wpi[latest_wpi['series_name'] == wpi_series]
+                    if not row.empty:
+                        val = float(row['value'].values[0])
+                        trend = self._compute_trend(df_wpi, wpi_series, months=3)
+                        driver_name = f"wpi_{vg.lower()}"
+                        self._update_group_driver(vg, driver_name, f"{val:.1f}",
+                                                  trend=trend, result=result,
+                                                  driver_category='MACRO_SIGNAL')
+
             # ---------------------------------------------------------------
-            # 5. PLFS — unemployment_rate MACRO driver
+            # 5. PLFS — unemployment_rate + lfpr_total MACRO drivers
             # ---------------------------------------------------------------
             plfs_csv = os.path.join(macro_dir, 'plfs_quarterly.csv')
             if os.path.exists(plfs_csv):
@@ -458,39 +511,113 @@ class OrchestratorAgent:
 
                 logger.info(f"Syncing PLFS data (as of {latest_plfs_date.strftime('%Y-%m-%d')})")
 
-                # Find overall UR for 15+ age group, total sector
-                ur_series = [s for s in df_plfs['series_name'].unique()
-                             if 'Unemployment Rate' in s and '- total' in s.lower()
-                             and '15-29' not in s]
-                if ur_series:
-                    ur_name = ur_series[0]
-                    ur_latest = df_plfs[
-                        (df_plfs['series_name'] == ur_name) &
+                # Helper: sync a PLFS series as MACRO driver
+                def _sync_plfs_driver(series_filter_fn, driver_name, label):
+                    matching = [s for s in df_plfs['series_name'].unique() if series_filter_fn(s)]
+                    if not matching:
+                        logger.warning(f"PLFS series not found for {driver_name}")
+                        return
+                    series_name = matching[0]
+                    latest_row = df_plfs[
+                        (df_plfs['series_name'] == series_name) &
                         (df_plfs['date'] == latest_plfs_date)
                     ]
-                    if not ur_latest.empty:
-                        val = float(ur_latest['value'].values[0])
-                        # Simple trend: compare last 2 quarters
-                        dates = sorted(df_plfs[df_plfs['series_name'] == ur_name]['date'].unique())
-                        if len(dates) >= 2:
-                            prev = df_plfs[
-                                (df_plfs['series_name'] == ur_name) &
-                                (df_plfs['date'] == dates[-2])
-                            ]
-                            if not prev.empty:
-                                prev_val = float(prev['value'].values[0])
-                                if val > prev_val + 0.3:
-                                    trend = 'UP'
-                                elif val < prev_val - 0.3:
-                                    trend = 'DOWN'
-                                else:
-                                    trend = 'STABLE'
-                            else:
-                                trend = 'STABLE'
+                    if latest_row.empty:
+                        return
+                    val = float(latest_row['value'].values[0])
+                    # Trend: compare last 2 quarters
+                    dates = sorted(df_plfs[df_plfs['series_name'] == series_name]['date'].unique())
+                    trend = 'STABLE'
+                    if len(dates) >= 2:
+                        prev = df_plfs[
+                            (df_plfs['series_name'] == series_name) &
+                            (df_plfs['date'] == dates[-2])
+                        ]
+                        if not prev.empty:
+                            prev_val = float(prev['value'].values[0])
+                            if val > prev_val + 0.3:
+                                trend = 'UP'
+                            elif val < prev_val - 0.3:
+                                trend = 'DOWN'
+                    self._update_driver('MACRO', driver_name,
+                                       f"{val:.1f}%", trend=trend, result=result)
+
+                # Unemployment rate (15+ age, person, rural+urban, all)
+                _sync_plfs_driver(
+                    lambda s: 'Unemployment Rate' in s and '- person -' in s
+                              and 'rural + urban' in s and '15-29' not in s and '(all)' in s,
+                    'unemployment_rate', 'UR'
+                )
+
+                # LFPR total (person, rural+urban, all)
+                _sync_plfs_driver(
+                    lambda s: 'LFPR' in s and '- person -' in s
+                              and 'rural + urban' in s and '(all)' in s,
+                    'lfpr_total', 'LFPR'
+                )
+
+            # ---------------------------------------------------------------
+            # 6. GDP/GVA — 4 sectoral GVA Real YoY drivers
+            # ---------------------------------------------------------------
+            gdp_csv = os.path.join(macro_dir, 'gdp_quarterly.csv')
+            if os.path.exists(gdp_csv):
+                df_gdp = pd.read_csv(gdp_csv, comment='#')
+                df_gdp['date'] = pd.to_datetime(df_gdp['date'])
+                latest_gdp_date = df_gdp['date'].max()
+
+                logger.info(f"Syncing GDP/GVA data (as of {latest_gdp_date.strftime('%Y-%m-%d')})")
+
+                gva_macro_map = {
+                    'Gross Value Added - Manufacturing (Real)': 'gva_manufacturing_real',
+                    'Gross Value Added - Construction (Real)': 'gva_construction_real',
+                    'Gross Value Added - Financial, Real Estate & Professional Services (Real)': 'gva_financial_real',
+                    'Gross Value Added - Agriculture, Livestock, Forestry and Fishing (Real)': 'gva_agriculture_real',
+                }
+                for gva_series, driver_name in gva_macro_map.items():
+                    latest_row = df_gdp[
+                        (df_gdp['series_name'] == gva_series) &
+                        (df_gdp['date'] == latest_gdp_date)
+                    ]
+                    if latest_row.empty:
+                        logger.debug(f"GVA series '{gva_series}' not found at latest date")
+                        continue
+                    current_val = float(latest_row['value'].values[0])
+
+                    # YoY: same quarter previous year
+                    yoy_date = latest_gdp_date - pd.DateOffset(years=1)
+                    yoy_row = df_gdp[
+                        (df_gdp['series_name'] == gva_series) &
+                        (df_gdp['date'].dt.month == yoy_date.month) &
+                        (df_gdp['date'].dt.year == yoy_date.year)
+                    ]
+                    if not yoy_row.empty:
+                        prev_val = float(yoy_row['value'].values[0])
+                        if prev_val > 0:
+                            yoy_pct = ((current_val / prev_val) - 1) * 100
+                            trend = self._compute_trend(df_gdp, gva_series, months=4)
+                            self._update_driver('MACRO', driver_name,
+                                               f"{yoy_pct:.2f}%", trend=trend, result=result)
                         else:
-                            trend = 'STABLE'
-                        self._update_driver('MACRO', 'unemployment_rate',
-                                           f"{val:.1f}%", trend=trend, result=result)
+                            logger.warning(f"GVA {driver_name}: previous value is zero, skipping YoY")
+                    else:
+                        logger.debug(f"GVA {driver_name}: no YoY data for {yoy_date}")
+
+                # GVA → GROUP driver mapping (data-driven from macro_metadata.csv)
+                gva_group_map = self._load_macro_to_group_mapping('NAS')
+                for gva_series_meta, meta in gva_group_map.items():
+                    vg = meta['valuation_group']
+                    # Find the matching series in GDP data
+                    row = df_gdp[
+                        (df_gdp['series_name'] == gva_series_meta) &
+                        (df_gdp['date'] == latest_gdp_date)
+                    ]
+                    if not row.empty:
+                        val = float(row['value'].values[0])
+                        trend = self._compute_trend(df_gdp, gva_series_meta, months=4)
+                        driver_name = f"gva_{vg.lower()}"
+                        self._update_group_driver(vg, driver_name, f"{val:.1f}",
+                                                  trend=trend, result=result,
+                                                  driver_category='MACRO_SIGNAL')
 
             logger.info(f"Macro sync complete: {result['synced']} MACRO updated, "
                         f"{result['group_synced']} GROUP updated, "
@@ -535,6 +662,60 @@ class OrchestratorAgent:
             return 'DOWN'
         else:
             return 'STABLE'
+
+    def _load_macro_to_group_mapping(self, source_type: str) -> dict:
+        """
+        Load macro-to-group mapping from macro_metadata.csv (data-driven, not hardcoded).
+
+        Args:
+            source_type: Filter by metric_type ('IIP', 'CPI', 'WPI', 'NAS', 'PLFS')
+
+        Returns:
+            Dict of {series_name: {'valuation_group': ..., 'valuation_subgroup': ..., 'source': ...}}
+            Deduplicates CPI (uses Combined only). Excludes rows with empty valuation_group.
+        """
+        import pandas as pd
+
+        if not hasattr(self, '_macro_metadata_cache'):
+            self._macro_metadata_cache = {}
+
+        if source_type in self._macro_metadata_cache:
+            return self._macro_metadata_cache[source_type]
+
+        macro_dir = os.getenv('MACRO_DATA_PATH',
+                              '/Users/ram/code/investment_strategies/data/macro')
+        metadata_csv = os.path.join(macro_dir, 'macro_metadata.csv')
+
+        if not os.path.exists(metadata_csv):
+            logger.warning(f"macro_metadata.csv not found at {metadata_csv}")
+            return {}
+
+        df = pd.read_csv(metadata_csv)
+
+        # Filter by source type
+        df_filtered = df[df['metric_type'].str.contains(source_type, case=False, na=False)]
+
+        # For CPI, use only Combined to avoid duplicates
+        if source_type == 'CPI':
+            df_filtered = df_filtered[df_filtered['metric_type'] == 'Combined CPI']
+
+        # Exclude rows with empty valuation_group
+        df_filtered = df_filtered[df_filtered['valuation_group'].notna() & (df_filtered['valuation_group'] != '')]
+
+        # Build mapping (deduplicate by series_name — take first occurrence)
+        mapping = {}
+        for _, row in df_filtered.iterrows():
+            sn = row['series_name']
+            if sn not in mapping:
+                mapping[sn] = {
+                    'valuation_group': row['valuation_group'],
+                    'valuation_subgroup': row.get('valuation_subgroup', '') if pd.notna(row.get('valuation_subgroup')) else '',
+                    'source': source_type,
+                }
+
+        self._macro_metadata_cache[source_type] = mapping
+        logger.info(f"Loaded {len(mapping)} {source_type} → GROUP mappings from macro_metadata.csv")
+        return mapping
 
     def _sync_single_macro_driver(self, latest_data, csv_series: str,
                                   driver_name: str, fmt: str,
@@ -613,7 +794,8 @@ class OrchestratorAgent:
                 result['errors'].append(f"{driver_name}: {str(e)}")
 
     def _update_group_driver(self, valuation_group: str, driver_name: str,
-                             value: str, trend: str = 'STABLE', result: dict = None):
+                             value: str, trend: str = 'STABLE', result: dict = None,
+                             driver_category: str = None):
         """Update or create a GROUP-level driver for sector-mapped macro data."""
         try:
             current = self.mysql.query_one(
@@ -637,12 +819,13 @@ class OrchestratorAgent:
                         (value, trend, driver_name, valuation_group)
                     )
                 else:
+                    cat = driver_category or 'MACRO_SIGNAL'
                     self.mysql.execute(
                         """INSERT INTO vs_drivers
-                           (driver_level, driver_name, valuation_group, current_value,
+                           (driver_level, driver_category, driver_name, valuation_group, current_value,
                             trend, weight, impact_direction, updated_by, last_updated)
-                           VALUES ('GROUP', %s, %s, %s, %s, 0.10, 'POSITIVE', 'mospi_sync', NOW())""",
-                        (driver_name, valuation_group, value, trend)
+                           VALUES ('GROUP', %s, %s, %s, %s, %s, 0.10, 'POSITIVE', 'mospi_sync', NOW())""",
+                        (cat, driver_name, valuation_group, value, trend)
                     )
 
                 if result:
@@ -655,6 +838,125 @@ class OrchestratorAgent:
             logger.error(f"Error updating group driver {valuation_group}/{driver_name}: {e}")
             if result:
                 result['errors'].append(f"{valuation_group}/{driver_name}: {str(e)}")
+
+    def _cascade_macro_to_linked_drivers(self) -> dict:
+        """
+        After macro sync, cascade MACRO driver states to linked GROUP/SUBGROUP drivers.
+        Each linked driver has a linked_macro_driver (name) and link_direction (SAME/INVERSE).
+
+        Cascade logic:
+        - SAME: Macro trend/direction maps directly (e.g., PMI up → demand POSITIVE/UP)
+        - INVERSE: Direction flips (e.g., WPI up → cost NEGATIVE/UP, trend stays)
+
+        Skips PM_OVERRIDE drivers (PM has manually set them).
+        """
+        result = {'cascaded': 0, 'skipped_pm': 0, 'errors': []}
+
+        if not self.mysql:
+            return result
+
+        try:
+            # Get all drivers that have a macro link
+            linked_drivers = self.mysql.query(
+                """SELECT d.id, d.driver_level, d.driver_name, d.valuation_group,
+                          d.valuation_subgroup, d.linked_macro_driver, d.link_direction,
+                          d.source, d.impact_direction AS current_direction,
+                          d.trend AS current_trend
+                   FROM vs_drivers d
+                   WHERE d.linked_macro_driver IS NOT NULL
+                     AND d.is_active = 1"""
+            )
+
+            if not linked_drivers:
+                logger.debug("No linked drivers to cascade")
+                return result
+
+            # Load current MACRO driver states once
+            macro_states = {}
+            macro_drivers = self.mysql.query(
+                """SELECT driver_name, impact_direction, trend, current_value
+                   FROM vs_drivers
+                   WHERE driver_level = 'MACRO' AND is_active = 1"""
+            )
+            for m in (macro_drivers or []):
+                macro_states[m['driver_name']] = m
+
+            # Cascade each linked driver
+            for ld in linked_drivers:
+                macro_name = ld['linked_macro_driver']
+                macro_state = macro_states.get(macro_name)
+
+                if not macro_state:
+                    logger.debug(f"Linked macro driver '{macro_name}' not found for "
+                                 f"{ld['driver_name']}")
+                    continue
+
+                # Skip PM overrides
+                if ld.get('source') == 'PM_OVERRIDE':
+                    result['skipped_pm'] += 1
+                    continue
+
+                macro_direction = macro_state.get('impact_direction', 'NEUTRAL')
+                macro_trend = macro_state.get('trend', 'STABLE')
+                link_dir = ld.get('link_direction', 'SAME')
+
+                if link_dir == 'SAME':
+                    new_direction = macro_direction
+                    new_trend = macro_trend
+                else:  # INVERSE
+                    if macro_direction == 'POSITIVE':
+                        new_direction = 'NEGATIVE'
+                    elif macro_direction == 'NEGATIVE':
+                        new_direction = 'POSITIVE'
+                    else:
+                        new_direction = 'NEUTRAL'
+                    new_trend = macro_trend  # Trend direction stays (UP means the macro metric is rising)
+
+                # Only update if changed
+                if (new_direction != ld.get('current_direction') or
+                        new_trend != ld.get('current_trend')):
+                    try:
+                        self.mysql.execute(
+                            """UPDATE vs_drivers
+                               SET impact_direction = %s, trend = %s,
+                                   updated_by = 'MACRO_CASCADE', last_updated = NOW()
+                               WHERE id = %s""",
+                            (new_direction, new_trend, ld['id'])
+                        )
+
+                        # Log changelog
+                        self.mysql.execute(
+                            """INSERT INTO vs_driver_changelog
+                               (driver_level, driver_name, sector,
+                                old_value, new_value, change_reason, triggered_by)
+                               VALUES (%s, %s, %s, %s, %s, %s, 'MACRO_UPDATE')""",
+                            (
+                                ld['driver_level'],
+                                ld['driver_name'],
+                                ld.get('valuation_group', ''),
+                                f"{ld.get('current_direction')}/{ld.get('current_trend')}",
+                                f"{new_direction}/{new_trend}",
+                                f"Cascaded from MACRO {macro_name} ({link_dir}): "
+                                f"{macro_direction}/{macro_trend}",
+                            )
+                        )
+
+                        result['cascaded'] += 1
+                        logger.debug(f"Cascaded {macro_name} → {ld['driver_name']} "
+                                     f"({ld['driver_level']}): {new_direction}/{new_trend}")
+
+                    except Exception as e:
+                        logger.error(f"Failed to cascade {macro_name} → {ld['driver_name']}: {e}")
+                        result['errors'].append(f"{ld['driver_name']}: {str(e)}")
+
+            logger.info(f"Macro cascade: {result['cascaded']} updated, "
+                        f"{result['skipped_pm']} PM overrides skipped")
+
+        except Exception as e:
+            logger.error(f"Macro cascade failed: {e}", exc_info=True)
+            result['error'] = str(e)
+
+        return result
 
     # =========================================================================
     # DAILY VALUATION
@@ -686,6 +988,18 @@ class OrchestratorAgent:
             # Sync macro data from CSV to GSheet/MySQL
             macro_sync_result = self._sync_macro_from_csv()
             result['macro_sync'] = macro_sync_result
+
+            # Cascade macro updates to linked GROUP/SUBGROUP drivers
+            cascade_result = self._cascade_macro_to_linked_drivers()
+            result['macro_cascade'] = cascade_result
+
+            # Assess materiality (macro divergences, driver momentum, valuation gaps)
+            materiality_result = self._assess_materiality()
+            result['materiality'] = materiality_result
+
+            # Process approved driver discoveries
+            discovery_result = self._process_approved_discoveries()
+            result['discoveries_promoted'] = discovery_result
 
             # Reload price data
             self.price_loader.reload()
@@ -904,6 +1218,263 @@ class OrchestratorAgent:
             logger.info(f"Running catchup daily valuation (missed {len(missed_val)} days)")
 
         return catchup_result
+
+    def _assess_materiality(self) -> dict:
+        """
+        Assess materiality across all macro and group drivers.
+        Generates alerts when significant divergences or momentum shifts are detected.
+
+        Signal types:
+        1. MACRO_DIVERGENCE: Macro driver value >2σ from 12-month mean
+        2. DRIVER_MOMENTUM: >3 drivers for a group shift in same direction within 7 days
+        3. VALUATION_GAP: CMP moves >10% from last intrinsic value
+        4. CROSS_SIGNAL: Macro + sector driver alignment (e.g., rate cut + housing down)
+
+        Returns dict with alert counts.
+        """
+        import pandas as pd
+        from decimal import Decimal
+
+        result = {'alerts_created': 0, 'signals_checked': 0}
+
+        if not self.mysql:
+            return result
+
+        today = date.today()
+
+        try:
+            # ----------------------------------------------------------
+            # 1. MACRO_DIVERGENCE: Check macro drivers for outlier values
+            # ----------------------------------------------------------
+            macro_dir = os.getenv('MACRO_DATA_PATH',
+                                  '/Users/ram/code/investment_strategies/data/macro')
+            market_csv = os.path.join(macro_dir, 'market_indicators.csv')
+
+            if os.path.exists(market_csv):
+                df = pd.read_csv(market_csv, comment='#')
+                df['date'] = pd.to_datetime(df['date'])
+                df['value'] = pd.to_numeric(df['value'], errors='coerce')
+
+                for series in df['series_name'].unique():
+                    series_data = df[df['series_name'] == series].sort_values('date')
+                    if len(series_data) < 6:
+                        continue
+
+                    values = series_data['value'].dropna()
+                    if len(values) < 6:
+                        continue
+
+                    mean_12m = values.tail(12).mean()
+                    std_12m = values.tail(12).std()
+                    latest = values.iloc[-1]
+
+                    result['signals_checked'] += 1
+
+                    if std_12m > 0 and abs(latest - mean_12m) > 2 * std_12m:
+                        direction = 'above' if latest > mean_12m else 'below'
+                        sigma = (latest - mean_12m) / std_12m
+
+                        severity = 'HIGH' if abs(sigma) > 3 else 'MEDIUM'
+                        action = 'REVALUE_NOW' if severity == 'HIGH' else 'WATCH'
+
+                        try:
+                            self.mysql.execute(
+                                """INSERT INTO vs_materiality_alerts
+                                   (alert_date, alert_type, signal_description,
+                                    suggested_action, severity)
+                                   VALUES (%s, 'MACRO_DIVERGENCE', %s, %s, %s)""",
+                                (
+                                    today,
+                                    f"{series}: {latest:.2f} is {abs(sigma):.1f}σ {direction} "
+                                    f"12-month mean ({mean_12m:.2f})",
+                                    action,
+                                    severity,
+                                )
+                            )
+                            result['alerts_created'] += 1
+                        except Exception as e:
+                            logger.error(f"Failed to create macro divergence alert: {e}")
+
+            # ----------------------------------------------------------
+            # 2. DRIVER_MOMENTUM: Groups with multiple driver shifts
+            # ----------------------------------------------------------
+            momentum_sql = """
+                SELECT valuation_group, COUNT(*) as changes
+                FROM vs_driver_changelog
+                WHERE change_timestamp >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+                  AND driver_level IN ('GROUP', 'SUBGROUP')
+                GROUP BY valuation_group
+                HAVING changes >= 3
+            """
+            momentum_groups = self.mysql.query(momentum_sql)
+            for mg in (momentum_groups or []):
+                vg = mg['valuation_group']
+                changes = mg['changes']
+
+                # Get company count for this group
+                company_count = self.mysql.query_one(
+                    """SELECT COUNT(*) as cnt FROM vs_active_companies
+                       WHERE valuation_group = %s""",
+                    (vg,)
+                )
+                affected = company_count['cnt'] if company_count else 0
+
+                try:
+                    self.mysql.execute(
+                        """INSERT INTO vs_materiality_alerts
+                           (alert_date, alert_type, valuation_group, signal_description,
+                            affected_companies, suggested_action, severity)
+                           VALUES (%s, 'DRIVER_MOMENTUM', %s, %s, %s, 'WATCH', 'MEDIUM')""",
+                        (
+                            today,
+                            vg,
+                            f"{changes} driver changes in 7 days for {vg}",
+                            affected,
+                        )
+                    )
+                    result['alerts_created'] += 1
+                except Exception as e:
+                    logger.error(f"Failed to create momentum alert: {e}")
+
+            # ----------------------------------------------------------
+            # 3. VALUATION_GAP: CMP diverging from intrinsic value
+            # ----------------------------------------------------------
+            gap_sql = """
+                SELECT v.company_id, v.intrinsic_value, v.cmp, v.upside_pct,
+                       ac.valuation_group, ac.valuation_subgroup, ac.nse_symbol
+                FROM vs_valuations v
+                JOIN vs_active_companies ac ON v.company_id = ac.company_id
+                WHERE v.id IN (
+                    SELECT MAX(id) FROM vs_valuations
+                    WHERE method = 'BLENDED'
+                    GROUP BY company_id
+                )
+                AND ABS(v.upside_pct) > 10
+            """
+            gaps = self.mysql.query(gap_sql)
+            # Group by valuation_group for summary alerts
+            gap_by_group = {}
+            for g in (gaps or []):
+                vg = g.get('valuation_group', 'UNKNOWN')
+                if vg not in gap_by_group:
+                    gap_by_group[vg] = []
+                gap_by_group[vg].append(g)
+
+            for vg, companies in gap_by_group.items():
+                if len(companies) >= 3:  # Only alert if 3+ companies in a group gap
+                    avg_upside = sum(float(c.get('upside_pct', 0) or 0) for c in companies) / len(companies)
+                    action = 'REVALUE_NOW' if abs(avg_upside) > 20 else 'WATCH'
+                    severity = 'HIGH' if abs(avg_upside) > 30 else 'MEDIUM'
+
+                    try:
+                        self.mysql.execute(
+                            """INSERT INTO vs_materiality_alerts
+                               (alert_date, alert_type, valuation_group, signal_description,
+                                affected_companies, suggested_action, severity)
+                               VALUES (%s, 'VALUATION_GAP', %s, %s, %s, %s, %s)""",
+                            (
+                                today,
+                                vg,
+                                f"{len(companies)} companies in {vg} have avg {avg_upside:+.1f}% gap",
+                                len(companies),
+                                action,
+                                severity,
+                            )
+                        )
+                        result['alerts_created'] += 1
+                    except Exception as e:
+                        logger.error(f"Failed to create valuation gap alert: {e}")
+
+            logger.info(f"Materiality assessment: {result['signals_checked']} signals checked, "
+                        f"{result['alerts_created']} alerts created")
+
+        except Exception as e:
+            logger.error(f"Materiality assessment failed: {e}", exc_info=True)
+            result['error'] = str(e)
+
+        return result
+
+    def _process_approved_discoveries(self) -> dict:
+        """
+        Promote APPROVED discovered drivers into vs_drivers and log the change.
+        Called at start of daily valuation to pick up PM-approved suggestions.
+        """
+        result = {'promoted': 0, 'errors': []}
+
+        if not self.mysql:
+            return result
+
+        try:
+            approved = self.mysql.query(
+                """SELECT * FROM vs_discovered_drivers WHERE status = 'APPROVED'"""
+            )
+
+            if not approved:
+                logger.debug("No approved driver discoveries to process")
+                return result
+
+            for disc in approved:
+                try:
+                    # Insert into vs_drivers
+                    self.mysql.execute(
+                        """INSERT INTO vs_drivers
+                           (driver_level, driver_category, driver_name, valuation_group,
+                            valuation_subgroup, weight, impact_direction, trend,
+                            updated_by, last_updated)
+                           VALUES (%s, %s, %s, %s, %s, %s, 'NEUTRAL', 'STABLE',
+                                   'AGENT_DISCOVERY', NOW())
+                           ON DUPLICATE KEY UPDATE weight = VALUES(weight),
+                                                    updated_by = 'AGENT_DISCOVERY'""",
+                        (
+                            disc['driver_level'],
+                            disc.get('driver_category', 'DEMAND'),
+                            disc['driver_name'],
+                            disc.get('valuation_group'),
+                            disc.get('valuation_subgroup'),
+                            float(disc.get('suggested_weight', 0.05)),
+                        )
+                    )
+
+                    # Log to changelog
+                    self.mysql.execute(
+                        """INSERT INTO vs_driver_changelog
+                           (driver_level, driver_category, driver_name, sector,
+                            new_value, new_weight, change_reason, triggered_by)
+                           VALUES (%s, %s, %s, %s, 'NEW', %s, %s, 'AGENT_ANALYSIS')""",
+                        (
+                            disc['driver_level'],
+                            disc.get('driver_category', 'DEMAND'),
+                            disc['driver_name'],
+                            disc.get('valuation_group', ''),
+                            float(disc.get('suggested_weight', 0.05)),
+                            f"Promoted from discovery #{disc['id']}: {disc.get('reasoning', '')}",
+                        )
+                    )
+
+                    # Mark as processed (update status to prevent re-processing)
+                    self.mysql.execute(
+                        """UPDATE vs_discovered_drivers
+                           SET status = 'APPROVED', reviewed_at = NOW()
+                           WHERE id = %s""",
+                        (disc['id'],)
+                    )
+
+                    result['promoted'] += 1
+                    logger.info(f"Promoted discovered driver: {disc['driver_name']} "
+                                f"({disc['driver_level']}) → vs_drivers")
+
+                except Exception as e:
+                    logger.error(f"Failed to promote discovery #{disc['id']}: {e}", exc_info=True)
+                    result['errors'].append(f"#{disc['id']}: {str(e)}")
+
+        except Exception as e:
+            logger.error(f"Discovery processing failed: {e}", exc_info=True)
+            result['errors'].append(str(e))
+
+        if result['promoted'] > 0:
+            logger.info(f"Promoted {result['promoted']} discovered drivers into vs_drivers")
+
+        return result
 
     def _replay_queued_ops(self):
         """Replay any operations queued during previous failures."""

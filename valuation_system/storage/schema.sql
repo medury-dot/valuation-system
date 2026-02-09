@@ -80,6 +80,10 @@ CREATE TABLE IF NOT EXISTS vs_drivers (
     trend ENUM('UP', 'DOWN', 'STABLE'),
     last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     updated_by VARCHAR(50),
+    is_active TINYINT(1) NOT NULL DEFAULT 1,
+    source VARCHAR(30) DEFAULT 'SEED',
+    linked_macro_driver VARCHAR(100) DEFAULT NULL,
+    link_direction ENUM('SAME','INVERSE') DEFAULT NULL,
     INDEX idx_level_sector (driver_level, sector),
     UNIQUE KEY uk_driver (driver_level, driver_name, sector, company_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -100,6 +104,8 @@ CREATE TABLE IF NOT EXISTS vs_driver_changelog (
     change_reason TEXT,
     triggered_by ENUM('NEWS_EVENT', 'MACRO_UPDATE', 'PM_OVERRIDE', 'SCHEDULED_REFRESH', 'AGENT_ANALYSIS'),
     source_event_id INT,
+    is_active TINYINT(1) DEFAULT NULL,
+    source VARCHAR(30) DEFAULT NULL,
     estimated_valuation_impact_pct DECIMAL(8,2),
     INDEX idx_timestamp (change_timestamp),
     INDEX idx_driver (driver_level, driver_name)
@@ -314,6 +320,43 @@ CREATE TABLE IF NOT EXISTS vs_peer_groups (
     UNIQUE KEY uq_pair (company_id, peer_company_id),
     INDEX idx_company_valid (company_id, valid_until),
     INDEX idx_tier (company_id, tier)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 17. DISCOVERED DRIVERS (Agent-suggested new drivers, pending PM approval)
+CREATE TABLE IF NOT EXISTS vs_discovered_drivers (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    discovered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    driver_level ENUM('MACRO','GROUP','SUBGROUP') NOT NULL,
+    valuation_group VARCHAR(100),
+    valuation_subgroup VARCHAR(100),
+    driver_category VARCHAR(50),
+    driver_name VARCHAR(100) NOT NULL,
+    suggested_weight DECIMAL(5,4),
+    reasoning TEXT,
+    source_event_id INT,
+    source_headline TEXT,
+    confidence ENUM('HIGH','MEDIUM','LOW') DEFAULT 'MEDIUM',
+    status ENUM('PENDING','APPROVED','REJECTED') DEFAULT 'PENDING',
+    reviewed_by VARCHAR(50),
+    reviewed_at TIMESTAMP NULL,
+    INDEX idx_status (status),
+    INDEX idx_group (valuation_group, valuation_subgroup)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 18. MATERIALITY ALERTS (Opportunity/risk signals from driver analysis)
+CREATE TABLE IF NOT EXISTS vs_materiality_alerts (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    alert_date DATE,
+    alert_type ENUM('MACRO_DIVERGENCE','DRIVER_MOMENTUM','VALUATION_GAP','CROSS_SIGNAL') NOT NULL,
+    valuation_group VARCHAR(100),
+    valuation_subgroup VARCHAR(100),
+    signal_description TEXT,
+    affected_companies INT,
+    suggested_action ENUM('REVALUE_NOW','WATCH','REDUCE_EXPOSURE'),
+    severity ENUM('HIGH','MEDIUM','LOW'),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_date_type (alert_date, alert_type),
+    INDEX idx_group (valuation_group)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- =============================================================================

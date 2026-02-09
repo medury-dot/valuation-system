@@ -22,7 +22,7 @@
 - Excluded: Trading (591), ETF (315), Diversified (22)
 
 ### ✅ Test Portfolio (22 Companies Added)
-- Added to Google Sheet "5. Active Companies"
+- Added to Google Sheet "6. Active Companies"
 - 11/22 have sector drivers (can value immediately!)
 - 11/22 need 8 new sub-verticals (2-3 hours work)
 
@@ -146,7 +146,7 @@ ORDER BY symbol;
 
 ### Commands
 
-**Add companies to watchlist** (Google Sheet "5. Active Companies"):
+**Add companies to watchlist** (Google Sheet "6. Active Companies"):
 - Just add row with symbol, frequency, priority
 - System syncs automatically
 

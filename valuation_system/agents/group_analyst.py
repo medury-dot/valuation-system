@@ -96,8 +96,19 @@ Return as JSON with structure:
   "revenue_growth_impact_pct": 0.0,
   "margin_impact_pct": 0.0,
   "terminal_value_impact": "NONE/MINOR/MODERATE/SIGNIFICANT",
-  "overall_assessment": "..."
-}}"""
+  "overall_assessment": "...",
+  "new_driver_suggestions": [
+    {{
+      "name": "new_driver_name_snake_case",
+      "category": "DEMAND|COST|REGULATORY",
+      "level": "GROUP|SUBGROUP",
+      "weight": 0.05,
+      "reasoning": "Why this should be tracked as a new driver"
+    }}
+  ]
+}}
+
+If this event does NOT suggest any new driver beyond the current list, return an empty list for "new_driver_suggestions"."""
 
     def __init__(self, valuation_group: str, valuation_subgroup: str = '',
                  mysql_client=None, llm_client: LLMClient = None):
@@ -178,7 +189,8 @@ Return as JSON with structure:
             # Load GROUP-level drivers (valuation_group)
             group_drivers = self.mysql.query(
                 """SELECT * FROM vs_drivers
-                   WHERE driver_level = 'GROUP' AND valuation_group = %s""",
+                   WHERE driver_level = 'GROUP' AND valuation_group = %s
+                     AND is_active = 1""",
                 (self.valuation_group,)
             )
             if group_drivers:
@@ -190,7 +202,8 @@ Return as JSON with structure:
             if self.valuation_subgroup:
                 subgroup_drivers = self.mysql.query(
                     """SELECT * FROM vs_drivers
-                       WHERE driver_level = 'SUBGROUP' AND valuation_subgroup = %s""",
+                       WHERE driver_level = 'SUBGROUP' AND valuation_subgroup = %s
+                         AND is_active = 1""",
                     (self.valuation_subgroup,)
                 )
                 if subgroup_drivers:
@@ -213,12 +226,13 @@ Return as JSON with structure:
         """Parse a driver record from MySQL into internal format."""
         return {
             'level': d['driver_level'],
-            'category': d.get('driver_category', ''),
+            'category': d.get('driver_category') or '',
             'name': d['driver_name'],
             'value': d['current_value'],
             'weight': float(d['weight']) if d.get('weight') else 0,
             'impact_direction': d.get('impact_direction', 'NEUTRAL'),
             'trend': d.get('trend', 'STABLE'),
+            'source': d.get('source', 'SEED'),
         }
 
     def _init_drivers_from_config(self):
@@ -268,6 +282,11 @@ Return as JSON with structure:
                     for change in driver_impact['affected_drivers']:
                         self._apply_driver_change(change, event)
                         changes.append(change)
+
+                # Handle new driver suggestions from LLM
+                if driver_impact and driver_impact.get('new_driver_suggestions'):
+                    self._handle_new_driver_suggestions(
+                        driver_impact['new_driver_suggestions'], event)
             except Exception as e:
                 logger.error(f"Failed to process event for drivers: {e}", exc_info=True)
                 continue
@@ -339,6 +358,69 @@ Return as JSON with structure:
             except Exception as e:
                 logger.error(f"Failed to log driver change: {e}", exc_info=True)
 
+    def _handle_new_driver_suggestions(self, suggestions: list, source_event: dict):
+        """
+        Process LLM-suggested new drivers. Dedup against existing drivers and
+        pending discoveries, then insert into vs_discovered_drivers for PM review.
+        """
+        if not self.mysql or not suggestions:
+            return
+
+        for suggestion in suggestions:
+            try:
+                name = suggestion.get('name', '').strip()
+                if not name:
+                    continue
+
+                # Dedup: check if driver already exists in vs_drivers
+                existing = self.mysql.query_one(
+                    """SELECT id FROM vs_drivers
+                       WHERE driver_name = %s AND (valuation_group = %s OR valuation_subgroup = %s)""",
+                    (name, self.valuation_group, self.valuation_subgroup)
+                )
+                if existing:
+                    logger.debug(f"Driver '{name}' already exists in vs_drivers, skipping")
+                    continue
+
+                # Dedup: check if already pending in vs_discovered_drivers
+                pending = self.mysql.query_one(
+                    """SELECT id FROM vs_discovered_drivers
+                       WHERE driver_name = %s AND valuation_group = %s AND status = 'PENDING'""",
+                    (name, self.valuation_group)
+                )
+                if pending:
+                    logger.debug(f"Driver '{name}' already pending in vs_discovered_drivers, skipping")
+                    continue
+
+                # Insert as PENDING discovery
+                level = suggestion.get('level', 'GROUP').upper()
+                if level not in ('MACRO', 'GROUP', 'SUBGROUP'):
+                    level = 'GROUP'
+
+                self.mysql.execute(
+                    """INSERT INTO vs_discovered_drivers
+                       (driver_level, valuation_group, valuation_subgroup, driver_category,
+                        driver_name, suggested_weight, reasoning, source_event_id,
+                        source_headline, confidence)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'MEDIUM')""",
+                    (
+                        level,
+                        self.valuation_group,
+                        self.valuation_subgroup if level == 'SUBGROUP' else None,
+                        suggestion.get('category', 'DEMAND'),
+                        name,
+                        suggestion.get('weight', 0.05),
+                        suggestion.get('reasoning', ''),
+                        source_event.get('id'),
+                        source_event.get('headline', '')[:500],
+                    )
+                )
+                logger.info(f"New driver discovered: {name} ({level}) for "
+                            f"{self.valuation_group}/{self.valuation_subgroup}")
+
+            except Exception as e:
+                logger.error(f"Failed to store driver suggestion '{suggestion}': {e}", exc_info=True)
+
     def calculate_outlook(self) -> dict:
         """
         Aggregate all driver states into group + subgroup outlook scores.
@@ -397,6 +479,121 @@ Return as JSON with structure:
         logger.info(f"Outlook for {self.valuation_subgroup or self.valuation_group}: "
                     f"{label} ({combined_score:+.3f}), "
                     f"growth adj={growth_adj:+.2%}, margin adj={margin_adj:+.2%}")
+
+        return result
+
+    def calculate_company_adjustment(self, company_id: int) -> dict:
+        """
+        Score company-level drivers → adjustment dict.
+
+        Auto-computed drivers (source='AUTO') affect growth + margin (projection period).
+        PM-curated qualitative drivers (source='SEED'/'PM_OVERRIDE') affect terminal ROCE
+        and reinvestment, but ONLY when PM has set a non-NEUTRAL direction.
+
+        Returns:
+            {
+                'growth_adj': float,          # From auto drivers (cap ±3%)
+                'margin_adj': float,          # From auto drivers (cap ±1%)
+                'terminal_roce_adj': float,   # From PM-curated qualitative (cap ±3pp)
+                'terminal_reinv_adj': float,  # From PM-curated qualitative (cap ±5pp)
+                'company_drivers': dict,      # Full driver states for audit
+                'company_score': float,       # Combined auto score
+            }
+        """
+        result = {
+            'growth_adj': 0.0,
+            'margin_adj': 0.0,
+            'terminal_roce_adj': 0.0,
+            'terminal_reinv_adj': 0.0,
+            'company_drivers': {},
+            'company_score': 0.0,
+        }
+
+        if not self.mysql:
+            logger.warning("No MySQL client — cannot load company drivers")
+            return result
+
+        try:
+            company_drivers = self.mysql.query(
+                """SELECT * FROM vs_drivers
+                   WHERE driver_level = 'COMPANY' AND company_id = %s
+                     AND is_active = 1""",
+                (company_id,)
+            )
+        except Exception as e:
+            logger.error(f"Failed to load company drivers for {company_id}: {e}", exc_info=True)
+            return result
+
+        if not company_drivers:
+            logger.debug(f"No company drivers found for company_id={company_id}")
+            return result
+
+        # Parse and split into auto vs qualitative
+        auto_states = {}
+        qual_states = {}
+        all_states = {}
+
+        for d in company_drivers:
+            parsed = self._parse_driver(d)
+            key = f"COMPANY_{d['driver_name']}"
+            all_states[key] = parsed
+
+            if parsed['source'] == 'AUTO':
+                auto_states[key] = parsed
+            else:
+                # SEED or PM_OVERRIDE — qualitative drivers
+                qual_states[key] = parsed
+
+        result['company_drivers'] = all_states
+
+        # --- Auto drivers → growth + margin adjustment ---
+        auto_score = self._calculate_level_score(auto_states)
+        result['company_score'] = round(auto_score, 4)
+
+        # Same scaling as group/subgroup: score * 3% for growth, score * 1% for margin
+        growth_adj = auto_score * 0.03
+        margin_adj = auto_score * 0.01
+
+        # Cap at ±3% growth, ±1% margin
+        result['growth_adj'] = round(max(-0.03, min(0.03, growth_adj)), 4)
+        result['margin_adj'] = round(max(-0.01, min(0.01, margin_adj)), 4)
+
+        # --- Qualitative drivers → terminal ROCE + reinvestment ---
+        # Only if PM has set non-NEUTRAL direction
+        roce_adj = 0.0
+        reinv_adj = 0.0
+
+        for key, driver in qual_states.items():
+            direction = driver.get('impact_direction', 'NEUTRAL')
+            if direction == 'NEUTRAL':
+                continue  # PM hasn't set a view — skip
+
+            weight = driver.get('weight', 0)
+            if weight <= 0:
+                continue
+
+            # Score: +1 for POSITIVE, -1 for NEGATIVE
+            score = 1.0 if direction == 'POSITIVE' else -1.0
+
+            # Each qualitative driver adjusts terminal ROCE proportionally to its weight
+            # Normalized: weight of 0.08 with POSITIVE → +1.5pp ROCE adj (0.08 * 18.75)
+            # Scaling: max single driver contribution = ~2pp ROCE, ~3pp reinvestment
+            roce_contrib = score * weight * 18.75  # ±1.5pp per 0.08 weight
+            reinv_contrib = -score * weight * 25.0  # Opposite: POSITIVE → lower reinvestment (more efficient)
+
+            roce_adj += roce_contrib
+            reinv_adj += reinv_contrib
+
+        # Cap at ±3pp ROCE, ±5pp reinvestment
+        result['terminal_roce_adj'] = round(max(-0.03, min(0.03, roce_adj / 100)), 4)
+        result['terminal_reinv_adj'] = round(max(-0.05, min(0.05, reinv_adj / 100)), 4)
+
+        logger.info(f"Company {company_id} adjustment: score={auto_score:+.3f}, "
+                    f"growth_adj={result['growth_adj']:+.2%}, "
+                    f"margin_adj={result['margin_adj']:+.2%}, "
+                    f"terminal_roce_adj={result['terminal_roce_adj']:+.2%}, "
+                    f"terminal_reinv_adj={result['terminal_reinv_adj']:+.2%}, "
+                    f"auto_drivers={len(auto_states)}, qual_drivers={len(qual_states)}")
 
         return result
 
@@ -499,6 +696,141 @@ Return as JSON with structure:
     def get_subgroup_drivers(self) -> dict:
         """Get current SUBGROUP-level driver states."""
         return self._subgroup_driver_states.copy()
+
+    def detect_trend_developments(self) -> list:
+        """
+        Track rolling 30/60/90-day driver trajectories for this group.
+        Flag persistent trends (>60 days) and reversals.
+
+        Returns list of trend signals with metadata, logged to vs_driver_changelog.
+        """
+        if not self.mysql:
+            return []
+
+        signals = []
+
+        try:
+            # Get driver changes for this group over last 90 days
+            changes = self.mysql.query(
+                """SELECT driver_name, new_value, old_value, change_timestamp,
+                          driver_level, driver_category
+                   FROM vs_driver_changelog
+                   WHERE (valuation_group = %s OR sector = %s)
+                     AND change_timestamp >= DATE_SUB(NOW(), INTERVAL 90 DAY)
+                   ORDER BY driver_name, change_timestamp""",
+                (self.valuation_group, self.csv_group_name)
+            )
+
+            if not changes:
+                return signals
+
+            # Group changes by driver_name
+            from collections import defaultdict
+            driver_changes = defaultdict(list)
+            for c in changes:
+                driver_changes[c['driver_name']].append(c)
+
+            for driver_name, history in driver_changes.items():
+                if len(history) < 2:
+                    continue
+
+                # Determine direction of each change
+                directions = []
+                for h in history:
+                    old_v = h.get('old_value', '')
+                    new_v = h.get('new_value', '')
+                    try:
+                        old_num = float(str(old_v).replace('%', '').replace('(idx)', '').strip())
+                        new_num = float(str(new_v).replace('%', '').replace('(idx)', '').strip())
+                        if new_num > old_num:
+                            directions.append('UP')
+                        elif new_num < old_num:
+                            directions.append('DOWN')
+                        else:
+                            directions.append('STABLE')
+                    except (ValueError, TypeError):
+                        # Non-numeric values — compare as strings
+                        if new_v != old_v:
+                            directions.append('CHANGED')
+
+                # Check for persistent trend (all in same direction for 3+ changes)
+                if len(directions) >= 3:
+                    up_count = directions.count('UP')
+                    down_count = directions.count('DOWN')
+                    total = len(directions)
+
+                    if up_count >= total * 0.7:
+                        signal = {
+                            'driver_name': driver_name,
+                            'trend_type': 'PERSISTENT_UP',
+                            'duration_changes': total,
+                            'first_change': str(history[0]['change_timestamp']),
+                            'last_change': str(history[-1]['change_timestamp']),
+                            'valuation_group': self.valuation_group,
+                        }
+                        signals.append(signal)
+                    elif down_count >= total * 0.7:
+                        signal = {
+                            'driver_name': driver_name,
+                            'trend_type': 'PERSISTENT_DOWN',
+                            'duration_changes': total,
+                            'first_change': str(history[0]['change_timestamp']),
+                            'last_change': str(history[-1]['change_timestamp']),
+                            'valuation_group': self.valuation_group,
+                        }
+                        signals.append(signal)
+
+                # Check for reversal (was trending one way, now reversed)
+                if len(directions) >= 4:
+                    recent_3 = directions[-3:]
+                    older = directions[:-3]
+                    recent_up = recent_3.count('UP')
+                    recent_down = recent_3.count('DOWN')
+                    older_up = older.count('UP')
+                    older_down = older.count('DOWN')
+
+                    if older_up > older_down and recent_down > recent_up:
+                        signal = {
+                            'driver_name': driver_name,
+                            'trend_type': 'REVERSAL_DOWN',
+                            'duration_changes': len(directions),
+                            'valuation_group': self.valuation_group,
+                        }
+                        signals.append(signal)
+                    elif older_down > older_up and recent_up > recent_down:
+                        signal = {
+                            'driver_name': driver_name,
+                            'trend_type': 'REVERSAL_UP',
+                            'duration_changes': len(directions),
+                            'valuation_group': self.valuation_group,
+                        }
+                        signals.append(signal)
+
+            # Log detected trends to changelog
+            for signal in signals:
+                try:
+                    self.mysql.execute(
+                        """INSERT INTO vs_driver_changelog
+                           (driver_level, driver_name, sector, new_value,
+                            change_reason, triggered_by)
+                           VALUES ('GROUP', %s, %s, %s, %s, 'TREND_DETECTION')""",
+                        (
+                            signal['driver_name'],
+                            self.valuation_group,
+                            signal['trend_type'],
+                            f"Trend: {signal['trend_type']} over {signal['duration_changes']} changes",
+                        )
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to log trend signal: {e}")
+
+            if signals:
+                logger.info(f"Detected {len(signals)} trend developments for {self.valuation_group}")
+
+        except Exception as e:
+            logger.error(f"Trend detection failed for {self.valuation_group}: {e}", exc_info=True)
+
+        return signals
 
     def _is_relevant(self, event: dict) -> bool:
         """Check if a news event is relevant to this group/subgroup."""

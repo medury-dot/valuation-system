@@ -109,6 +109,7 @@ class FCFFValuation:
         """
         projections = []
         revenue = inputs.base_revenue
+        cumulative_margin_change = 0.0
 
         for i in range(self.projection_years):
             growth = inputs.revenue_growth_rates[i] if i < len(inputs.revenue_growth_rates) else inputs.revenue_growth_rates[-1]
@@ -116,8 +117,14 @@ class FCFFValuation:
             prior_revenue = revenue
             revenue = revenue * (1 + growth)
 
-            # Margins
-            ebitda_margin = inputs.ebitda_margin + (i * inputs.margin_improvement)
+            # Margins — dampened improvement: full step in Y1, decaying to 0 by Y5
+            # Prevents unrealistic linear margin expansion (e.g., +8pp over 5 years)
+            damping = max(0, 1 - i / 4)  # 1.0, 0.75, 0.50, 0.25, 0.0
+            margin_step = inputs.margin_improvement * damping
+            cumulative_margin_change += margin_step
+            # Cap total margin movement at ±3pp from base
+            cumulative_margin_change = max(-0.03, min(0.03, cumulative_margin_change))
+            ebitda_margin = inputs.ebitda_margin + cumulative_margin_change
             ebitda_margin = max(0.05, min(ebitda_margin, 0.50))  # Sanity bounds
 
             ebitda = revenue * ebitda_margin
@@ -154,15 +161,20 @@ class FCFFValuation:
 
     def calculate_terminal_value(self, final_fcff: float, wacc: float,
                                   terminal_roce: float,
-                                  terminal_reinvestment: float) -> dict:
+                                  terminal_reinvestment: float,
+                                  last_revenue: float = 0,
+                                  ebitda_margin: float = 0,
+                                  dep_to_sales: float = 0,
+                                  tax_rate: float = 0.25) -> dict:
         """
         Terminal Value using ROCE-linked growth (Damodaran approach).
 
         g = Reinvestment Rate × ROCE
-        Terminal Value = FCFF_n+1 / (WACC - g)
+        Terminal FCFF = Terminal NOPAT × (1 - Reinvestment Rate)
+        Terminal Value = Terminal FCFF / (WACC - g)
 
-        Links growth to the firm's ability to generate returns
-        on reinvested capital, avoiding arbitrary growth assumptions.
+        Uses NOPAT-based terminal FCFF (not simple FCFF×(1+g)) for consistency
+        with the implied reinvestment rate in the terminal growth assumption.
         """
         terminal_growth = terminal_reinvestment * terminal_roce
         # Cap at reasonable level
@@ -174,16 +186,48 @@ class FCFFValuation:
                            f"adjusting terminal growth down")
             terminal_growth = wacc - 0.02
 
-        terminal_fcff = final_fcff * (1 + terminal_growth)
+        # OLD method: simple FCFF growth (kept for comparison logging)
+        old_terminal_fcff = final_fcff * (1 + terminal_growth)
+
+        # NEW method: NOPAT-based terminal FCFF
+        # This ensures terminal FCFF is consistent with the terminal reinvestment rate
+        if last_revenue > 0 and ebitda_margin > 0:
+            terminal_revenue = last_revenue * (1 + terminal_growth)
+            terminal_ebitda = terminal_revenue * ebitda_margin
+            terminal_dep = terminal_revenue * dep_to_sales
+            terminal_nopat = (terminal_ebitda - terminal_dep) * (1 - tax_rate)
+            terminal_fcff = terminal_nopat * (1 - terminal_reinvestment)
+
+            logger.debug(f"Terminal FCFF (NOPAT-based): Rev={terminal_revenue:,.2f}, "
+                          f"EBITDA={terminal_ebitda:,.2f}, Dep={terminal_dep:,.2f}, "
+                          f"NOPAT={terminal_nopat:,.2f}, FCFF={terminal_fcff:,.2f}")
+            logger.debug(f"Terminal FCFF comparison: NOPAT-based={terminal_fcff:,.2f} vs "
+                          f"old method (FCFF*(1+g))={old_terminal_fcff:,.2f}, "
+                          f"diff={((terminal_fcff/old_terminal_fcff)-1)*100:+.1f}%")
+        else:
+            # Fallback: use old method if revenue/margin not available
+            terminal_fcff = old_terminal_fcff
+            terminal_revenue = 0
+            terminal_ebitda = 0
+            terminal_dep = 0
+            terminal_nopat = 0
+            logger.warning("Terminal FCFF: using old method (FCFF*(1+g)) — "
+                           "last_revenue or ebitda_margin not provided")
+
         terminal_value = terminal_fcff / (wacc - terminal_growth)
 
         logger.debug(f"Terminal value: g={terminal_growth:.4f}, "
-                      f"FCFF_n+1={terminal_fcff:.2f}, TV={terminal_value:.2f}")
+                      f"FCFF_n+1={terminal_fcff:,.2f}, TV={terminal_value:,.2f}")
 
         return {
             'terminal_growth': terminal_growth,
             'terminal_fcff': terminal_fcff,
-            'terminal_value': terminal_value
+            'terminal_value': terminal_value,
+            'terminal_revenue': terminal_revenue if last_revenue > 0 else 0,
+            'terminal_ebitda': terminal_ebitda if last_revenue > 0 else 0,
+            'terminal_dep': terminal_dep if last_revenue > 0 else 0,
+            'terminal_nopat': terminal_nopat if last_revenue > 0 else 0,
+            'old_method_fcff': old_terminal_fcff,
         }
 
     def calculate_intrinsic_value(self, inputs: DCFInputs) -> dict:
@@ -205,12 +249,17 @@ class FCFFValuation:
             for proj in projections
         )
 
-        # Terminal value
+        # Terminal value — use NOPAT-based FCFF for consistency with reinvestment rate
+        last_proj = projections[-1]
         tv_result = self.calculate_terminal_value(
-            projections[-1]['fcff'],
+            last_proj['fcff'],
             wacc,
             inputs.terminal_roce,
-            inputs.terminal_reinvestment
+            inputs.terminal_reinvestment,
+            last_revenue=last_proj['revenue'],
+            ebitda_margin=last_proj['ebitda_margin'],
+            dep_to_sales=inputs.depreciation_to_sales,
+            tax_rate=inputs.tax_rate,
         )
         pv_terminal = tv_result['terminal_value'] / ((1 + wacc) ** len(projections))
 
@@ -249,6 +298,12 @@ class FCFFValuation:
             # Terminal value details
             'terminal_growth': tv_result['terminal_growth'],
             'terminal_value': round(tv_result['terminal_value'], 2),
+            'terminal_revenue': tv_result.get('terminal_revenue', 0),
+            'terminal_ebitda': tv_result.get('terminal_ebitda', 0),
+            'terminal_dep': tv_result.get('terminal_dep', 0),
+            'terminal_nopat': tv_result.get('terminal_nopat', 0),
+            'terminal_fcff_nopat': tv_result.get('terminal_fcff', 0),
+            'terminal_fcff_old_method': tv_result.get('old_method_fcff', 0),
 
             # WACC components
             'wacc': round(wacc, 4),
@@ -310,7 +365,12 @@ class FCFFValuation:
                 )
 
                 if adj_wacc > adj_growth:
-                    terminal_fcff = projections[-1]['fcff'] * (1 + adj_growth)
+                    last_p = projections[-1]
+                    term_rev = last_p['revenue'] * (1 + adj_growth)
+                    term_ebitda = term_rev * last_p['ebitda_margin']
+                    term_dep = term_rev * modified.depreciation_to_sales
+                    term_nopat = (term_ebitda - term_dep) * (1 - modified.tax_rate)
+                    terminal_fcff = term_nopat * (1 - modified.terminal_reinvestment)
                     tv = terminal_fcff / (adj_wacc - adj_growth)
                     pv_tv = tv / ((1 + adj_wacc) ** len(projections))
                     firm_val = pv_fcff + pv_tv

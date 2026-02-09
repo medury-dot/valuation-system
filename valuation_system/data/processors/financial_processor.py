@@ -181,7 +181,8 @@ class FinancialProcessor:
 
     def build_dcf_inputs(self, company_name: str, sector: str,
                           sector_config: dict = None,
-                          overrides: dict = None) -> dict:
+                          overrides: dict = None,
+                          valuation_subgroup: str = None) -> dict:
         """
         Build complete DCF inputs from raw data.
 
@@ -190,6 +191,7 @@ class FinancialProcessor:
             sector: CSV sector name (e.g. 'Chemicals')
             sector_config: Sector config from sectors.yaml
             overrides: Manual overrides for any parameter
+            valuation_subgroup: Subgroup for Indian beta lookup (e.g. 'INDUSTRIALS_DEFENSE')
 
         Returns:
             Dict compatible with DCFInputs dataclass.
@@ -199,13 +201,15 @@ class FinancialProcessor:
             raise ValueError(f"No financial data for {company_name}")
 
         nse_symbol = financials.get('nse_symbol', '')
-        price_data = self.prices.get_latest_data(nse_symbol)
+        bse_code = financials.get('bse_code')
+        price_data = self.prices.get_latest_data(nse_symbol, bse_code=bse_code, company_name=company_name)
 
-        # Get Damodaran parameters
+        # Get WACC parameters — uses Indian subgroup beta when available
         de_ratio = self._calculate_de_ratio(financials)
         tax_rate = self._estimate_effective_tax_rate(financials)
         damodaran_params = self.damodaran.get_all_params(
-            sector, company_de_ratio=de_ratio, company_tax_rate=tax_rate
+            sector, company_de_ratio=de_ratio, company_tax_rate=tax_rate,
+            valuation_subgroup=valuation_subgroup
         )
 
         # Revenue base — prefer TTM from quarterly, fall back to annual
@@ -229,7 +233,8 @@ class FinancialProcessor:
 
         # Growth rate trajectory (decay towards terminal)
         growth_rates = self._build_growth_trajectory(
-            revenue_cagr_5y, revenue_cagr_3y, sector_config
+            revenue_cagr_5y, revenue_cagr_3y, sector_config,
+            sales_annual=sales_annual
         )
 
         # Margin analysis (uses annual data)
@@ -339,7 +344,7 @@ class FinancialProcessor:
         logger.info(f"  Tax rate:            {dcf_inputs['tax_rate']:.2%}")
         logger.info(f"  Risk-free rate:      {dcf_inputs['risk_free_rate']:.4f}")
         logger.info(f"  Equity Risk Premium: {dcf_inputs['equity_risk_premium']:.4f}")
-        logger.info(f"  Beta (levered):      {dcf_inputs['beta']:.4f}")
+        logger.info(f"  Beta (levered):      {dcf_inputs['beta']:.4f}  [{damodaran_params.get('beta_source', 'unknown')}]")
         ke = dcf_inputs['risk_free_rate'] + dcf_inputs['beta'] * dcf_inputs['equity_risk_premium']
         logger.info(f"  Cost of Equity (Ke): {ke:.4f}")
         logger.info(f"  Cost of Debt (pre):  {dcf_inputs['cost_of_debt']:.4f}")
@@ -373,7 +378,8 @@ class FinancialProcessor:
         sales_annual = financials.get('sales_annual', financials.get('sales', {}))
 
         nse_symbol = financials.get('nse_symbol', '')
-        price_data = self.prices.get_latest_data(nse_symbol)
+        bse_code = financials.get('bse_code')
+        price_data = self.prices.get_latest_data(nse_symbol, bse_code=bse_code, company_name=company_name)
         shares = self._estimate_shares_outstanding(financials, price_data)
 
         return {
@@ -397,7 +403,8 @@ class FinancialProcessor:
 
     def _build_growth_trajectory(self, cagr_5y: Optional[float],
                                   cagr_3y: Optional[float],
-                                  sector_config: dict = None) -> list:
+                                  sector_config: dict = None,
+                                  sales_annual: dict = None) -> list:
         """
         Build 5-year growth trajectory that decays toward terminal.
 
@@ -405,9 +412,28 @@ class FinancialProcessor:
         - Year 1: Near-term growth (average of 3Y and 5Y CAGR)
         - Years 2-4: Gradual decay
         - Year 5: Approaches terminal growth zone (5-7%)
+        - Fallback: If no CAGR available, use YoY from most recent 2 years
         """
         if not cagr_5y and not cagr_3y:
-            logger.warning("No CAGR data, using default 10% growth")
+            # Try YoY from most recent 2 years of actual data
+            if sales_annual and len(sales_annual) >= 2:
+                years = sorted(sales_annual.keys())
+                prev_val = sales_annual[years[-2]]
+                curr_val = sales_annual[years[-1]]
+                if prev_val and prev_val > 0 and curr_val and curr_val > 0:
+                    yoy = (curr_val / prev_val) - 1
+                    # Dampen YoY by 20% (single year can be noisy) and cap
+                    starting_growth = max(0.05, min(yoy * 0.80, 0.30))
+                    terminal_zone = 0.06
+                    rates = []
+                    for i in range(5):
+                        rate = starting_growth - (starting_growth - terminal_zone) * (i / 4)
+                        rates.append(round(max(0.03, rate), 4))
+                    logger.info(f"  Growth trajectory from YoY: {[f'{r:.1%}' for r in rates]} "
+                                f"(raw YoY={yoy:.1%}, dampened start={starting_growth:.1%})")
+                    return rates
+
+            logger.warning("No CAGR or YoY data, using default 10% growth")
             return [0.10, 0.09, 0.08, 0.07, 0.06]
 
         near_term = cagr_3y or cagr_5y or 0.10
@@ -513,13 +539,28 @@ class FinancialProcessor:
                 historical_avg = round(np.mean(ratios), 4)
 
                 # HIGH-GROWTH NORMALIZATION: Use maintenance capex, not expansion capex
-                if is_high_growth and historical_avg > 0.15:  # >15% indicates expansion phase
-                    # For specialty chemicals, maintenance capex is typically 5-8%
-                    normalized_capex = 0.065  # 6.5% for chemicals
+                if is_high_growth and historical_avg > 0.12:  # >12% indicates expansion phase
+                    normalized_capex = 0.065  # 6.5% maintenance capex
+                    cagr_str = f"{recent_cagr_3y:.1%}" if recent_cagr_3y is not None else "N/A"
                     logger.info(f"  Capex/Sales: {normalized_capex:.4f} [NORMALIZED for high-growth: "
                                 f"historical {historical_avg:.1%} includes expansion, using maintenance capex. "
-                                f"3Y CAGR: {recent_cagr_3y:.1%}]")
+                                f"3Y CAGR: {cagr_str}]")
                     return normalized_capex
+
+                # TREND-AWARE WEIGHTING: If capex/sales is declining (company exiting
+                # expansion phase), weight recent year heavily instead of simple average.
+                # ratios[0] = most recent year (sorted reverse above)
+                if len(ratios) >= 2 and ratios[0] < ratios[-1] * 0.75:
+                    # Latest is 25%+ lower than oldest → declining capex cycle
+                    if len(ratios) == 3:
+                        weighted = ratios[0] * 0.60 + ratios[1] * 0.25 + ratios[2] * 0.15
+                    else:
+                        weighted = ratios[0] * 0.70 + ratios[1] * 0.30
+                    weighted = round(weighted, 4)
+                    logger.info(f"  Capex/Sales: {weighted:.4f} [ACTUAL: declining trend detected, "
+                                f"latest={ratios[0]:.1%} vs oldest={ratios[-1]:.1%}, "
+                                f"weighted avg. Simple avg was {historical_avg:.1%}]")
+                    return weighted
                 else:
                     logger.info(f"  Capex/Sales: {historical_avg:.4f} [ACTUAL: pur_of_fixed_assets avg {len(ratios)}yr]")
                     return historical_avg
@@ -588,9 +629,38 @@ class FinancialProcessor:
                     logger.debug(f"  Depreciation/Sales {year}: {annual_depr:.1f}/{sales[year]:.1f} "
                                  f"= {ratio:.4f} [ACTUAL: Δ(acc_dep)]")
             if depr_ratios:
-                result = round(np.mean(depr_ratios[-3:]), 4)
-                logger.info(f"  Depreciation/Sales: {result:.4f} [ACTUAL: Δ(acc_dep) avg {len(depr_ratios[-3:])}yr]")
-                return result
+                recent = depr_ratios[-3:]  # last 3 years
+                historical_avg = round(np.mean(recent), 4)
+
+                # SINGLE-YEAR CROSS-CHECK: When only 1yr of acc_dep data, cross-check
+                # with Method 3 (gross_block - net_block) which may have more years.
+                # If Method 3 has more data AND gives a lower ratio, blend 50/50.
+                if len(recent) == 1:
+                    method3_avg = self._dep_sales_from_block_diff(financials, sales)
+                    if method3_avg is not None and method3_avg < historical_avg * 0.85:
+                        blended = round((historical_avg + method3_avg) / 2, 4)
+                        logger.info(f"  Depreciation/Sales: {blended:.4f} [BLENDED: Δ(acc_dep) 1yr={historical_avg:.4f} "
+                                   f"+ block_diff={method3_avg:.4f}, avg of both for stability]")
+                        return blended
+
+                # TREND-AWARE WEIGHTING: If dep/sales is declining (post-expansion,
+                # assets depreciating at lower rate relative to growing sales),
+                # weight recent year heavily.
+                # recent[-1] = most recent year, recent[0] = oldest of the 3
+                if len(recent) >= 2 and recent[-1] < recent[0] * 0.75:
+                    # Latest is 25%+ lower than oldest → declining trend
+                    if len(recent) == 3:
+                        weighted = recent[-1] * 0.60 + recent[-2] * 0.25 + recent[-3] * 0.15
+                    else:
+                        weighted = recent[-1] * 0.70 + recent[-2] * 0.30
+                    weighted = round(weighted, 4)
+                    logger.info(f"  Depreciation/Sales: {weighted:.4f} [ACTUAL: declining trend, "
+                                f"latest={recent[-1]:.1%} vs oldest={recent[0]:.1%}, "
+                                f"weighted avg. Simple avg was {historical_avg:.1%}]")
+                    return weighted
+                else:
+                    logger.info(f"  Depreciation/Sales: {historical_avg:.4f} [ACTUAL: Δ(acc_dep) avg {len(recent)}yr]")
+                    return historical_avg
 
         # Method 2 [ACTUAL]: accumulated_depreciation from acc_dep column (same data, compat key)
         acc_depr = financials.get('accumulated_depreciation', {})
@@ -635,6 +705,37 @@ class FinancialProcessor:
                     return result
 
         logger.warning("  No depreciation data available — falling back to default [DEFAULT=0.04]")
+        return None
+
+    def _dep_sales_from_block_diff(self, financials: dict, sales: dict) -> Optional[float]:
+        """
+        Helper: Calculate dep/sales from gross_block - net_block difference.
+        Returns average ratio or None if insufficient data.
+        """
+        gross_block = financials.get('gross_block', {})
+        net_block = financials.get('net_block', {})
+        if not gross_block or not net_block or len(gross_block) < 2:
+            return None
+
+        acc_depr_derived = {}
+        for year in gross_block:
+            if year in net_block:
+                acc_depr_derived[year] = gross_block[year] - net_block[year]
+
+        if len(acc_depr_derived) < 2:
+            return None
+
+        sorted_years = sorted(acc_depr_derived.keys())
+        depr_ratios = []
+        for i in range(1, len(sorted_years)):
+            year = sorted_years[i]
+            prev = sorted_years[i - 1]
+            annual_depr = acc_depr_derived[year] - acc_depr_derived[prev]
+            if annual_depr > 0 and year in sales and sales[year] > 0:
+                depr_ratios.append(annual_depr / sales[year])
+
+        if depr_ratios:
+            return round(np.mean(depr_ratios[-3:]), 4)
         return None
 
     def _calculate_nwc_to_sales(self, financials: dict) -> Optional[float]:
@@ -705,7 +806,8 @@ class FinancialProcessor:
                         # HIGH-GROWTH NORMALIZATION (only if NWC is very positive)
                         if is_high_growth and ratio > 0.60:
                             normalized_nwc = 0.30
-                            logger.info(f"  ** NORMALIZED to {normalized_nwc:.4f} for high-growth (3Y CAGR: {recent_cagr_3y:.1%})")
+                            cagr_str = f"{recent_cagr_3y:.1%}" if recent_cagr_3y is not None else "N/A"
+                            logger.info(f"  ** NORMALIZED to {normalized_nwc:.4f} for high-growth (3Y CAGR: {cagr_str})")
                             return normalized_nwc
 
                         return round(ratio, 4)
@@ -715,6 +817,26 @@ class FinancialProcessor:
         debtors = financials.get('sundry_debtors', {})
         tot_liab = financials.get('tot_liab', {})
         lt_borrow = financials.get('LT_borrow', {})
+
+        # If tot_liab not available, derive from balance sheet identity:
+        # Total Liabilities = Total Assets - Networth
+        if not tot_liab:
+            total_assets = financials.get('total_assets', financials.get('totalassets', {}))
+            networth = financials.get('networth', {})
+            if total_assets and networth:
+                derived_tot_liab = {}
+                for year in total_assets:
+                    if year in networth and total_assets[year] and networth[year]:
+                        derived_val = total_assets[year] - networth[year]
+                        # Validate: tot_liab must be positive and totalassets > networth
+                        if derived_val > 0 and total_assets[year] > networth[year]:
+                            derived_tot_liab[year] = derived_val
+                        else:
+                            logger.debug(f"    Skipping year {year}: totalassets={total_assets[year]:.1f} "
+                                        f"< networth={networth[year]:.1f} (data error)")
+                if derived_tot_liab:
+                    tot_liab = derived_tot_liab
+                    logger.info(f"    Derived tot_liab from totalassets - networth ({len(derived_tot_liab)} years)")
 
         if not sales:
             pass  # Will fall through to default
@@ -740,15 +862,37 @@ class FinancialProcessor:
 
                     # HIGH-GROWTH NORMALIZATION: Cap NWC at reasonable industry levels
                     if is_high_growth and historical_avg > 0.60:  # >60% indicates growth phase buildup
-                        # For specialty chemicals, steady-state NWC is typically 25-35%
-                        normalized_nwc = 0.30  # 30% for chemicals
+                        normalized_nwc = 0.30
+                        cagr_str = f"{recent_cagr_3y:.1%}" if recent_cagr_3y is not None else "N/A"
                         logger.info(f"  NWC/Sales: {normalized_nwc:.4f} [NORMALIZED for high-growth: "
                                     f"historical {historical_avg:.1%} includes growth-phase buildup, "
-                                    f"using steady-state norm. 3Y CAGR: {recent_cagr_3y:.1%}]")
+                                    f"using steady-state norm. 3Y CAGR: {cagr_str}]")
                         return normalized_nwc
                     else:
                         logger.info(f"  NWC/Sales: {historical_avg:.4f} [ACTUAL: (inv+debtors-ALL_CL)/sales avg {len(ratios)}yr]")
                         return historical_avg
+
+            # Balance sheet years don't overlap with sales_annual — use latest BS data with TTM sales
+            bs_years = set(inventories.keys()) & set(debtors.keys()) & set(tot_liab.keys())
+            sales_qtr = financials.get('sales_quarterly', {})
+            if bs_years and sales_qtr:
+                qtr_keys = sorted(sales_qtr.keys(), reverse=True)
+                if len(qtr_keys) >= 4:
+                    ttm_sales = sum(sales_qtr[qtr_keys[i]] for i in range(4))
+                    latest_bs_year = max(bs_years)
+                    current_liab = tot_liab.get(latest_bs_year, 0) - lt_borrow.get(latest_bs_year, 0)
+                    nwc = (inventories.get(latest_bs_year, 0) + debtors.get(latest_bs_year, 0) - current_liab)
+                    if ttm_sales > 0:
+                        ratio = round(nwc / ttm_sales, 4)
+                        logger.info(f"  NWC/Sales: {ratio:.4f} [DERIVED: BS year {latest_bs_year} with TTM sales]")
+                        logger.info(f"    Operating CA: Rs {inventories.get(latest_bs_year, 0) + debtors.get(latest_bs_year, 0):,.0f} Cr")
+                        logger.info(f"    Current Liab: Rs {current_liab:,.0f} Cr "
+                                   f"(Total={tot_liab.get(latest_bs_year, 0):.0f} - LT={lt_borrow.get(latest_bs_year, 0):.0f})")
+                        logger.info(f"    Net WC:       Rs {nwc:,.0f} Cr")
+                        if is_high_growth and ratio > 0.60:
+                            logger.info(f"  ** NORMALIZED to 0.30 for high-growth")
+                            return 0.30
+                        return ratio
 
         # Method 1B [FALLBACK]: If tot_liab not available, use trade payables only (old method)
         payables = financials.get('trade_payables', {})
@@ -773,9 +917,10 @@ class FinancialProcessor:
                     if is_high_growth and historical_avg > 0.60:  # >60% indicates growth phase buildup
                         # For specialty chemicals, steady-state NWC is typically 25-35%
                         normalized_nwc = 0.30  # 30% for chemicals
+                        cagr_str = f"{recent_cagr_3y:.1%}" if recent_cagr_3y is not None else "N/A"
                         logger.warning(f"  NWC/Sales: {normalized_nwc:.4f} [NORMALIZED for high-growth: "
                                        f"historical {historical_avg:.1%} using OLD METHOD (payables only), "
-                                       f"using steady-state norm. 3Y CAGR: {recent_cagr_3y:.1%}]")
+                                       f"using steady-state norm. 3Y CAGR: {cagr_str}]")
                         return normalized_nwc
                     else:
                         logger.warning(f"  NWC/Sales: {historical_avg:.4f} [ACTUAL: (inv+debtors-payables)/sales avg {len(ratios)}yr - OLD METHOD, may overstate NWC]")
@@ -836,9 +981,21 @@ class FinancialProcessor:
                         logger.debug(f"  Tax rate {year}: 1 - {pat[year]:.1f}/{pbt_yearly[year]:.1f} "
                                      f"= {tax:.4f} [ACTUAL: pbt_excp_yearly]")
             if tax_rates:
-                result = round(np.mean(tax_rates), 4)
-                logger.info(f"  Tax rate: {result:.4f} [ACTUAL: 1 - PAT/pbt_excp avg {len(tax_rates)}yr]")
-                return result
+                method1_result = round(np.mean(tax_rates), 4)
+
+                # Cross-check: If only 1 year of data AND rate seems anomalous (>30%),
+                # also compute via Method 3 (PBIDT - Int - Dep) which may have more years.
+                # If Method 3 gives a substantially different rate (>5pp), blend both.
+                if len(tax_rates) == 1 and method1_result > 0.30:
+                    method3_rate = self._tax_rate_method3(financials, pat)
+                    if method3_rate is not None and abs(method3_rate - method1_result) > 0.05:
+                        blended = round((method1_result + method3_rate) / 2, 4)
+                        logger.info(f"  Tax rate: {blended:.4f} [BLENDED: Method1={method1_result:.4f} (1yr pbt_excp) "
+                                   f"+ Method3={method3_rate:.4f} (PBIDT-Int-Dep), avg of both]")
+                        return blended
+
+                logger.info(f"  Tax rate: {method1_result:.4f} [ACTUAL: 1 - PAT/pbt_excp avg {len(tax_rates)}yr]")
+                return method1_result
 
         # Method 2 [DERIVED]: PBT from annualized quarterly pbt_excp
         pbt_qtr = financials.get('pbt_excl_exceptional', {})
@@ -855,44 +1012,54 @@ class FinancialProcessor:
                 return result
 
         # Method 3 [DERIVED]: Approximate PBT from PBIDT - Interest - Depreciation
-        pbidt = financials.get('pbidt_annual', financials.get('pbidt', {}))
-        if pbidt and pat:
-            interest = financials.get('interest_yearly', financials.get('interest_expense', {}))
-            acc_dep = financials.get('acc_dep_yearly', {})
-            gross_block = financials.get('gross_block', {})
-            net_block = financials.get('net_block', {})
-
-            tax_rates = []
-            for year in sorted(pat.keys(), reverse=True)[:3]:
-                if year not in pbidt or not pbidt[year]:
-                    continue
-                int_exp = interest.get(year, 0) or 0
-                # Annual depreciation: prefer actual acc_dep Δ, else block diff
-                depr = 0
-                if acc_dep and year in acc_dep:
-                    prev_year = year - 1
-                    if prev_year in acc_dep:
-                        depr = max(0, acc_dep[year] - acc_dep[prev_year])
-                elif gross_block and net_block and year in gross_block and year in net_block:
-                    acc_depr_curr = gross_block[year] - net_block[year]
-                    prev_year = year - 1
-                    if prev_year in gross_block and prev_year in net_block:
-                        acc_depr_prev = gross_block[prev_year] - net_block[prev_year]
-                        depr = max(0, acc_depr_curr - acc_depr_prev)
-
-                pbt_est = pbidt[year] - int_exp - depr
-                if pbt_est > 0 and pat[year]:
-                    tax = 1 - (pat[year] / pbt_est)
-                    if 0 < tax < 0.50:
-                        tax_rates.append(tax)
-
-            if tax_rates:
-                result = round(np.mean(tax_rates), 4)
-                logger.info(f"  Tax rate: {result:.4f} [DERIVED: PBIDT - Int - Depr]")
-                return result
+        method3_rate = self._tax_rate_method3(financials, pat)
+        if method3_rate is not None:
+            logger.info(f"  Tax rate: {method3_rate:.4f} [DERIVED: PBIDT - Int - Depr]")
+            return method3_rate
 
         logger.info(f"  Tax rate: 0.2500 [DEFAULT]")
         return 0.25
+
+    def _tax_rate_method3(self, financials: dict, pat: dict) -> Optional[float]:
+        """
+        Estimate tax rate from PBIDT - Interest - Depreciation.
+        Returns average tax rate or None if insufficient data.
+        """
+        pbidt = financials.get('pbidt_annual', financials.get('pbidt', {}))
+        if not pbidt or not pat:
+            return None
+
+        interest = financials.get('interest_yearly', financials.get('interest_expense', {}))
+        acc_dep = financials.get('acc_dep_yearly', {})
+        gross_block = financials.get('gross_block', {})
+        net_block = financials.get('net_block', {})
+
+        tax_rates = []
+        for year in sorted(pat.keys(), reverse=True)[:3]:
+            if year not in pbidt or not pbidt[year]:
+                continue
+            int_exp = interest.get(year, 0) or 0
+            depr = 0
+            if acc_dep and year in acc_dep:
+                prev_year = year - 1
+                if prev_year in acc_dep:
+                    depr = max(0, acc_dep[year] - acc_dep[prev_year])
+            elif gross_block and net_block and year in gross_block and year in net_block:
+                acc_depr_curr = gross_block[year] - net_block[year]
+                prev_year = year - 1
+                if prev_year in gross_block and prev_year in net_block:
+                    acc_depr_prev = gross_block[prev_year] - net_block[prev_year]
+                    depr = max(0, acc_depr_curr - acc_depr_prev)
+
+            pbt_est = pbidt[year] - int_exp - depr
+            if pbt_est > 0 and pat[year]:
+                tax = 1 - (pat[year] / pbt_est)
+                if 0 < tax < 0.50:
+                    tax_rates.append(tax)
+
+        if tax_rates:
+            return round(np.mean(tax_rates), 4)
+        return None
 
     def _estimate_cost_of_debt(self, financials: dict) -> float:
         """
@@ -988,28 +1155,38 @@ class FinancialProcessor:
                             f"[ACTUAL: h{latest_key[1]}_{latest_key[0]}_cash_and_bank]")
                 return round(latest_cash, 2)
 
-        # Method 2 [DERIVED]: Conservative estimate from balance sheet
-        total_assets = self.core.get_latest_value(financials.get('total_assets', {}))
+        # Method 2 [DERIVED]: Balance sheet residual using actual CSV columns only.
+        # From balance sheet identity (Assets = Liabilities + Equity):
+        #   Cash + Net Block + CWIP + Inventories + Debtors + OtherAssets
+        #     = Networth + Debt + Trade Payables + OtherLiabilities
+        # Assuming OtherLiabilities ≈ OtherAssets (provisions, advances, etc.):
+        #   Cash ≈ (Networth + Debt + Trade Payables) - (Net Block + CWIP + Inventories + Debtors)
+        # All values from actual core CSV columns — no arbitrary multipliers.
+        networth = self.core.get_latest_value(financials.get('networth', {}))
+        debt_val = self.core.get_latest_value(financials.get('debt', {}))
+        trade_pay = self.core.get_latest_value(financials.get('trade_payables', {}))
         net_block = self.core.get_latest_value(financials.get('net_block', {}))
         cwip_val = self.core.get_latest_value(financials.get('cwip', {}))
-        networth = self.core.get_latest_value(financials.get('networth', {}))
+        inv_val = self.core.get_latest_value(financials.get('inventories', {}))
+        debtors_val = self.core.get_latest_value(financials.get('sundry_debtors', {}))
 
-        if total_assets and net_block:
-            fixed_assets = (net_block or 0) + (cwip_val or 0)
-            non_fixed = total_assets - fixed_assets
+        if networth and net_block:
+            liab_side = (networth or 0) + (debt_val or 0) + (trade_pay or 0)
+            asset_side = (net_block or 0) + (cwip_val or 0) + (inv_val or 0) + (debtors_val or 0)
+            cash_residual = liab_side - asset_side
 
-            cash_est = non_fixed * 0.35
+            logger.info(f"  Cash residual calc: (NW={networth:,.0f} + Debt={debt_val or 0:,.0f} "
+                        f"+ TP={trade_pay or 0:,.0f}) - (NB={net_block:,.0f} + CWIP={cwip_val or 0:,.0f} "
+                        f"+ Inv={inv_val or 0:,.0f} + Dr={debtors_val or 0:,.0f}) = {cash_residual:,.0f}")
 
-            if networth and networth > 0:
-                cash_cap = networth * 0.50
-                cash_est = min(cash_est, cash_cap)
+            if cash_residual > 0:
+                logger.info(f"  Cash & equivalents: Rs {cash_residual:,.1f} Cr "
+                            f"[DERIVED: balance sheet residual from actual CSV columns]")
+                return round(cash_residual, 2)
+            else:
+                logger.info(f"  Cash residual is {cash_residual:,.0f} (negative/zero), setting cash=0")
 
-            if cash_est > 0:
-                logger.info(f"  Cash & equivalents: Rs {cash_est:,.1f} Cr "
-                            f"[DERIVED: 35% of non-fixed assets={non_fixed:,.1f}]")
-                return round(cash_est, 2)
-
-        logger.warning("  Cash & equivalents: Rs 0.0 Cr [DEFAULT: no data]")
+        logger.warning("  Cash & equivalents: Rs 0.0 Cr [DEFAULT: no cash data in core CSV]")
         return 0.0
 
     def _estimate_shares_outstanding(self, financials: dict,
@@ -1099,11 +1276,12 @@ class FinancialProcessor:
 
                     # HIGH-GROWTH ADJUSTMENT: Use sector default for terminal, not current high capex
                     if is_high_growth and historical_reinv > 0.50:  # >50% indicates expansion phase
-                        sector_default = terminal_assumptions.get('reinvestment_rate', 0.30)
+                        sector_default = terminal_assumptions.get('reinvestment_rate') or 0.30
+                        cagr_str = f"{recent_cagr_3y:.1%}" if recent_cagr_3y is not None else "N/A"
                         logger.info(f"  Terminal reinvestment: {sector_default:.4f} "
                                     f"[NORMALIZED for high-growth: historical {historical_reinv:.1%} "
                                     f"includes expansion capex, using sector steady-state. "
-                                    f"3Y CAGR: {recent_cagr_3y:.1%}]")
+                                    f"3Y CAGR: {cagr_str}]")
                         return sector_default
                     else:
                         result = round(max(0.10, min(historical_reinv, 0.60)), 4)

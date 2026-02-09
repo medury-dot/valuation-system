@@ -2,14 +2,13 @@
 Google Sheets Unified Client for 1000+ Companies
 Redesigned for scalability - 6 unified sheets instead of per-company sheets
 
-Sheet Structure (1.5M cells total, 15% of 10M limit):
+Sheet Structure (6 tabs):
 1. Macro Drivers (10 rows)
 2. Valuation Group Drivers (221 rows for 13 groups)
 3. Valuation Subgroup Drivers (1,276 rows for 52 subgroups)
 4. Company Drivers (22,001 rows for 1000 companies × 22 drivers)
-5. Valuation History (30,001 rows, 30-day rolling window)
-6. Driver History (60,001 rows, change audit trail)
-7. Event Log (30,001 rows, material news)
+5. Recent Activity (valuations log)
+6. Active Companies (company master list)
 """
 
 import os
@@ -334,20 +333,30 @@ class GSheetUnifiedClient:
             ws = self._get_sheet('company')
             rows = ws.get_all_records()
             for row in rows:
-                company_id = row.get('company_id')
-                if not row.get('driver_name') or not company_id:
+                company_id = row.get('company_id') or row.get('Company ID')
+                driver_name = row.get('driver_name') or row.get('Driver Name')
+                if not driver_name or not company_id:
                     continue
+                # Handle column name variations from sync_drivers_to_gsheet.py
+                direction = row.get('Direction') or row.get('impact') or row.get('trend', '')
+                trend = row.get('Trend') or row.get('trend', '')
+                is_active_raw = row.get('Is Active') or row.get('is_active', 'TRUE')
+                is_active = 1 if str(is_active_raw).upper() in ('TRUE', '1', 'YES') else 0
+                source = row.get('Source') or row.get('source', 'SEED')
+
                 self._upsert_driver(mysql_client, {
                     'driver_level': 'COMPANY',
-                    'driver_category': row.get('category', ''),
-                    'driver_name': row.get('driver_name'),
+                    'driver_category': row.get('Category') or row.get('category', ''),
+                    'driver_name': driver_name,
                     'company_id': company_id,
-                    'valuation_group': row.get('valuation_group'),
-                    'valuation_subgroup': row.get('valuation_subgroup'),
-                    'current_value': str(row.get('current', '')),
-                    'weight': self._parse_float(row.get('weight')),
-                    'impact_direction': self._normalize_direction(row.get('trend')),
-                    'trend': self._normalize_trend(row.get('trend')),
+                    'valuation_group': row.get('Valuation Group') or row.get('valuation_group', ''),
+                    'valuation_subgroup': row.get('Valuation Subgroup') or row.get('valuation_subgroup', ''),
+                    'current_value': str(row.get('Current Value') or row.get('current', '')),
+                    'weight': self._parse_float(row.get('Weight') or row.get('weight')),
+                    'impact_direction': self._normalize_direction(direction),
+                    'trend': self._normalize_trend(trend),
+                    'is_active': is_active,
+                    'source': 'PM_OVERRIDE',  # PM editing via GSheet → mark as PM_OVERRIDE
                     'updated_by': 'GSHEET',
                 })
                 counts['company'] += 1
@@ -388,15 +397,28 @@ class GSheetUnifiedClient:
             )
 
         if existing:
-            # Update
+            # Update — include is_active and source if provided
+            update_fields = [
+                'current_value=%s', 'weight=%s', 'impact_direction=%s', 'trend=%s',
+                'updated_by=%s', 'last_updated=NOW()'
+            ]
+            update_values = [
+                driver.get('current_value'), driver.get('weight'),
+                driver.get('impact_direction'), driver.get('trend'),
+                driver.get('updated_by', 'GSHEET')
+            ]
+
+            if 'is_active' in driver:
+                update_fields.append('is_active=%s')
+                update_values.append(driver['is_active'])
+            if 'source' in driver:
+                update_fields.append('source=%s')
+                update_values.append(driver['source'])
+
+            update_values.append(existing['id'])
             mysql_client.execute(
-                """UPDATE vs_drivers SET
-                   current_value=%s, weight=%s, impact_direction=%s, trend=%s,
-                   updated_by=%s, last_updated=NOW()
-                   WHERE id=%s""",
-                (driver.get('current_value'), driver.get('weight'),
-                 driver.get('impact_direction'), driver.get('trend'),
-                 driver.get('updated_by', 'GSHEET'), existing['id'])
+                f"UPDATE vs_drivers SET {', '.join(update_fields)} WHERE id=%s",
+                tuple(update_values)
             )
         else:
             # Insert
@@ -472,98 +494,137 @@ class GSheetUnifiedClient:
             return changes
 
         for row in rows:
-            driver_name = row.get('driver_name')
-            current_value = str(row.get('current', ''))
+            # Handle column name variations (from different sync scripts)
+            driver_name = row.get('driver_name') or row.get('Driver Name')
+            current_value = str(row.get('current_value') or row.get('Current Value') or row.get('current', ''))
 
             if not driver_name:
                 continue
 
-            # Build lookup query based on level
+            # Build lookup query based on level — include columns needed for diff
+            select_cols = "id, current_value, impact_direction, trend, is_active"
             if driver_level == 'MACRO':
                 db_row = mysql_client.query_one(
-                    "SELECT id, current_value FROM vs_drivers WHERE driver_level='MACRO' AND driver_name=%s",
+                    f"SELECT {select_cols} FROM vs_drivers WHERE driver_level='MACRO' AND driver_name=%s",
                     (driver_name,)
                 )
             elif driver_level == 'GROUP':
-                valuation_group = row.get('valuation_group')
+                valuation_group = row.get('valuation_group') or row.get('Valuation Group')
                 if not valuation_group:
                     continue
                 db_row = mysql_client.query_one(
-                    "SELECT id, current_value FROM vs_drivers WHERE driver_level='GROUP' AND driver_name=%s AND valuation_group=%s",
+                    f"SELECT {select_cols} FROM vs_drivers WHERE driver_level='GROUP' AND driver_name=%s AND valuation_group=%s",
                     (driver_name, valuation_group)
                 )
             elif driver_level == 'SUBGROUP':
-                valuation_subgroup = row.get('valuation_subgroup')
+                valuation_subgroup = row.get('valuation_subgroup') or row.get('Valuation Subgroup')
                 if not valuation_subgroup:
                     continue
                 db_row = mysql_client.query_one(
-                    "SELECT id, current_value FROM vs_drivers WHERE driver_level='SUBGROUP' AND driver_name=%s AND valuation_subgroup=%s",
+                    f"SELECT {select_cols} FROM vs_drivers WHERE driver_level='SUBGROUP' AND driver_name=%s AND valuation_subgroup=%s",
                     (driver_name, valuation_subgroup)
                 )
             else:  # COMPANY
-                company_id = row.get('company_id')
+                company_id = row.get('company_id') or row.get('Company ID')
                 if not company_id:
                     continue
                 db_row = mysql_client.query_one(
-                    "SELECT id, current_value FROM vs_drivers WHERE driver_level='COMPANY' AND driver_name=%s AND company_id=%s",
+                    f"SELECT {select_cols} FROM vs_drivers WHERE driver_level='COMPANY' AND driver_name=%s AND company_id=%s",
                     (driver_name, company_id)
                 )
 
-            if db_row and str(db_row.get('current_value', '')) != current_value:
-                # PM edited this value
+            if not db_row:
+                continue
+
+            # Detect changes across value, direction, trend, and is_active
+            gsheet_direction = self._normalize_direction(row.get('Direction') or row.get('impact') or row.get('trend'))
+            gsheet_trend = self._normalize_trend(row.get('Trend') or row.get('trend'))
+            gsheet_is_active_raw = row.get('Is Active') or row.get('is_active', 'TRUE')
+            gsheet_is_active = 1 if str(gsheet_is_active_raw).upper() in ('TRUE', '1', 'YES') else 0
+
+            db_value = str(db_row.get('current_value', '') or '')
+            db_direction = db_row.get('impact_direction', 'NEUTRAL')
+            db_trend = db_row.get('trend', 'STABLE')
+            db_is_active = db_row.get('is_active', 1)
+
+            value_changed = db_value != current_value
+            direction_changed = db_direction != gsheet_direction
+            trend_changed = db_trend != gsheet_trend
+            active_changed = db_is_active != gsheet_is_active
+
+            if value_changed or direction_changed or trend_changed or active_changed:
                 change = {
                     'driver_level': driver_level,
                     'driver_name': driver_name,
-                    'old_value': db_row['current_value'],
+                    'old_value': db_value,
                     'new_value': current_value,
                     'changed_by': 'PM',
                     'timestamp': datetime.now(),
                 }
 
-                # Add context based on level
                 if driver_level == 'GROUP':
-                    change['valuation_group'] = row.get('valuation_group')
+                    change['valuation_group'] = row.get('valuation_group') or row.get('Valuation Group')
                 elif driver_level == 'SUBGROUP':
-                    change['valuation_subgroup'] = row.get('valuation_subgroup')
+                    change['valuation_subgroup'] = row.get('valuation_subgroup') or row.get('Valuation Subgroup')
                 elif driver_level == 'COMPANY':
-                    change['company_id'] = row.get('company_id')
+                    change['company_id'] = row.get('company_id') or row.get('Company ID')
+
+                if direction_changed:
+                    change['old_direction'] = db_direction
+                    change['new_direction'] = gsheet_direction
+                if active_changed:
+                    change['old_is_active'] = db_is_active
+                    change['new_is_active'] = gsheet_is_active
 
                 changes.append(change)
 
-                # Update MySQL
+                # Update MySQL — include direction, trend, is_active, and mark as PM_OVERRIDE
                 mysql_client.execute(
                     """UPDATE vs_drivers SET
-                       current_value = %s,
-                       last_updated = NOW(),
-                       updated_by = 'PM'
+                       current_value = %s, impact_direction = %s, trend = %s,
+                       is_active = %s, source = 'PM_OVERRIDE',
+                       last_updated = NOW(), updated_by = 'PM'
                        WHERE id = %s""",
-                    (current_value, db_row['id'])
+                    (current_value, gsheet_direction, gsheet_trend,
+                     gsheet_is_active, db_row['id'])
                 )
 
                 # Log to driver_changelog
+                change_parts = []
+                if value_changed:
+                    change_parts.append(f"value: {db_value} → {current_value}")
+                if direction_changed:
+                    change_parts.append(f"direction: {db_direction} → {gsheet_direction}")
+                if trend_changed:
+                    change_parts.append(f"trend: {db_trend} → {gsheet_trend}")
+                if active_changed:
+                    change_parts.append(f"is_active: {db_is_active} → {gsheet_is_active}")
+
                 changelog_entry = {
                     'driver_level': driver_level,
                     'driver_name': driver_name,
-                    'old_value': db_row['current_value'],
+                    'old_value': db_value,
                     'new_value': current_value,
                     'triggered_by': 'PM_OVERRIDE',
-                    'change_reason': 'Manual edit via GSheet',
+                    'change_reason': f"Manual edit via GSheet: {'; '.join(change_parts)}",
                     'change_timestamp': datetime.now(),
+                    'is_active': gsheet_is_active,
+                    'source': 'PM_OVERRIDE',
                 }
                 if driver_level == 'GROUP':
-                    changelog_entry['valuation_group'] = row.get('valuation_group')
+                    changelog_entry['valuation_group'] = row.get('valuation_group') or row.get('Valuation Group')
                 elif driver_level == 'SUBGROUP':
-                    changelog_entry['valuation_subgroup'] = row.get('valuation_subgroup')
+                    changelog_entry['valuation_subgroup'] = row.get('valuation_subgroup') or row.get('Valuation Subgroup')
                 elif driver_level == 'COMPANY':
-                    changelog_entry['company_id'] = row.get('company_id')
+                    changelog_entry['company_id'] = row.get('company_id') or row.get('Company ID')
 
                 mysql_client.insert('vs_driver_changelog', changelog_entry)
 
         return changes
 
-    def archive_history_to_mysql(self, mysql_client, days_to_keep: int = 30):
+    def archive_activity_to_mysql(self, mysql_client, days_to_keep: int = 30):
         """
-        Archive rows >30 days from History sheets to MySQL, delete from GSheet.
+        Archive rows >30 days from Recent Activity sheet to MySQL, delete from GSheet.
 
         Args:
             mysql_client: MySQL client
@@ -571,26 +632,29 @@ class GSheetUnifiedClient:
         """
         cutoff = datetime.now() - timedelta(days=days_to_keep)
 
-        # Archive valuation history
-        ws = self._get_sheet('history')
+        ws = self._get_sheet('activity')
         rows = ws.get_all_records()
 
-        to_archive = [r for r in rows if datetime.fromisoformat(r['date']) < cutoff]
+        to_archive = []
+        recent = []
+        for r in rows:
+            try:
+                row_date = datetime.fromisoformat(str(r.get('Val Date', '')))
+                if row_date < cutoff:
+                    to_archive.append(r)
+                else:
+                    recent.append(r)
+            except (ValueError, TypeError):
+                recent.append(r)  # Keep rows with unparseable dates
 
         if to_archive:
-            # Bulk insert to MySQL
             for row in to_archive:
                 mysql_client.insert('vs_valuation_history_archive', row)
 
-            # Delete from GSheet (keep recent only)
-            recent = [r for r in rows if datetime.fromisoformat(r['date']) >= cutoff]
             ws.clear()
-            ws.update('A1', [self.SHEET_CONFIGS['history']['headers']] + recent)
+            ws.update('A1', [self.SHEET_CONFIGS['activity']['headers']] + [[r.get(h, '') for h in self.SHEET_CONFIGS['activity']['headers']] for r in recent])
 
-            logger.info(f"Archived {len(to_archive)} valuation history rows to MySQL")
-
-        # Similar for driver_changes and events
-        # ... (implementation omitted for brevity)
+            logger.info(f"Archived {len(to_archive)} activity rows to MySQL")
 
     def _get_sheet(self, key: str):
         """Get worksheet by config key."""
@@ -641,7 +705,7 @@ def main():
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
     parser = argparse.ArgumentParser(description='Google Sheets Unified Client')
-    parser.add_argument('--init', action='store_true', help='Initialize 7-sheet structure')
+    parser.add_argument('--init', action='store_true', help='Initialize 6-sheet structure')
     parser.add_argument('--validate', action='store_true', help='Validate cell count')
     parser.add_argument('--sync-from-gsheet', action='store_true',
                         help='Sync drivers from GSheet to MySQL (GSheet is source of truth)')

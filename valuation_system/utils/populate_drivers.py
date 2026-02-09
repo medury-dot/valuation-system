@@ -671,6 +671,175 @@ SUBGROUP_DRIVERS = {
         ('COST', 'cloud_hosting', 0.06, 'Infrastructure'),
         ('REGULATORY', 'data_privacy', 0.04, 'GDPR/DPDP'),
     ],
+
+    # =========== NEW SUBGROUPS (Round 5 — Feb 2026) ===========
+
+    'SERVICES_TRADING': [
+        ('DEMAND', 'commodity_volumes', 0.12, 'Trading commodity throughput'),
+        ('DEMAND', 'domestic_demand', 0.10, 'India consumption of traded goods'),
+        ('DEMAND', 'export_demand', 0.08, 'Re-export volumes'),
+        ('DEMAND', 'working_capital_availability', 0.06, 'Credit availability for trade finance'),
+        ('COST', 'forex_volatility', 0.10, 'Currency fluctuation impact on margins'),
+        ('COST', 'logistics_costs', 0.08, 'Freight and warehousing'),
+        ('COST', 'financing_costs', 0.06, 'Trade credit interest'),
+        ('REGULATORY', 'import_duties', 0.06, 'Customs tariffs and anti-dumping'),
+        ('REGULATORY', 'trade_policy', 0.04, 'FTA and bilateral trade agreements'),
+        ('REGULATORY', 'gst_compliance', 0.03, 'E-invoicing and GST audits'),
+    ],
+    'MATERIALS_PLASTICS': [
+        ('DEMAND', 'fmcg_packaging', 0.12, 'FMCG flexible packaging demand'),
+        ('DEMAND', 'auto_components', 0.08, 'Automotive plastic parts'),
+        ('DEMAND', 'construction_pipes', 0.08, 'PVC/CPVC pipes for plumbing'),
+        ('DEMAND', 'export_demand', 0.06, 'Polymer export orders'),
+        ('COST', 'polymer_prices', 0.12, 'PE/PP/PVC resin prices'),
+        ('COST', 'crude_oil_linkage', 0.08, 'Naphtha-based feedstock costs'),
+        ('COST', 'power_costs', 0.06, 'Extrusion/molding energy'),
+        ('REGULATORY', 'single_use_ban', 0.06, 'SUP restrictions on categories'),
+        ('REGULATORY', 'epr_compliance', 0.04, 'Extended producer responsibility'),
+        ('REGULATORY', 'bis_standards', 0.03, 'Product quality certification'),
+    ],
+    'INFRA_LOGISTICS': [
+        ('DEMAND', 'ecommerce_volumes', 0.12, 'Last-mile delivery demand'),
+        ('DEMAND', 'industrial_freight', 0.10, 'B2B logistics volumes'),
+        ('DEMAND', 'cold_chain_growth', 0.06, 'Temperature-controlled logistics'),
+        ('DEMAND', 'warehousing_demand', 0.06, 'Grade-A warehouse leasing'),
+        ('COST', 'fuel_costs', 0.12, 'Diesel/CNG fuel prices'),
+        ('COST', 'driver_wages', 0.06, 'Truck driver costs'),
+        ('COST', 'toll_charges', 0.04, 'Highway toll expenses'),
+        ('REGULATORY', 'gst_logistics', 0.06, 'E-way bill and GST simplification'),
+        ('REGULATORY', 'multimodal_policy', 0.04, 'National logistics policy'),
+        ('REGULATORY', 'vehicle_scrappage', 0.03, 'Fleet renewal mandate'),
+    ],
+    'MATERIALS_PAPER': [
+        ('DEMAND', 'packaging_board', 0.12, 'Corrugated box demand from ecommerce'),
+        ('DEMAND', 'writing_printing', 0.08, 'Education/office paper demand'),
+        ('DEMAND', 'tissue_products', 0.06, 'Tissue and hygiene paper'),
+        ('DEMAND', 'export_demand', 0.05, 'Paper/board exports'),
+        ('COST', 'wood_pulp_prices', 0.12, 'Hardwood/softwood pulp prices'),
+        ('COST', 'power_costs', 0.10, 'Energy-intensive manufacturing'),
+        ('COST', 'chemical_costs', 0.05, 'Bleaching/processing chemicals'),
+        ('REGULATORY', 'import_duties', 0.05, 'Anti-dumping on imported paper'),
+        ('REGULATORY', 'forest_policy', 0.04, 'Plantation and sourcing rules'),
+        ('REGULATORY', 'plastic_substitution', 0.04, 'Paper replacing SUP mandate'),
+    ],
+    'CONSUMER_JEWELLERY': [
+        ('DEMAND', 'gold_price_trend', 0.12, 'Gold price direction impact on demand'),
+        ('DEMAND', 'wedding_season', 0.10, 'Seasonal bridal demand'),
+        ('DEMAND', 'organized_share', 0.08, 'Shift from unorganized to branded'),
+        ('DEMAND', 'studded_mix', 0.06, 'Diamond/studded jewellery share'),
+        ('COST', 'gold_cost', 0.10, 'Gold procurement costs'),
+        ('COST', 'diamond_prices', 0.06, 'Polished diamond prices'),
+        ('COST', 'making_charges', 0.04, 'Artisan and manufacturing costs'),
+        ('REGULATORY', 'hallmarking', 0.06, 'Mandatory hallmarking compliance'),
+        ('REGULATORY', 'import_duty_gold', 0.05, 'Custom duty on gold imports'),
+        ('REGULATORY', 'gst_on_gold', 0.03, 'GST rate on gold jewellery'),
+    ],
+    'SERVICES_PROFESSIONAL': [
+        ('DEMAND', 'corporate_capex', 0.12, 'Corporate advisory/consulting demand'),
+        ('DEMAND', 'staffing_demand', 0.12, 'Temporary/contract staffing'),
+        ('DEMAND', 'compliance_demand', 0.08, 'Regulatory compliance services'),
+        ('DEMAND', 'digital_transformation', 0.06, 'Digital consulting demand'),
+        ('COST', 'talent_costs', 0.12, 'Professional salary inflation'),
+        ('COST', 'office_costs', 0.06, 'Real estate and overheads'),
+        ('COST', 'subcontracting', 0.04, 'Third-party specialist costs'),
+        ('REGULATORY', 'professional_standards', 0.04, 'ICAI/ICSI/Bar Council norms'),
+        ('REGULATORY', 'gig_economy_rules', 0.03, 'Labour code for contract workers'),
+    ],
+    'SERVICES_BPO': [
+        ('DEMAND', 'outsourcing_trend', 0.15, 'Global BPO market growth'),
+        ('DEMAND', 'voice_nonvoice_mix', 0.08, 'Shift to digital/chat operations'),
+        ('DEMAND', 'vertical_depth', 0.06, 'BFSI/healthcare BPO specialization'),
+        ('DEMAND', 'nearshoring_competition', 0.05, 'Latam/Philippines competition'),
+        ('COST', 'employee_costs', 0.15, 'Wage inflation in BPO hubs'),
+        ('COST', 'real_estate_costs', 0.06, 'Office space in tier-1/2 cities'),
+        ('COST', 'technology_costs', 0.05, 'RPA/AI automation investment'),
+        ('REGULATORY', 'data_privacy', 0.05, 'GDPR/DPDP cross-border rules'),
+        ('REGULATORY', 'labor_laws', 0.04, 'New labour codes compliance'),
+    ],
+    'CONSUMER_ALCOHOLIC_BEVERAGES': [
+        ('DEMAND', 'premiumization', 0.12, 'Shift to premium spirits/wine'),
+        ('DEMAND', 'volume_growth', 0.10, 'Overall IMFL/beer consumption'),
+        ('DEMAND', 'urbanization_trend', 0.06, 'Urban social drinking growth'),
+        ('DEMAND', 'craft_beer_growth', 0.04, 'Microbrewery/craft beer segment'),
+        ('COST', 'grain_prices', 0.08, 'ENA and grain procurement'),
+        ('COST', 'glass_bottle_costs', 0.06, 'Packaging glass/PET costs'),
+        ('COST', 'distribution_costs', 0.05, 'State-wise distribution network'),
+        ('REGULATORY', 'state_excise_policy', 0.10, 'State-level excise duty changes'),
+        ('REGULATORY', 'licensing_norms', 0.05, 'Manufacturing/retail license rules'),
+        ('REGULATORY', 'advertising_ban', 0.03, 'Surrogate advertising restrictions'),
+    ],
+    'MATERIALS_MINING': [
+        ('DEMAND', 'global_commodity_prices', 0.15, 'Iron ore/coal/base metal prices'),
+        ('DEMAND', 'steel_production', 0.10, 'Domestic steel mill demand'),
+        ('DEMAND', 'construction_demand', 0.08, 'Infrastructure-driven mineral demand'),
+        ('DEMAND', 'export_demand', 0.06, 'Mineral ore exports'),
+        ('COST', 'diesel_costs', 0.08, 'Mining equipment fuel'),
+        ('COST', 'explosives_costs', 0.04, 'Blasting materials'),
+        ('COST', 'royalty_payments', 0.06, 'State mining royalties'),
+        ('REGULATORY', 'mining_leases', 0.08, 'MMDR Act lease renewals/auctions'),
+        ('REGULATORY', 'environmental_clearances', 0.06, 'EC/FC approval timelines'),
+        ('REGULATORY', 'dmf_contributions', 0.03, 'District mineral foundation levies'),
+    ],
+    'INFRA_SHIPPING': [
+        ('DEMAND', 'global_trade_volume', 0.12, 'EXIM container/bulk demand'),
+        ('DEMAND', 'charter_rates', 0.12, 'Baltic Dry Index and tanker rates'),
+        ('DEMAND', 'coastal_shipping', 0.06, 'Domestic coastal trade volume'),
+        ('DEMAND', 'fleet_age', 0.05, 'Fleet renewal demand'),
+        ('COST', 'bunker_fuel_costs', 0.12, 'VLSFO fuel prices'),
+        ('COST', 'crew_costs', 0.06, 'Seafarer wages'),
+        ('COST', 'port_charges', 0.04, 'Port handling fees'),
+        ('REGULATORY', 'imo_regulations', 0.06, 'IMO 2030/2050 decarbonization'),
+        ('REGULATORY', 'cabotage_rules', 0.04, 'Indian coastal shipping rules'),
+        ('REGULATORY', 'tonnage_tax', 0.03, 'Tonnage tax scheme benefits'),
+    ],
+    'SERVICES_EDUCATION': [
+        ('DEMAND', 'enrollment_growth', 0.12, 'K-12 and higher education enrollment'),
+        ('DEMAND', 'edtech_adoption', 0.10, 'Online learning penetration'),
+        ('DEMAND', 'test_prep_demand', 0.08, 'Competitive exam preparation'),
+        ('DEMAND', 'skill_development', 0.06, 'Vocational training demand'),
+        ('COST', 'faculty_costs', 0.10, 'Teacher/professor salaries'),
+        ('COST', 'infrastructure_costs', 0.06, 'Campus and technology investment'),
+        ('COST', 'content_development', 0.05, 'Curriculum and content costs'),
+        ('REGULATORY', 'nep_2020', 0.08, 'National Education Policy reforms'),
+        ('REGULATORY', 'ugc_regulations', 0.04, 'University/college approvals'),
+        ('REGULATORY', 'fee_caps', 0.03, 'State-level fee regulation'),
+    ],
+    'ENERGY_INDUSTRIAL_GAS': [
+        ('DEMAND', 'industrial_production', 0.15, 'Manufacturing sector output'),
+        ('DEMAND', 'steel_demand', 0.10, 'Oxygen/nitrogen for steel making'),
+        ('DEMAND', 'healthcare_demand', 0.06, 'Medical oxygen and gases'),
+        ('DEMAND', 'electronics_demand', 0.05, 'Specialty gases for semiconductors'),
+        ('COST', 'power_costs', 0.12, 'Air separation unit electricity'),
+        ('COST', 'logistics_costs', 0.06, 'Cylinder/tanker transportation'),
+        ('COST', 'plant_maintenance', 0.04, 'ASU maintenance costs'),
+        ('REGULATORY', 'safety_standards', 0.06, 'PESO and SMPV regulations'),
+        ('REGULATORY', 'environmental_norms', 0.04, 'Emission standards driving demand'),
+        ('REGULATORY', 'pricing_contracts', 0.03, 'Long-term take-or-pay contracts'),
+    ],
+    'INDUSTRIALS_ENVIRONMENTAL': [
+        ('DEMAND', 'municipal_waste', 0.12, 'Urban solid waste volumes'),
+        ('DEMAND', 'industrial_effluent', 0.10, 'Factory wastewater treatment'),
+        ('DEMAND', 'air_quality', 0.06, 'Air purification/monitoring demand'),
+        ('DEMAND', 'water_treatment', 0.06, 'Municipal water treatment capex'),
+        ('COST', 'chemical_costs', 0.08, 'Treatment chemicals'),
+        ('COST', 'power_costs', 0.06, 'Plant electricity costs'),
+        ('COST', 'labor_costs', 0.04, 'Operations workforce'),
+        ('REGULATORY', 'pollution_control', 0.10, 'CPCB/SPCB enforcement tightening'),
+        ('REGULATORY', 'epr_compliance', 0.06, 'Extended producer responsibility'),
+        ('REGULATORY', 'swm_rules', 0.04, 'Solid waste management rules 2016'),
+    ],
+    'SERVICES_AVIATION': [
+        ('DEMAND', 'passenger_traffic', 0.15, 'Domestic + international PAX'),
+        ('DEMAND', 'load_factor', 0.08, 'Seat occupancy rates'),
+        ('DEMAND', 'cargo_volumes', 0.06, 'Air cargo throughput'),
+        ('DEMAND', 'tourism_growth', 0.05, 'Inbound/outbound tourism'),
+        ('COST', 'atf_prices', 0.15, 'Aviation turbine fuel costs'),
+        ('COST', 'aircraft_lease', 0.08, 'Fleet lease/financing costs'),
+        ('COST', 'crew_costs', 0.05, 'Pilot and cabin crew wages'),
+        ('REGULATORY', 'airport_charges', 0.06, 'AERA-set tariffs'),
+        ('REGULATORY', 'route_licensing', 0.04, 'Bilateral and UDAN routes'),
+        ('REGULATORY', 'safety_compliance', 0.03, 'DGCA safety audits'),
+    ],
 }
 
 
@@ -738,6 +907,379 @@ def get_subgroup_to_group_mapping():
     return mapping
 
 
+# ============================================================================
+# UNIVERSAL QUANTITATIVE COMPANY DRIVERS (auto-computed, 70% of company weight)
+# Every active company gets these 8 drivers with source='AUTO'
+# ============================================================================
+UNIVERSAL_COMPANY_DRIVERS = [
+    ('GROWTH',        'revenue_cagr_3yr',          0.12, '3-year quarterly revenue CAGR vs subgroup median'),
+    ('PROFITABILITY', 'ebitda_margin_vs_peers',     0.10, 'TTM EBITDA margin percentile within subgroup'),
+    ('PROFITABILITY', 'roce_trend',                 0.10, '3-year ROCE direction (improving/declining/stable)'),
+    ('BALANCE_SHEET', 'debt_equity_change',          0.08, 'D/E ratio trend over 3 years'),
+    ('GOVERNANCE',    'promoter_holding_trend',      0.08, 'Promoter stake change last 4 quarters'),
+    ('CASH_FLOW',     'fcf_yield',                   0.08, 'TTM FCF / market cap vs subgroup median'),
+    ('GROWTH',        'earnings_momentum',           0.08, 'PAT growth acceleration (QoQ trend of YoY growth)'),
+    ('VALUATION',     'relative_valuation_gap',      0.06, 'P/E vs subgroup median (premium/discount)'),
+]
+
+# ============================================================================
+# SUBGROUP-SPECIFIC QUALITATIVE COMPANY DRIVERS (PM-curated, 30% of company weight)
+# 2-4 drivers per subgroup, affect terminal ROCE/reinvestment when PM sets non-NEUTRAL
+# ============================================================================
+SUBGROUP_COMPANY_DRIVERS = {
+    'AUTO_OEM': [
+        ('STRATEGIC',   'ev_readiness',             0.08, 'EV product pipeline and battery partnerships'),
+        ('COMPETITIVE', 'market_share_trend',        0.08, 'Volume share trajectory'),
+        ('GROWTH',      'export_diversification',    0.07, 'Non-India revenue %'),
+    ],
+    'AUTO_ANCILLARY_TIRES': [
+        ('COMPETITIVE', 'replacement_share',         0.08, 'Aftermarket share vs organized peers'),
+        ('GROWTH',      'export_revenue_share',      0.07, 'Export revenue trend'),
+    ],
+    'AUTO_ANCILLARY_BATTERIES': [
+        ('STRATEGIC',   'ev_battery_pivot',          0.08, 'Li-ion capacity build-out'),
+        ('COMPETITIVE', 'aftermarket_dominance',     0.07, 'Replacement market leadership'),
+    ],
+    'AUTO_ANCILLARY_COMPONENTS': [
+        ('GROWTH',      'content_per_vehicle_trend', 0.08, 'Value per vehicle expansion'),
+        ('COMPETITIVE', 'global_sourcing_wins',      0.07, 'International OEM wins'),
+    ],
+    'TECHNOLOGY_IT_SERVICES': [
+        ('GROWTH',      'deal_pipeline',             0.08, 'Large deal wins trajectory'),
+        ('STRATEGIC',   'ai_readiness',              0.07, 'GenAI service offerings and revenue'),
+        ('COMPETITIVE', 'attrition_vs_peers',        0.05, 'Attrition rate relative to top-4'),
+    ],
+    'TECHNOLOGY_BPO_ITES': [
+        ('STRATEGIC',   'automation_adoption',       0.08, 'RPA/AI-led cost optimization'),
+        ('COMPETITIVE', 'client_concentration',      0.07, 'Top-5 client revenue share'),
+    ],
+    'TECHNOLOGY_PRODUCT_SAAS': [
+        ('GROWTH',      'ndr_trend',                 0.08, 'Net dollar retention trajectory'),
+        ('COMPETITIVE', 'market_position',           0.07, 'Category leadership ranking'),
+    ],
+    'TECHNOLOGY_DIGITAL_INFRA': [
+        ('GROWTH',      'capacity_expansion',        0.08, 'Rack/MW capacity pipeline'),
+        ('COMPETITIVE', 'hyperscaler_contracts',     0.07, 'Cloud provider relationships'),
+    ],
+    'HEALTHCARE_PHARMA_MFG': [
+        ('REGULATORY',  'usfda_compliance',          0.08, 'FDA inspection track record'),
+        ('GROWTH',      'pipeline_strength',         0.08, 'ANDA filings and para-IV opportunities'),
+        ('COMPETITIVE', 'api_backward_integration',  0.05, 'Backward integration depth'),
+    ],
+    'HEALTHCARE_PHARMA_CRO_CDMO': [
+        ('GROWTH',      'order_book_visibility',     0.08, 'Contract backlog / revenue ratio'),
+        ('COMPETITIVE', 'regulatory_certifications', 0.07, 'Multi-geography regulatory approvals'),
+    ],
+    'HEALTHCARE_HOSPITALS': [
+        ('GROWTH',      'bed_expansion_pipeline',    0.08, 'New bed additions in next 2-3 years'),
+        ('COMPETITIVE', 'brand_recall',              0.07, 'Patient preference and reputation'),
+    ],
+    'HEALTHCARE_DIAGNOSTICS': [
+        ('GROWTH',      'network_density',           0.08, 'Collection center expansion'),
+        ('COMPETITIVE', 'test_menu_breadth',         0.07, 'Specialized test offerings'),
+    ],
+    'HEALTHCARE_MEDICAL_EQUIPMENT': [
+        ('GROWTH',      'localization_progress',     0.08, 'Make-in-India share of revenue'),
+        ('COMPETITIVE', 'service_contracts',         0.07, 'Post-sale service revenue'),
+    ],
+    'HEALTHCARE_AYUSH': [
+        ('GROWTH',      'brand_portfolio_expansion', 0.08, 'New product launches'),
+        ('COMPETITIVE', 'distribution_depth',        0.07, 'Rural penetration'),
+    ],
+    'FINANCIALS_BANKING_PRIVATE': [
+        ('BALANCE_SHEET', 'asset_quality_trend',     0.08, 'NPA trajectory and PCR'),
+        ('GROWTH',        'credit_growth_outlook',   0.07, 'Loan book growth vs system'),
+        ('COMPETITIVE',   'digital_adoption',        0.05, 'Digital transaction share'),
+    ],
+    'FINANCIALS_BANKING_PSU': [
+        ('BALANCE_SHEET', 'asset_quality_trend',     0.08, 'NPA cleanup trajectory'),
+        ('GROWTH',        'recapitalization_runway',  0.07, 'Capital adequacy buffer'),
+    ],
+    'FINANCIALS_NBFC_DIVERSIFIED': [
+        ('BALANCE_SHEET', 'alm_management',          0.08, 'Asset-liability mismatch'),
+        ('GROWTH',        'product_diversification',  0.07, 'Revenue mix across segments'),
+    ],
+    'FINANCIALS_NBFC_HOUSING': [
+        ('BALANCE_SHEET', 'portfolio_quality',       0.08, 'Stage 2+3 assets trend'),
+        ('GROWTH',        'geographic_expansion',     0.07, 'New market penetration'),
+    ],
+    'FINANCIALS_NBFC_VEHICLE': [
+        ('BALANCE_SHEET', 'collection_efficiency',   0.08, 'Monthly collection rate trend'),
+        ('GROWTH',        'used_vehicle_share',       0.07, 'Pre-owned financing growth'),
+    ],
+    'FINANCIALS_ASSET_MGMT': [
+        ('COMPETITIVE',   'fund_performance',        0.08, 'Alpha generation track record'),
+        ('GROWTH',        'sip_market_share',         0.07, 'SIP flow share trend'),
+    ],
+    'FINANCIALS_BROKING': [
+        ('COMPETITIVE',   'market_share_trend',      0.08, 'Active client market share'),
+        ('GROWTH',        'margin_funding_book',      0.07, 'MTF/margin income growth'),
+    ],
+    'FINANCIALS_EXCHANGES_DEPOSITORIES': [
+        ('COMPETITIVE',   'market_dominance',        0.08, 'Derivatives/equity share'),
+        ('REGULATORY',    'regulatory_moat',          0.07, 'Licensing barrier strength'),
+    ],
+    'FINANCIALS_RATINGS': [
+        ('COMPETITIVE',   'market_share_bonds',      0.08, 'Rating mandates share'),
+        ('GROWTH',        'sme_rating_penetration',   0.07, 'New SME rating clients'),
+    ],
+    'FINANCIALS_INSURANCE_LIFE': [
+        ('GROWTH',        'vnb_margin_trend',        0.08, 'Value of new business margin'),
+        ('COMPETITIVE',   'distribution_mix',         0.07, 'Banca vs agency mix shift'),
+    ],
+    'FINANCIALS_INSURANCE_GENERAL': [
+        ('BALANCE_SHEET', 'combined_ratio_trend',    0.08, 'Underwriting profitability'),
+        ('COMPETITIVE',   'motor_vs_health_mix',      0.07, 'Segment diversification'),
+    ],
+    'FINANCIALS_INSURANCE_HEALTH': [
+        ('GROWTH',        'retail_penetration',      0.08, 'Individual policy growth'),
+        ('BALANCE_SHEET', 'claims_ratio_trend',       0.07, 'Medical loss ratio trajectory'),
+    ],
+    'INDUSTRIALS_DEFENSE': [
+        ('GROWTH',        'order_book_coverage',     0.08, 'Order book / revenue ratio'),
+        ('STRATEGIC',     'indigenization_share',     0.07, 'Make-in-India content %'),
+        ('COMPETITIVE',   'export_wins',              0.05, 'International defense contracts'),
+    ],
+    'INDUSTRIALS_CAPITAL_GOODS': [
+        ('GROWTH',        'order_inflow_trend',      0.08, 'New order wins trajectory'),
+        ('COMPETITIVE',   'execution_efficiency',     0.07, 'Revenue / order book conversion'),
+    ],
+    'INDUSTRIALS_ELECTRICALS': [
+        ('GROWTH',        'institutional_share',     0.08, 'Project/institutional revenue %'),
+        ('COMPETITIVE',   'brand_premium',            0.07, 'Price premium over commodity players'),
+    ],
+    'INDUSTRIALS_ENGINEERING': [
+        ('GROWTH',        'export_order_trend',      0.08, 'International order pipeline'),
+        ('COMPETITIVE',   'technology_moat',          0.07, 'Proprietary technology portfolio'),
+    ],
+    'INDUSTRIALS_TELECOM_EQUIPMENT': [
+        ('GROWTH',        'order_book_visibility',   0.08, '5G/fiber order pipeline'),
+        ('COMPETITIVE',   'product_localization',     0.07, 'Indigenous product share'),
+    ],
+    'CHEMICALS_SPECIALTY': [
+        ('GROWTH',        'wallet_share_expansion',  0.08, 'Revenue per customer growth'),
+        ('COMPETITIVE',   'process_patents',          0.07, 'Proprietary process IP'),
+    ],
+    'CHEMICALS_COMMODITY': [
+        ('COMPETITIVE',   'cost_leadership',         0.08, 'Cost curve positioning'),
+        ('GROWTH',        'capacity_expansion',       0.07, 'Brownfield/greenfield pipeline'),
+    ],
+    'CHEMICALS_PAINTS_COATINGS': [
+        ('COMPETITIVE',   'dealer_network_strength', 0.08, 'Distribution reach and tinting'),
+        ('STRATEGIC',     'new_entrant_defense',      0.07, 'Competitive response to Grasim/JSW'),
+    ],
+    'METALS_STEEL': [
+        ('COMPETITIVE',   'cost_curve_position',     0.08, 'Cost per tonne vs peers'),
+        ('GROWTH',        'value_added_share',        0.07, 'Value-added products mix'),
+    ],
+    'METALS_ALUMINUM': [
+        ('COMPETITIVE',   'power_cost_advantage',    0.08, 'Captive power cost edge'),
+        ('GROWTH',        'downstream_integration',   0.07, 'Value-added aluminum products'),
+    ],
+    'METALS_COPPER_ZINC': [
+        ('COMPETITIVE',   'mine_life_runway',        0.08, 'Reserve life and exploration'),
+        ('GROWTH',        'smelter_expansion',        0.07, 'Processing capacity pipeline'),
+    ],
+    'REALTY_RESIDENTIAL': [
+        ('GROWTH',        'launch_pipeline',         0.08, 'Upcoming project launches'),
+        ('COMPETITIVE',   'brand_premium',            0.07, 'Price premium over locality avg'),
+    ],
+    'INFRA_CONSTRUCTION': [
+        ('GROWTH',        'order_book_trend',        0.08, 'Order book / revenue multiple'),
+        ('COMPETITIVE',   'execution_track_record',   0.07, 'On-time completion ratio'),
+    ],
+    'INFRA_LOGISTICS_PORTS': [
+        ('GROWTH',        'capacity_utilization',    0.08, 'Current utilization and expansion'),
+        ('COMPETITIVE',   'hinterland_connectivity',  0.07, 'Rail/road linkage strength'),
+    ],
+    'ENERGY_UPSTREAM': [
+        ('GROWTH',        'reserve_replacement',     0.08, 'Reserve replacement ratio'),
+        ('COMPETITIVE',   'production_cost',          0.07, 'Lifting cost per barrel'),
+    ],
+    'ENERGY_MIDSTREAM': [
+        ('GROWTH',        'network_expansion',       0.08, 'Pipeline/CGD coverage growth'),
+        ('COMPETITIVE',   'authorized_areas',         0.07, 'GA authorization count'),
+    ],
+    'ENERGY_DOWNSTREAM': [
+        ('GROWTH',        'petchem_integration',     0.08, 'Petrochemical revenue share'),
+        ('COMPETITIVE',   'complexity_index',         0.07, 'Refinery Nelson complexity'),
+    ],
+    'ENERGY_POWER_GENERATION': [
+        ('GROWTH',        'renewable_portfolio',     0.08, 'RE capacity pipeline'),
+        ('COMPETITIVE',   'fuel_security',            0.07, 'Captive fuel linkage'),
+    ],
+    'ENERGY_POWER_DISTRIBUTION': [
+        ('BALANCE_SHEET', 'atc_loss_trend',          0.08, 'AT&C loss reduction'),
+        ('REGULATORY',    'tariff_revision_track',    0.07, 'Tariff order compliance'),
+    ],
+    'CONSUMER_DURABLES_WHITE_GOODS': [
+        ('COMPETITIVE',   'brand_recall',            0.08, 'Consumer preference ranking'),
+        ('GROWTH',        'channel_expansion',        0.07, 'Online + exclusive store growth'),
+    ],
+    'CONSUMER_DURABLES_BROWN_GOODS': [
+        ('COMPETITIVE',   'display_technology',      0.08, 'LED/OLED product mix'),
+        ('GROWTH',        'smart_tv_share',           0.07, 'Connected device revenue'),
+    ],
+    'CONSUMER_DURABLES_SMALL_APPLIANCES': [
+        ('COMPETITIVE',   'product_innovation',      0.08, 'New SKU launch cadence'),
+        ('GROWTH',        'ecommerce_share',          0.07, 'Online revenue contribution'),
+    ],
+    'CONSUMER_FMCG_HPC': [
+        ('COMPETITIVE',   'distribution_depth',      0.08, 'Rural + urban outlet coverage'),
+        ('GROWTH',        'premiumization_journey',   0.07, 'Premium SKU revenue share'),
+    ],
+    'CONSUMER_FMCG_PACKAGED_FOOD': [
+        ('COMPETITIVE',   'brand_portfolio_width',   0.08, 'Number of ₹100Cr+ brands'),
+        ('GROWTH',        'new_category_entry',       0.07, 'Adjacent category expansion'),
+    ],
+    'CONSUMER_FMCG_STAPLES': [
+        ('COMPETITIVE',   'market_leadership',       0.08, 'Category leadership positions'),
+        ('GROWTH',        'direct_distribution',      0.07, 'Direct reach expansion'),
+    ],
+    'CONSUMER_FOOD_BEVERAGE': [
+        ('GROWTH',        'outlet_expansion',        0.08, 'Store/franchise pipeline'),
+        ('COMPETITIVE',   'same_store_growth',        0.07, 'SSSG vs peers'),
+    ],
+    'CONSUMER_AGRI': [
+        ('COMPETITIVE',   'sourcing_network',        0.08, 'Farm-gate procurement depth'),
+        ('GROWTH',        'processing_capacity',      0.07, 'Value-added processing expansion'),
+    ],
+    'CONSUMER_TEXTILE': [
+        ('COMPETITIVE',   'brand_vs_commodity_mix',  0.08, 'Branded revenue share'),
+        ('GROWTH',        'vertical_integration',     0.07, 'Fiber-to-fashion integration'),
+    ],
+    'CONSUMER_RETAIL_ONLINE': [
+        ('GROWTH',        'unit_economics_trend',    0.08, 'Contribution margin trajectory'),
+        ('COMPETITIVE',   'customer_retention',       0.07, 'Repeat purchase rate vs peers'),
+    ],
+    'CONSUMER_RETAIL_OFFLINE': [
+        ('GROWTH',        'store_expansion_pipeline', 0.08, 'New store opening cadence'),
+        ('COMPETITIVE',   'private_label_share',      0.07, 'Private brand revenue %'),
+    ],
+    'SERVICES_HOSPITALITY': [
+        ('GROWTH',        'room_inventory_pipeline', 0.08, 'Under-construction room count'),
+        ('COMPETITIVE',   'revpar_premium',           0.07, 'RevPAR premium vs chain avg'),
+    ],
+    'SERVICES_TELECOM_OPERATORS': [
+        ('COMPETITIVE',   'spectrum_portfolio',      0.08, 'Spectrum holdings adequacy'),
+        ('GROWTH',        'arpu_improvement_lever',   0.07, 'Tariff hike + 5G monetization'),
+    ],
+    'SERVICES_TELECOM_TOWERS': [
+        ('GROWTH',        'tenancy_improvement',     0.08, 'Co-location growth pipeline'),
+        ('COMPETITIVE',   'operator_concentration',   0.07, 'Top-2 client revenue share'),
+    ],
+    'SERVICES_MEDIA_BROADCASTING': [
+        ('COMPETITIVE',   'genre_leadership',        0.08, 'Top-rated channels count'),
+        ('GROWTH',        'digital_pivot',            0.07, 'OTT platform revenue share'),
+    ],
+    'SERVICES_MEDIA_OTT': [
+        ('GROWTH',        'subscriber_trajectory',   0.08, 'Paid subscriber CAGR'),
+        ('COMPETITIVE',   'content_differentiation',  0.07, 'Original content investment'),
+    ],
+    'SERVICES_MEDIA_PRINT': [
+        ('COMPETITIVE',   'readership_share',        0.08, 'IRS readership ranking'),
+        ('GROWTH',        'digital_revenue_share',    0.07, 'Digital subscription growth'),
+    ],
+    'SERVICES_MEDIA_ADVERTISING': [
+        ('COMPETITIVE',   'client_roster_quality',   0.08, 'Fortune 500 client count'),
+        ('GROWTH',        'digital_billings_share',   0.07, 'Digital as % of total billings'),
+    ],
+    # Round 5 subgroups
+    'SERVICES_TRADING': [
+        ('COMPETITIVE',   'supplier_relationships',  0.08, 'Key principal count and tenure'),
+        ('GROWTH',        'value_added_services',     0.07, 'Distribution beyond pure trading'),
+    ],
+    'MATERIALS_PLASTICS': [
+        ('COMPETITIVE',   'polymer_mix_complexity',  0.08, 'Engineering plastics share'),
+        ('GROWTH',        'sustainability_products',  0.07, 'Recycled/bio plastics revenue'),
+    ],
+    'INFRA_LOGISTICS': [
+        ('GROWTH',        'network_coverage',        0.08, 'Pin code coverage expansion'),
+        ('COMPETITIVE',   'technology_platform',      0.07, 'Digital logistics capabilities'),
+    ],
+    'CONSUMER_JEWELLERY': [
+        ('COMPETITIVE',   'franchise_expansion',     0.08, 'Franchisee store growth'),
+        ('GROWTH',        'studded_ratio_trend',      0.07, 'Diamond/studded revenue share'),
+    ],
+    'SERVICES_BPO': [
+        ('GROWTH',        'vertical_specialization', 0.08, 'Domain-specific BPO revenue'),
+        ('COMPETITIVE',   'automation_maturity',      0.07, 'RPA/AI cost per FTE savings'),
+    ],
+    'MATERIALS_PAPER': [
+        ('COMPETITIVE',   'integration_level',       0.08, 'Pulp self-sufficiency ratio'),
+        ('GROWTH',        'packaging_mix_shift',      0.07, 'Packaging board revenue share'),
+    ],
+    'SERVICES_PROFESSIONAL': [
+        ('COMPETITIVE',   'talent_brand',            0.08, 'Campus hiring success rate'),
+        ('GROWTH',        'digital_services_mix',     0.07, 'Digital consulting revenue %'),
+    ],
+    'SERVICES_EDUCATION': [
+        ('GROWTH',        'enrollment_pipeline',     0.08, 'Application/enrollment ratio'),
+        ('COMPETITIVE',   'placement_record',         0.07, 'Placement rate and avg package'),
+    ],
+    'CONSUMER_ALCOHOLIC_BEVERAGES': [
+        ('COMPETITIVE',   'premiumization_share',    0.08, 'Premium/prestige brand revenue %'),
+        ('GROWTH',        'state_distribution_reach', 0.07, 'States with active distribution'),
+    ],
+    'INFRA_SHIPPING': [
+        ('COMPETITIVE',   'fleet_age_advantage',     0.08, 'Average fleet age vs industry'),
+        ('GROWTH',        'fleet_expansion_plan',     0.07, 'Newbuild orders and deliveries'),
+    ],
+    'ENERGY_INDUSTRIAL_GAS': [
+        ('COMPETITIVE',   'onsite_plant_base',       0.08, 'Captive/on-site plant count'),
+        ('GROWTH',        'merchant_market_share',    0.07, 'Bulk/cylinder market position'),
+    ],
+    'MATERIALS_MINING': [
+        ('COMPETITIVE',   'reserve_quality',         0.08, 'Ore grade and reserve life'),
+        ('GROWTH',        'beneficiation_capacity',   0.07, 'Value-add processing expansion'),
+    ],
+    'INDUSTRIALS_ENVIRONMENTAL': [
+        ('GROWTH',        'municipal_contract_wins', 0.08, 'New city waste contracts'),
+        ('COMPETITIVE',   'technology_edge',          0.07, 'Proprietary treatment technology'),
+    ],
+    'SERVICES_AVIATION': [
+        ('COMPETITIVE',   'fleet_utilization',       0.08, 'Aircraft utilization hours/day'),
+        ('GROWTH',        'international_expansion',  0.07, 'International route additions'),
+    ],
+}
+
+# ============================================================================
+# MACRO LINK MAPPINGS: GROUP/SUBGROUP drivers → MACRO driver cascade
+# Format: (driver_level, driver_name, valuation_group_or_subgroup, linked_macro_driver, link_direction)
+# link_direction: 'SAME' = macro UP → driver POSITIVE, 'INVERSE' = macro UP → driver NEGATIVE
+# ============================================================================
+MACRO_LINK_MAPPINGS = [
+    # GROUP-level links
+    ('GROUP', 'commodity_prices',       'AUTO',                  'wpi_manufactured',      'INVERSE'),
+    ('GROUP', 'interest_rates_retail',  'AUTO',                  'repo_rate',             'INVERSE'),
+    ('GROUP', 'housing_demand',         'REAL_ESTATE_INFRA',     'repo_rate',             'INVERSE'),
+    ('GROUP', 'raw_material_costs',     'MATERIALS_CHEMICALS',   'wpi_primary_articles',  'INVERSE'),
+    ('GROUP', 'fuel_costs',             'ENERGY_UTILITIES',      'wpi_fuel_power',        'INVERSE'),
+    ('GROUP', 'input_costs',            'CONSUMER_STAPLES',      'cpi_food_inflation',    'INVERSE'),
+    ('GROUP', 'credit_growth',          'FINANCIALS',            'repo_rate',             'INVERSE'),
+    ('GROUP', 'global_demand',          'TECHNOLOGY',            'pmi_services',          'SAME'),
+    # SUBGROUP-level links
+    ('SUBGROUP', 'steel_prices',        'AUTO_OEM',              'wpi_manufactured',      'INVERSE'),
+    ('SUBGROUP', 'interest_rates',      'AUTO_OEM',              'repo_rate',             'INVERSE'),
+    ('SUBGROUP', 'rural_demand',        'AUTO_OEM',              'lfpr_total',            'SAME'),
+    ('SUBGROUP', 'deal_wins',           'TECHNOLOGY_IT_SERVICES','pmi_services',          'SAME'),
+    ('SUBGROUP', 'lme_copper_prices',   'METALS_COPPER_ZINC',    'wpi_primary_articles',  'SAME'),
+    ('SUBGROUP', 'iron_ore_prices',     'METALS_STEEL',          'wpi_primary_articles',  'SAME'),
+    ('SUBGROUP', 'housing_demand',      'REALTY_RESIDENTIAL',    'repo_rate',             'INVERSE'),
+    ('SUBGROUP', 'crude_oil_prices',    'ENERGY_UPSTREAM',       'wpi_fuel_power',        'SAME'),
+    ('SUBGROUP', 'fuel_demand',         'ENERGY_DOWNSTREAM',     'wpi_fuel_power',        'SAME'),
+    ('SUBGROUP', 'rbi_rates',           'FINANCIALS_BANKING_PRIVATE', 'repo_rate',        'SAME'),
+    ('SUBGROUP', 'rbi_rates',           'FINANCIALS_BANKING_PSU',     'repo_rate',        'SAME'),
+    ('SUBGROUP', 'cost_of_funds',       'FINANCIALS_NBFC_DIVERSIFIED','repo_rate',        'SAME'),
+    ('SUBGROUP', 'cost_of_funds',       'FINANCIALS_NBFC_HOUSING',   'repo_rate',         'SAME'),
+    ('SUBGROUP', 'cotton_prices',       'CONSUMER_TEXTILE',      'wpi_primary_articles',  'INVERSE'),
+    ('SUBGROUP', 'polymer_prices',      'MATERIALS_PLASTICS',    'wpi_manufactured',      'INVERSE'),
+    ('SUBGROUP', 'atf_prices',          'SERVICES_AVIATION',     'wpi_fuel_power',        'INVERSE'),
+    ('SUBGROUP', 'bunker_fuel_costs',   'INFRA_SHIPPING',        'wpi_fuel_power',        'INVERSE'),
+    ('SUBGROUP', 'consumer_sentiment',  'CONSUMER_DURABLES_BROWN_GOODS', 'cpi_headline',  'INVERSE'),
+]
+
+
 def insert_drivers(subgroup, group, drivers, cursor):
     """Insert drivers for a subgroup"""
     inserted = 0
@@ -753,6 +1295,156 @@ def insert_drivers(subgroup, group, drivers, cursor):
         except Exception as e:
             print(f"      Error inserting {name}: {e}")
     return inserted
+
+
+def populate_company_driver_templates():
+    """
+    Populate COMPANY-level driver templates for all active companies.
+    - 8 universal quantitative drivers (source=AUTO) per company
+    - 2-4 subgroup-specific qualitative drivers (source=SEED) per company
+    Uses INSERT IGNORE to not overwrite existing PM overrides.
+    """
+    print("=" * 70)
+    print("POPULATE COMPANY DRIVER TEMPLATES")
+    print("=" * 70)
+
+    conn = mysql.connector.connect(
+        host=os.getenv('MYSQL_HOST', 'localhost'),
+        port=int(os.getenv('MYSQL_PORT', 3306)),
+        user=os.getenv('MYSQL_USER', 'root'),
+        password=os.getenv('MYSQL_PASSWORD', ''),
+        database=os.getenv('MYSQL_DATABASE', 'rag')
+    )
+    cursor = conn.cursor(dictionary=True)
+
+    # Get all active companies with their subgroup
+    cursor.execute("""
+        SELECT company_id, nse_symbol, company_name, valuation_group, valuation_subgroup
+        FROM vs_active_companies
+        WHERE is_active = 1
+          AND valuation_subgroup IS NOT NULL
+          AND valuation_subgroup != ''
+          AND valuation_subgroup != 'NON_OPERATING'
+          AND valuation_subgroup != 'NOT_CLASSIFIED'
+    """)
+    companies = cursor.fetchall()
+    print(f"\n[1] Found {len(companies)} active companies with valid subgroups")
+
+    # Check existing COMPANY drivers to track what we skip
+    cursor.execute("SELECT COUNT(*) as cnt FROM vs_drivers WHERE driver_level = 'COMPANY'")
+    existing_count = cursor.fetchone()['cnt']
+    print(f"[2] Existing COMPANY drivers: {existing_count}")
+
+    total_inserted = 0
+    companies_processed = 0
+
+    for comp in companies:
+        company_id = comp['company_id']
+        subgroup = comp['valuation_subgroup']
+        group = comp['valuation_group']
+        inserted = 0
+
+        # 1. Insert 8 universal quantitative drivers
+        for category, name, weight, description in UNIVERSAL_COMPANY_DRIVERS:
+            try:
+                cursor.execute("""
+                    INSERT IGNORE INTO vs_drivers
+                    (driver_level, driver_category, driver_name, valuation_group, valuation_subgroup,
+                     company_id, weight, impact_direction, trend, updated_by, source, is_active)
+                    VALUES ('COMPANY', %s, %s, %s, %s, %s, %s, 'NEUTRAL', 'STABLE', 'system', 'AUTO', 1)
+                """, (category, name, group, subgroup, company_id, weight))
+                if cursor.rowcount > 0:
+                    inserted += 1
+            except Exception as e:
+                print(f"  Error inserting {name} for {comp['nse_symbol']}: {e}")
+
+        # 2. Insert subgroup-specific qualitative drivers
+        qualitative_drivers = SUBGROUP_COMPANY_DRIVERS.get(subgroup, [])
+        for category, name, weight, description in qualitative_drivers:
+            try:
+                cursor.execute("""
+                    INSERT IGNORE INTO vs_drivers
+                    (driver_level, driver_category, driver_name, valuation_group, valuation_subgroup,
+                     company_id, weight, impact_direction, trend, updated_by, source, is_active)
+                    VALUES ('COMPANY', %s, %s, %s, %s, %s, %s, 'NEUTRAL', 'STABLE', 'system', 'SEED', 1)
+                """, (category, name, group, subgroup, company_id, weight))
+                if cursor.rowcount > 0:
+                    inserted += 1
+            except Exception as e:
+                print(f"  Error inserting {name} for {comp['nse_symbol']}: {e}")
+
+        total_inserted += inserted
+        companies_processed += 1
+
+        if companies_processed % 200 == 0:
+            conn.commit()
+            print(f"  Processed {companies_processed}/{len(companies)} companies ({total_inserted} drivers inserted)")
+
+    conn.commit()
+
+    # Final count
+    cursor.execute("SELECT COUNT(*) as cnt FROM vs_drivers WHERE driver_level = 'COMPANY'")
+    final_count = cursor.fetchone()['cnt']
+
+    cursor.close()
+    conn.close()
+
+    print(f"\n[3] Summary:")
+    print(f"    Companies processed: {companies_processed}")
+    print(f"    New drivers inserted: {total_inserted}")
+    print(f"    Total COMPANY drivers now: {final_count}")
+
+    return companies_processed, total_inserted
+
+
+def apply_macro_link_mappings():
+    """
+    Apply macro link mappings to existing GROUP/SUBGROUP drivers.
+    Sets linked_macro_driver and link_direction on matching rows.
+    """
+    print("=" * 70)
+    print("APPLY MACRO LINK MAPPINGS")
+    print("=" * 70)
+
+    conn = mysql.connector.connect(
+        host=os.getenv('MYSQL_HOST', 'localhost'),
+        port=int(os.getenv('MYSQL_PORT', 3306)),
+        user=os.getenv('MYSQL_USER', 'root'),
+        password=os.getenv('MYSQL_PASSWORD', ''),
+        database=os.getenv('MYSQL_DATABASE', 'rag')
+    )
+    cursor = conn.cursor()
+
+    updated = 0
+    not_found = 0
+
+    for level, driver_name, group_or_subgroup, macro_driver, direction in MACRO_LINK_MAPPINGS:
+        if level == 'GROUP':
+            cursor.execute("""
+                UPDATE vs_drivers
+                SET linked_macro_driver = %s, link_direction = %s
+                WHERE driver_level = 'GROUP' AND driver_name = %s AND valuation_group = %s
+            """, (macro_driver, direction, driver_name, group_or_subgroup))
+        else:  # SUBGROUP
+            cursor.execute("""
+                UPDATE vs_drivers
+                SET linked_macro_driver = %s, link_direction = %s
+                WHERE driver_level = 'SUBGROUP' AND driver_name = %s AND valuation_subgroup = %s
+            """, (macro_driver, direction, driver_name, group_or_subgroup))
+
+        if cursor.rowcount > 0:
+            updated += 1
+            print(f"  Linked {level} {group_or_subgroup}/{driver_name} → {macro_driver} ({direction})")
+        else:
+            not_found += 1
+            print(f"  NOT FOUND: {level} {group_or_subgroup}/{driver_name}")
+
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+    print(f"\n  Updated: {updated}, Not found: {not_found}")
+    return updated, not_found
 
 
 def main():
@@ -825,4 +1517,16 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    import sys
+    if len(sys.argv) > 1 and sys.argv[1] == '--company':
+        populate_company_driver_templates()
+    elif len(sys.argv) > 1 and sys.argv[1] == '--macro-links':
+        apply_macro_link_mappings()
+    elif len(sys.argv) > 1 and sys.argv[1] == '--all':
+        main()
+        print("\n")
+        populate_company_driver_templates()
+        print("\n")
+        apply_macro_link_mappings()
+    else:
+        main()

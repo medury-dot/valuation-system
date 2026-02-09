@@ -109,6 +109,19 @@ METRIC_FREQUENCY_MAP = {
     'bank_pat': ['quarterly'],
     'gnpa': ['quarterly', 'annual'],
     'nnpa': ['quarterly', 'annual'],
+    'bank_netprofit': ['annual'],
+    'bank_networth': ['annual'],
+    'bank_totalincome': ['annual'],
+    # --- Additional annual-only P&L/derived ---
+    'change_in_stock': ['annual'],
+    'long_term_borrowings': ['annual'],
+    'misexp': ['annual'],
+    'netprofit': ['annual'],
+    'opex_minus_otherinc': ['annual'],
+    'powergen_distbn': ['annual'],
+    'sales_cashflow_ratio': ['annual'],
+    'seldistexp': ['annual'],
+    'totexp': ['annual'],   # annual version (quarterly 'totalexp' is separate)
 }
 
 
@@ -657,25 +670,46 @@ class CoreDataLoader:
         return sector_df.head(top_n)['Company Name'].tolist()
 
     def calculate_cagr(self, series: dict, years: int = 5) -> Optional[float]:
-        """Calculate CAGR from a time-series dict (year-keyed or index-keyed)."""
-        sorted_keys = sorted(series.keys())
-        if len(sorted_keys) < 2:
+        """
+        Calculate CAGR from a time-series dict (year-keyed or index-keyed).
+        Tries requested span first, then falls back to whatever years are available.
+        Minimum 2 data points required (1-year span).
+        """
+        if not series or len(series) < 2:
             return None
 
+        sorted_keys = sorted(series.keys())
         end_key = sorted_keys[-1]
-        start_key = max(sorted_keys[0], end_key - years)
-
-        start_val = series.get(start_key)
         end_val = series.get(end_key)
 
-        if not start_val or not end_val or start_val <= 0 or end_val <= 0:
+        if not end_val or end_val <= 0:
             return None
 
-        n = end_key - start_key
-        if n <= 0:
-            return None
+        # Try requested span first, then shrink to available data
+        target_start = end_key - years
+        # Find the closest available key >= target_start
+        for span_attempt in [years, None]:
+            if span_attempt is not None:
+                start_key = max(sorted_keys[0], target_start)
+            else:
+                # Final fallback: use first available year
+                start_key = sorted_keys[0]
 
-        return (end_val / start_val) ** (1 / n) - 1
+            start_val = series.get(start_key)
+            if not start_val or start_val <= 0:
+                continue
+
+            n = end_key - start_key
+            if n <= 0:
+                continue
+
+            cagr = (end_val / start_val) ** (1 / n) - 1
+            if span_attempt is not None and n < years:
+                logger.debug(f"  CAGR: requested {years}yr but only {n}yr available "
+                             f"({start_key}→{end_key}), CAGR={cagr:.2%}")
+            return cagr
+
+        return None
 
     def calculate_average(self, series: dict, years: int = 5) -> Optional[float]:
         """Calculate average of last N entries from a time-series dict."""

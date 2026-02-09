@@ -30,6 +30,24 @@ logger = logging.getLogger(__name__)
 load_dotenv(os.path.join(os.path.dirname(__file__), '..', 'config', '.env'))
 
 
+class ListHandler(logging.Handler):
+    """Logging handler that stores log records in a list for later retrieval.
+    Used to capture computation logs for the Excel Computation Log tab."""
+
+    def __init__(self):
+        super().__init__()
+        self.records = []
+
+    def emit(self, record):
+        self.records.append(record)
+
+    def get_records(self):
+        return list(self.records)
+
+    def clear(self):
+        self.records.clear()
+
+
 class ValuatorAgent:
     """
     Combines all valuation methodologies:
@@ -64,7 +82,8 @@ class ValuatorAgent:
     def run_full_valuation(self, company_config: dict,
                            sector_outlook: dict,
                            sector_config: dict = None,
-                           overrides: dict = None) -> dict:
+                           overrides: dict = None,
+                           company_adjustment: dict = None) -> dict:
         """
         Complete valuation pipeline for a company.
 
@@ -89,6 +108,15 @@ class ValuatorAgent:
 
         logger.info(f"Starting full valuation for {company_name} ({nse_symbol})")
 
+        # Attach ListHandler to capture all computation logs for Excel tab
+        log_handler = ListHandler()
+        log_handler.setLevel(logging.DEBUG)
+        log_handler.setFormatter(logging.Formatter(
+            '%(asctime)s | %(name)s | %(levelname)s | %(message)s'
+        ))
+        root_logger = logging.getLogger('valuation_system')
+        root_logger.addHandler(log_handler)
+
         # Track data quality issues
         warnings = []
         confidence_adjustments = []
@@ -106,10 +134,12 @@ class ValuatorAgent:
             warnings.append(f"Price data is stale: {staleness['prices_file']['age_hours']:.0f}h old")
             confidence_adjustments.append(-0.10)
 
-        # 2. Build DCF inputs
+        # 2. Build DCF inputs (pass valuation_subgroup for Indian beta lookup)
+        valuation_subgroup = company_config.get('valuation_subgroup', '')
         try:
             dcf_input_dict = self.financial_processor.build_dcf_inputs(
-                company_name, csv_sector, sector_config, overrides
+                company_name, csv_sector, sector_config, overrides,
+                valuation_subgroup=valuation_subgroup
             )
         except ValueError as e:
             logger.error(f"Cannot build DCF inputs for {company_name}: {e}")
@@ -117,6 +147,10 @@ class ValuatorAgent:
 
         # Apply sector outlook adjustments
         dcf_input_dict = self._apply_sector_adjustments(dcf_input_dict, sector_outlook)
+
+        # Apply company-level driver adjustments
+        if company_adjustment:
+            dcf_input_dict = self._apply_company_adjustments(dcf_input_dict, company_adjustment)
 
         # Convert to DCFInputs dataclass
         dcf_inputs = DCFInputs(**{
@@ -178,7 +212,27 @@ class ValuatorAgent:
                     relative_value = relative_result.get('relative_value_per_share')
 
                     # Store per-peer multiples for Excel peer table
-                    relative_result['peer_multiples_list'] = peer_multiples.get('peer_list', [])
+                    # Enrich with tier, taxonomy, and CD sector/industry
+                    raw_peer_list = peer_multiples.get('peer_list', [])
+                    peer_tier_map = {
+                        p['peer_symbol']: p for p in peer_group
+                    }
+                    # Batch-lookup taxonomy for all peer symbols
+                    peer_symbols_all = [pl.get('nse_symbol', '') for pl in raw_peer_list]
+                    taxonomy_map = self._get_peer_taxonomy(peer_symbols_all)
+
+                    for pl in raw_peer_list:
+                        sym = pl.get('nse_symbol', '')
+                        pg = peer_tier_map.get(sym, {})
+                        pl['tier'] = pg.get('tier', 'broad')
+                        pl['similarity'] = pg.get('similarity_score', 0)
+                        tax = taxonomy_map.get(sym, {})
+                        pl['valuation_group'] = tax.get('valuation_group', '')
+                        pl['valuation_subgroup'] = tax.get('valuation_subgroup', '')
+                        pl['cd_sector'] = tax.get('cd_sector', '')
+                        pl['cd_industry'] = tax.get('cd_industry', '')
+
+                    relative_result['peer_multiples_list'] = raw_peer_list
 
                     # Store peer group for traceability
                     relative_result['peer_group'] = [
@@ -219,7 +273,11 @@ class ValuatorAgent:
 
         # 9. Sensitivity analysis
         try:
-            sensitivity = self.dcf_model.sensitivity_analysis(dcf_inputs)
+            sensitivity = self.dcf_model.sensitivity_analysis(
+                dcf_inputs,
+                wacc_range=(-0.04, 0.04, 0.005),
+                growth_range=(-0.03, 0.03, 0.005),
+            )
         except Exception:
             sensitivity = {}
 
@@ -302,12 +360,20 @@ class ValuatorAgent:
             'subgroup_outlook': sector_outlook.get('subgroup_score', 0),
             'group_drivers': sector_outlook.get('group_drivers', {}),
             'subgroup_drivers': sector_outlook.get('subgroup_drivers', {}),
+
+            # Company-level driver adjustments
+            'company_adjustment': company_adjustment or {},
+            'company_drivers': (company_adjustment or {}).get('company_drivers', {}),
         }
 
         logger.info(f"Valuation complete for {company_name}: "
                      f"Blended=₹{blended_value:,.2f}, CMP=₹{cmp:,.2f}, "
                      f"Upside={upside_pct:+.1f}%, Confidence={confidence:.2f}" if upside_pct else
                      f"Valuation complete for {company_name}: Blended=₹{blended_value:,.2f}")
+
+        # Detach log handler and store captured records for Excel Computation Log tab
+        root_logger.removeHandler(log_handler)
+        result['_computation_logs'] = log_handler.get_records()
 
         return result
 
@@ -327,6 +393,43 @@ class ValuatorAgent:
 
         if margin_adj != 0:
             dcf_inputs['margin_improvement'] = dcf_inputs.get('margin_improvement', 0) + margin_adj
+
+        return dcf_inputs
+
+    def _apply_company_adjustments(self, dcf_inputs: dict,
+                                     company_adj: dict) -> dict:
+        """Adjust DCF inputs based on company-level driver scoring.
+
+        Auto-computed drivers → growth + margin adjustments (projection period).
+        PM-curated qualitative drivers → terminal ROCE + reinvestment adjustments.
+        """
+        # Growth adjustment from auto drivers
+        c_growth = company_adj.get('growth_adj', 0)
+        if c_growth != 0:
+            adjusted_rates = [
+                round(max(0.02, r * (1 + c_growth)), 4)
+                for r in dcf_inputs.get('revenue_growth_rates', [])
+            ]
+            dcf_inputs['revenue_growth_rates'] = adjusted_rates
+            logger.debug(f"Company growth adjusted by {c_growth:+.2%}: {adjusted_rates}")
+
+        # Margin adjustment from auto drivers
+        c_margin = company_adj.get('margin_adj', 0)
+        if c_margin != 0:
+            dcf_inputs['margin_improvement'] = dcf_inputs.get('margin_improvement', 0) + c_margin
+
+        # Terminal ROCE adjustment from PM qualitative drivers
+        roce_adj = company_adj.get('terminal_roce_adj', 0)
+        if roce_adj != 0:
+            dcf_inputs['terminal_roce'] = dcf_inputs.get('terminal_roce', 0.15) + roce_adj
+            logger.debug(f"Terminal ROCE adjusted by {roce_adj:+.2%}")
+
+        # Terminal reinvestment adjustment from PM qualitative drivers
+        reinv_adj = company_adj.get('terminal_reinv_adj', 0)
+        if reinv_adj != 0:
+            dcf_inputs['terminal_reinvestment_rate'] = (
+                dcf_inputs.get('terminal_reinvestment_rate', 0.30) + reinv_adj)
+            logger.debug(f"Terminal reinvestment adjusted by {reinv_adj:+.2%}")
 
         return dcf_inputs
 
@@ -418,6 +521,32 @@ class ValuatorAgent:
             score += adj
 
         return round(max(0.10, min(1.00, score)), 2)
+
+    def _get_peer_taxonomy(self, symbols: list) -> dict:
+        """Batch-lookup valuation_group, valuation_subgroup, cd_sector, cd_industry for peer symbols."""
+        if not symbols:
+            return {}
+        result = {}
+        # Query vs_active_companies + core CSV sector/industry
+        placeholders = ','.join(['%s'] * len(symbols))
+        rows = self.mysql.query(
+            f"""SELECT ms.symbol, ac.valuation_group, ac.valuation_subgroup,
+                       ms.sector as cd_sector, ms.industry as cd_industry
+                FROM {self.mysql.MARKETSCRIP_TABLE} ms
+                LEFT JOIN vs_active_companies ac ON ac.company_id = ms.marketscrip_id
+                WHERE ms.symbol IN ({placeholders})
+                  AND ms.scrip_type IN {self.mysql.EQUITY_SCRIP_TYPES}""",
+            symbols
+        )
+        for row in (rows or []):
+            sym = row.get('symbol', '')
+            result[sym] = {
+                'valuation_group': row.get('valuation_group') or '',
+                'valuation_subgroup': row.get('valuation_subgroup') or '',
+                'cd_sector': row.get('cd_sector') or '',
+                'cd_industry': row.get('cd_industry') or '',
+            }
+        return result
 
     # =========================================================================
     # PEER GROUP SELECTION
