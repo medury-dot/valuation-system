@@ -35,6 +35,14 @@
 - The issues CSV path and summary counts must be printed at the end of every batch run.
 - This enables post-run analysis of which companies have data issues, missing prices, negative valuations, etc.
 
+## Driver Weights
+- **Weights within each grouping MUST sum to 100%** and be displayed as percentage format (e.g., "12.0%" not 0.12).
+- Tab 1 (Macro): All 23 MACRO drivers sum to 100%
+- Tab 2 (Group): Drivers within each `valuation_group` sum to 100%
+- Tab 3 (Subgroup): Drivers within each `valuation_subgroup` sum to 100%
+- Tab 4 (Company): Drivers within each `company_id` sum to 100%
+- When adding new drivers or changing weights, normalize so the group total remains 100%.
+
 ## Config
 - All settings in `.env` file — no hardcoding
 - MySQL: root@localhost:3306/rag

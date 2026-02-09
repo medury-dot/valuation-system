@@ -644,6 +644,12 @@ Return as JSON."""
                 'processed': False,
             })
 
+            if not new_id:
+                logger.error("Failed to insert event into vs_event_timeline, no row ID returned | "
+                             "headline=%s | scope=%s | severity=%s",
+                             classified.get('headline', '')[:80], scope, severity)
+                return
+
             # Layer 2: Cross-run semantic grouping
             group_id = self._find_semantic_group(
                 classified.get('headline', ''), company_id, scope, sector, event_date)

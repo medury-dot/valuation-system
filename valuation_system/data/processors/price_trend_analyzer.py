@@ -647,8 +647,8 @@ class PriceTrendAnalyzer:
         try:
             deleted = mysql_client.execute(
                 "DELETE FROM vs_materiality_alerts "
-                "WHERE alert_date = %s AND alert_type = 'VALUATION_GAP' "
-                "AND scope = 'COMPANY' AND driver_affected IN ('pe', 'pb', 'evebidta', 'ps')",
+                "WHERE alert_date = %s AND alert_type IN ('VALUATION_GAP', 'VALUATION_BAND', 'EQUITY_RISK_PREMIUM', 'PRICE_MOMENTUM') "
+                "AND scope = 'COMPANY'",
                 (today,)
             )
             logger.info(
@@ -693,6 +693,349 @@ class PriceTrendAnalyzer:
             f"Upsert complete: {total_inserted} alerts inserted into vs_materiality_alerts"
         )
         return total_inserted
+
+    def detect_valuation_bands(self, company_lookups: list) -> list:
+        """
+        Detect where current PE/PB sits within the company's own 5-year percentile range.
+        Reports p10/p25/p50/p75/p90 bands for each ratio.
+
+        Returns list of alert dicts for companies in extreme bands (p10-p25 or p75-p90).
+        """
+        alerts = []
+        processed = 0
+
+        logger.info(f"Starting valuation band analysis for {len(company_lookups)} companies")
+
+        for lookup in company_lookups:
+            company_id = lookup.get('company_id')
+            accord_code = lookup.get('accord_code')
+            bse_code = lookup.get('bse_code')
+            nse_symbol = lookup.get('nse_symbol')
+            company_name = lookup.get('company_name', nse_symbol or str(company_id))
+            valuation_group = lookup.get('valuation_group')
+            valuation_subgroup = lookup.get('valuation_subgroup')
+
+            try:
+                rows = self._find_company_rows(accord_code, bse_code, nse_symbol)
+                if rows.empty:
+                    continue
+
+                # Use 5-year (60 month) history for band computation
+                latest_row = rows.iloc[-1]
+                latest_date = latest_row['daily_date']
+                cutoff_5y = latest_date - pd.DateOffset(months=60)
+                history_5y = rows[
+                    (rows['daily_date'] >= cutoff_5y) &
+                    (rows['daily_date'] < latest_date)
+                ]
+
+                if len(history_5y) < MIN_DATA_POINTS:
+                    continue
+
+                for ratio_col in ['pe', 'pb']:
+                    current_val = latest_row.get(ratio_col)
+                    if pd.isna(current_val) or current_val is None or float(current_val) <= 0:
+                        continue
+
+                    current_val = float(current_val)
+                    max_sane = MAX_SANE_RATIOS.get(ratio_col, 200)
+                    if current_val > max_sane:
+                        continue
+
+                    hist = history_5y[ratio_col].dropna()
+                    hist = hist[hist > 0]
+                    if len(hist) < MIN_DATA_POINTS:
+                        continue
+
+                    p10 = float(hist.quantile(0.10))
+                    p25 = float(hist.quantile(0.25))
+                    p50 = float(hist.quantile(0.50))
+                    p75 = float(hist.quantile(0.75))
+                    p90 = float(hist.quantile(0.90))
+                    h_min = float(hist.min())
+                    h_max = float(hist.max())
+
+                    pctile = float((hist < current_val).sum() / len(hist) * 100)
+
+                    # Only alert for extreme bands
+                    is_alert = False
+                    severity = None
+                    suggested_action = None
+
+                    if pctile <= 25:
+                        is_alert = True
+                        severity = 'HIGH' if pctile <= 10 else 'MEDIUM'
+                        suggested_action = 'REVALUE_NOW' if pctile <= 10 else 'WATCH'
+                    elif pctile >= 75:
+                        is_alert = True
+                        severity = 'HIGH' if pctile >= 90 else 'MEDIUM'
+                        suggested_action = 'REVALUE_NOW' if pctile >= 90 else 'WATCH'
+
+                    if is_alert:
+                        reasoning = (
+                            f"{company_name} {ratio_col.upper()} {current_val:.1f} at p{pctile:.0f} "
+                            f"of 5Y range [{h_min:.1f} - {h_max:.1f}]. "
+                            f"Bands: p10={p10:.1f}, p25={p25:.1f}, p50={p50:.1f}, "
+                            f"p75={p75:.1f}, p90={p90:.1f}. "
+                            f"Entry zone: <{p25:.1f} (p25)"
+                        )
+
+                        alerts.append({
+                            'alert_date': date.today().isoformat(),
+                            'alert_type': 'VALUATION_BAND',
+                            'severity': severity,
+                            'scope': 'COMPANY',
+                            'company_id': company_id,
+                            'valuation_group': valuation_group,
+                            'valuation_subgroup': valuation_subgroup,
+                            'driver_affected': ratio_col,
+                            'current_value': str(round(current_val, 2)),
+                            'baseline_value': str(round(p50, 2)),
+                            'deviation_pct': round(pctile, 1),
+                            'suggested_action': suggested_action,
+                            'signal_description': (
+                                f"Valuation Band: {ratio_col.upper()} at p{pctile:.0f} of 5Y range"
+                            ),
+                            'reasoning': reasoning,
+                        })
+                        logger.info(
+                            f"VALUATION_BAND: {company_name} {ratio_col.upper()} "
+                            f"at p{pctile:.0f}, severity={severity}"
+                        )
+
+                processed += 1
+
+            except Exception as e:
+                logger.error(f"Valuation band error for {company_name}: {e}", exc_info=True)
+                continue
+
+        logger.info(f"Valuation band analysis: processed={processed}, alerts={len(alerts)}")
+        return alerts
+
+    def detect_earnings_yield_vs_bond(self, company_lookups: list) -> list:
+        """
+        Compute Equity Risk Premium = (1/PE) - risk_free_rate.
+        Flag when ERP < 2% (expensive) or > 6% (cheap).
+
+        Reads risk-free rate from market_indicators.csv (MACRO_DATA_PATH in .env).
+        """
+        alerts = []
+
+        # Load risk-free rate
+        risk_free_rate = self._load_risk_free_rate()
+        if risk_free_rate is None:
+            logger.warning("No risk-free rate available, skipping earnings yield vs bond analysis")
+            return alerts
+
+        logger.info(f"Earnings yield vs bond analysis: risk_free_rate={risk_free_rate:.2%}, "
+                     f"companies={len(company_lookups)}")
+
+        for lookup in company_lookups:
+            company_id = lookup.get('company_id')
+            accord_code = lookup.get('accord_code')
+            bse_code = lookup.get('bse_code')
+            nse_symbol = lookup.get('nse_symbol')
+            company_name = lookup.get('company_name', nse_symbol or str(company_id))
+            valuation_group = lookup.get('valuation_group')
+            valuation_subgroup = lookup.get('valuation_subgroup')
+
+            try:
+                rows = self._find_company_rows(accord_code, bse_code, nse_symbol)
+                if rows.empty:
+                    continue
+
+                latest = rows.iloc[-1]
+                pe = latest.get('pe')
+                if pd.isna(pe) or pe is None or float(pe) <= 0:
+                    continue
+
+                pe = float(pe)
+                if pe > MAX_SANE_RATIOS.get('pe', 200):
+                    continue
+
+                earnings_yield = 1.0 / pe
+                erp = earnings_yield - risk_free_rate
+
+                is_alert = False
+                severity = None
+                suggested_action = None
+
+                if erp < 0.02:  # ERP < 2% = expensive
+                    is_alert = True
+                    severity = 'MEDIUM' if erp >= 0 else 'HIGH'
+                    suggested_action = 'WATCH' if erp >= 0 else 'REVALUE_NOW'
+                elif erp > 0.06:  # ERP > 6% = cheap
+                    is_alert = True
+                    severity = 'HIGH' if erp > 0.08 else 'MEDIUM'
+                    suggested_action = 'REVALUE_NOW' if erp > 0.08 else 'WATCH'
+
+                if is_alert:
+                    reasoning = (
+                        f"{company_name}: Earnings yield {earnings_yield:.1%} (PE={pe:.1f}x) vs "
+                        f"10Y bond {risk_free_rate:.1%}. "
+                        f"ERP = {erp:.1%}. "
+                        f"{'Expensive — ERP < 2%' if erp < 0.02 else 'Cheap — ERP > 6%'}"
+                    )
+
+                    alerts.append({
+                        'alert_date': date.today().isoformat(),
+                        'alert_type': 'EQUITY_RISK_PREMIUM',
+                        'severity': severity,
+                        'scope': 'COMPANY',
+                        'company_id': company_id,
+                        'valuation_group': valuation_group,
+                        'valuation_subgroup': valuation_subgroup,
+                        'driver_affected': 'pe',
+                        'current_value': str(round(erp * 100, 2)),
+                        'baseline_value': str(round(risk_free_rate * 100, 2)),
+                        'deviation_pct': round(erp * 100, 2),
+                        'suggested_action': suggested_action,
+                        'signal_description': (
+                            f"ERP: {erp:.1%} (E/Y={earnings_yield:.1%} vs Bond={risk_free_rate:.1%})"
+                        ),
+                        'reasoning': reasoning,
+                    })
+
+            except Exception as e:
+                logger.error(f"ERP error for {company_name}: {e}", exc_info=True)
+                continue
+
+        logger.info(f"Earnings yield vs bond: alerts={len(alerts)}")
+        return alerts
+
+    def _load_risk_free_rate(self) -> Optional[float]:
+        """Load 10Y bond yield from market_indicators.csv."""
+        macro_path = os.getenv('MACRO_DATA_PATH', '')
+        if not macro_path:
+            logger.warning("MACRO_DATA_PATH not set in .env")
+            return None
+
+        indicators_path = os.path.join(macro_path, 'market_indicators.csv')
+        if not os.path.exists(indicators_path):
+            logger.warning(f"market_indicators.csv not found at {indicators_path}")
+            return None
+
+        try:
+            df = pd.read_csv(indicators_path)
+            # Look for 10Y bond yield column
+            for col in df.columns:
+                if '10' in col.lower() and ('yield' in col.lower() or 'bond' in col.lower() or 'gsec' in col.lower()):
+                    vals = df[col].dropna()
+                    if not vals.empty:
+                        rate = float(vals.iloc[-1])
+                        return rate / 100 if rate > 1 else rate  # Handle both 7.2 and 0.072 formats
+            logger.warning("No 10Y bond yield column found in market_indicators.csv")
+            return 0.072  # Fallback India 10Y ~7.2%
+        except Exception as e:
+            logger.warning(f"Error loading risk-free rate: {e}")
+            return 0.072
+
+    def detect_price_momentum(self, company_lookups: list) -> list:
+        """
+        Compute 6M/12M price returns. Flag extreme momentum combined with context.
+
+        Returns alerts for companies with strong momentum signals.
+        """
+        alerts = []
+        processed = 0
+
+        logger.info(f"Starting price momentum analysis for {len(company_lookups)} companies")
+
+        for lookup in company_lookups:
+            company_id = lookup.get('company_id')
+            accord_code = lookup.get('accord_code')
+            bse_code = lookup.get('bse_code')
+            nse_symbol = lookup.get('nse_symbol')
+            company_name = lookup.get('company_name', nse_symbol or str(company_id))
+            valuation_group = lookup.get('valuation_group')
+            valuation_subgroup = lookup.get('valuation_subgroup')
+
+            try:
+                rows = self._find_company_rows(accord_code, bse_code, nse_symbol)
+                if rows.empty or len(rows) < 7:  # Need at least 7 months
+                    continue
+
+                latest = rows.iloc[-1]
+                latest_close = latest.get('close')
+                if pd.isna(latest_close) or latest_close is None or float(latest_close) <= 0:
+                    continue
+                latest_close = float(latest_close)
+
+                # 6M return
+                idx_6m = max(0, len(rows) - 7)
+                close_6m = rows.iloc[idx_6m].get('close')
+                ret_6m = None
+                if not pd.isna(close_6m) and close_6m and float(close_6m) > 0:
+                    ret_6m = (latest_close / float(close_6m)) - 1
+
+                # 12M return
+                ret_12m = None
+                if len(rows) >= 13:
+                    idx_12m = max(0, len(rows) - 13)
+                    close_12m = rows.iloc[idx_12m].get('close')
+                    if not pd.isna(close_12m) and close_12m and float(close_12m) > 0:
+                        ret_12m = (latest_close / float(close_12m)) - 1
+
+                if ret_6m is None:
+                    continue
+
+                # Acceleration: 6M return vs prior 6M return
+                acceleration = None
+                if ret_12m is not None and ret_6m is not None:
+                    prior_6m = ret_12m - ret_6m  # Approximate
+                    acceleration = ret_6m - prior_6m
+
+                # Signal detection
+                is_alert = False
+                severity = None
+                suggested_action = None
+
+                if ret_6m > 0.40:  # >40% in 6M = strong rally
+                    is_alert = True
+                    severity = 'HIGH' if ret_6m > 0.60 else 'MEDIUM'
+                    suggested_action = 'WATCH'
+                elif ret_6m < -0.25:  # >25% decline in 6M
+                    is_alert = True
+                    severity = 'HIGH' if ret_6m < -0.40 else 'MEDIUM'
+                    suggested_action = 'WATCH'
+
+                if is_alert:
+                    ret_12m_str = f", 12M={ret_12m:.0%}" if ret_12m is not None else ""
+                    accel_str = f", Accel={acceleration:.0%}" if acceleration is not None else ""
+
+                    reasoning = (
+                        f"{company_name}: 6M return={ret_6m:.0%}{ret_12m_str}{accel_str}. "
+                        f"{'Strong rally' if ret_6m > 0 else 'Sharp decline'} — "
+                        f"review fundamentals for mean-reversion risk."
+                    )
+
+                    alerts.append({
+                        'alert_date': date.today().isoformat(),
+                        'alert_type': 'PRICE_MOMENTUM',
+                        'severity': severity,
+                        'scope': 'COMPANY',
+                        'company_id': company_id,
+                        'valuation_group': valuation_group,
+                        'valuation_subgroup': valuation_subgroup,
+                        'driver_affected': 'close',
+                        'current_value': str(round(ret_6m * 100, 1)),
+                        'baseline_value': str(round((ret_12m or 0) * 100, 1)),
+                        'deviation_pct': round(ret_6m * 100, 1),
+                        'suggested_action': suggested_action,
+                        'signal_description': (
+                            f"Price momentum: 6M={ret_6m:.0%}{ret_12m_str}"
+                        ),
+                        'reasoning': reasoning,
+                    })
+
+                processed += 1
+
+            except Exception as e:
+                logger.error(f"Momentum error for {company_name}: {e}", exc_info=True)
+                continue
+
+        logger.info(f"Price momentum analysis: processed={processed}, alerts={len(alerts)}")
+        return alerts
 
     def run_full_analysis(self, mysql_client) -> dict:
         """
@@ -767,11 +1110,24 @@ class PriceTrendAnalyzer:
         logger.info("Step 3: Sector-relative anomaly detection")
         sector_alerts = self.detect_sector_relative_anomalies(company_rows)
 
+        # Step 3b: Valuation band analysis (5Y percentile bands)
+        logger.info("Step 3b: Valuation band analysis")
+        band_alerts = self.detect_valuation_bands(company_rows)
+
+        # Step 3c: Earnings yield vs bond yield (ERP)
+        logger.info("Step 3c: Earnings yield vs bond yield")
+        erp_alerts = self.detect_earnings_yield_vs_bond(company_rows)
+
+        # Step 3d: Price momentum signals
+        logger.info("Step 3d: Price momentum signals")
+        momentum_alerts = self.detect_price_momentum(company_rows)
+
         # Combine alerts
-        all_alerts = self_alerts + sector_alerts
+        all_alerts = self_alerts + sector_alerts + band_alerts + erp_alerts + momentum_alerts
         logger.info(
             f"Total alerts: {len(all_alerts)} "
-            f"(self-relative={len(self_alerts)}, sector-relative={len(sector_alerts)})"
+            f"(self-relative={len(self_alerts)}, sector-relative={len(sector_alerts)}, "
+            f"bands={len(band_alerts)}, erp={len(erp_alerts)}, momentum={len(momentum_alerts)})"
         )
 
         # Step 4: Upsert to database
@@ -785,6 +1141,9 @@ class PriceTrendAnalyzer:
             'companies_analyzed': len(company_rows),
             'self_alerts': len(self_alerts),
             'sector_alerts': len(sector_alerts),
+            'band_alerts': len(band_alerts),
+            'erp_alerts': len(erp_alerts),
+            'momentum_alerts': len(momentum_alerts),
             'total_inserted': total_inserted,
             'run_time_seconds': round(run_elapsed, 1),
         }
@@ -794,6 +1153,9 @@ class PriceTrendAnalyzer:
         logger.info(f"  Companies analyzed: {summary['companies_analyzed']}")
         logger.info(f"  Self-relative alerts: {summary['self_alerts']}")
         logger.info(f"  Sector-relative alerts: {summary['sector_alerts']}")
+        logger.info(f"  Valuation band alerts: {summary['band_alerts']}")
+        logger.info(f"  ERP alerts: {summary['erp_alerts']}")
+        logger.info(f"  Momentum alerts: {summary['momentum_alerts']}")
         logger.info(f"  Total alerts inserted: {summary['total_inserted']}")
         logger.info("=" * 70)
 

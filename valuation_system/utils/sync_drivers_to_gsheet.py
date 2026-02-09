@@ -9,16 +9,38 @@ import os
 import sys
 import json
 import time
+import logging
 import mysql.connector
 import gspread
+import pandas as pd
 from google.oauth2.service_account import Credentials
 from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
 
+logger = logging.getLogger(__name__)
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
+from collections import defaultdict
 from dotenv import load_dotenv
 load_dotenv('/Users/ram/code/research/valuation_system/config/.env')
+
+
+def _compute_weight_sums(drivers, group_key):
+    """Compute sum of weights per group for normalization to 100%."""
+    sums = defaultdict(float)
+    for d in drivers:
+        key = d.get(group_key, '') or ''
+        sums[key] += float(d.get('weight') or 0)
+    return sums
+
+
+def _fmt_weight_pct(raw_weight, group_sum):
+    """Normalize a weight to percentage string within its group."""
+    if group_sum <= 0:
+        return '0.0%'
+    pct = (float(raw_weight or 0) / group_sum) * 100
+    return f'{pct:.1f}%'
 
 
 def get_drivers_from_mysql(driver_level):
@@ -68,17 +90,21 @@ def sync_group_drivers(gc, sheet_id):
     drivers = get_drivers_from_mysql('GROUP')
     print(f"  Found {len(drivers)} GROUP drivers in MySQL")
 
+    # Normalize weights per valuation_group to sum to 100%
+    group_sums = _compute_weight_sums(drivers, 'valuation_group')
+
     # Prepare data with headers
     headers = ['Valuation Group', 'Category', 'Driver Name', 'Weight', 'Impact', 'Trend',
                'Current Value', 'Is Active', 'Source', 'Linked Macro', 'Link Direction', 'Last Updated']
     rows = [headers]
 
     for d in drivers:
+        grp = d['valuation_group'] or ''
         rows.append([
-            d['valuation_group'] or '',
+            grp,
             d['driver_category'] or '',
             d['driver_name'] or '',
-            float(d['weight']) if d['weight'] else 0.0,
+            _fmt_weight_pct(d['weight'], group_sums.get(grp, 0)),
             d['impact_direction'] or 'NEUTRAL',
             d['trend'] or 'STABLE',
             d['current_value'] or '',
@@ -92,7 +118,7 @@ def sync_group_drivers(gc, sheet_id):
     # Clear and update
     ws.clear()
     ws.update(range_name='A1', values=rows)
-    print(f"  Synced {len(rows)-1} GROUP drivers to Tab 2")
+    print(f"  Synced {len(rows)-1} GROUP drivers to Tab 2 ({len(group_sums)} groups, weights normalized to 100%)")
     return len(rows) - 1
 
 
@@ -105,18 +131,22 @@ def sync_subgroup_drivers(gc, sheet_id):
     drivers = get_drivers_from_mysql('SUBGROUP')
     print(f"  Found {len(drivers)} SUBGROUP drivers in MySQL")
 
+    # Normalize weights per valuation_subgroup to sum to 100%
+    subgroup_sums = _compute_weight_sums(drivers, 'valuation_subgroup')
+
     # Prepare data with headers
     headers = ['Valuation Group', 'Valuation Subgroup', 'Category', 'Driver Name', 'Weight', 'Impact', 'Trend',
                'Current Value', 'Is Active', 'Source', 'Linked Macro', 'Link Direction', 'Last Updated']
     rows = [headers]
 
     for d in drivers:
+        sg = d['valuation_subgroup'] or ''
         rows.append([
             d['valuation_group'] or '',
-            d['valuation_subgroup'] or '',
+            sg,
             d['driver_category'] or '',
             d['driver_name'] or '',
-            float(d['weight']) if d['weight'] else 0.0,
+            _fmt_weight_pct(d['weight'], subgroup_sums.get(sg, 0)),
             d['impact_direction'] or 'NEUTRAL',
             d['trend'] or 'STABLE',
             d['current_value'] or '',
@@ -130,7 +160,7 @@ def sync_subgroup_drivers(gc, sheet_id):
     # Clear and update
     ws.clear()
     ws.update(range_name='A1', values=rows)
-    print(f"  Synced {len(rows)-1} SUBGROUP drivers to Tab 3")
+    print(f"  Synced {len(rows)-1} SUBGROUP drivers to Tab 3 ({len(subgroup_sums)} subgroups, weights normalized to 100%)")
     return len(rows) - 1
 
 
@@ -172,6 +202,12 @@ def sync_macro_drivers(gc, sheet_id):
         'unemployment_rate':      {'category': 'Labour',    'unit': '%',     'source': 'MOSPI PLFS',  'frequency': 'Quarterly', 'description': 'Unemployment rate (15+ age)',              'weight': 0.03, 'bull': '5.0%', 'base': '7.0%', 'bear': '9.0%', 'lag_months': 3},
         'lfpr_total':             {'category': 'Labour',    'unit': '%',     'source': 'MOSPI PLFS',  'frequency': 'Quarterly', 'description': 'Labour force participation rate (15+)',    'weight': 0.02, 'bull': '60.0%','base': '55.0%','bear': '50.0%','lag_months': 3},
     }
+
+    # Compute total macro weight for normalization to 100%
+    macro_total_weight = sum(
+        float(MACRO_DRIVER_METADATA.get(d['driver_name'] or '', {}).get('weight', d['weight'] or 0))
+        for d in drivers
+    )
 
     # Headers matching existing Tab 1 format + Next Expected Update
     headers = [
@@ -222,7 +258,7 @@ def sync_macro_drivers(gc, sheet_id):
             d['current_value'] or '',
             d['trend'] or 'STABLE',
             d['impact_direction'] or 'NEUTRAL',
-            float(meta.get('weight', d['weight'] or 0)),
+            _fmt_weight_pct(meta.get('weight', d['weight'] or 0), macro_total_weight),
             meta.get('source', ''),
             meta.get('frequency', ''),
             meta.get('description', ''),
@@ -297,10 +333,68 @@ def sync_active_companies(gc, sheet_id):
     return len(rows) - 1
 
 
+def _load_mcap_company_ids(min_mcap_cr):
+    """Load set of company_ids with latest MCap >= min_mcap_cr from monthly prices CSV.
+    Maps accode/bse_code back to company_id via vs_active_companies."""
+    prices_path = os.getenv('MONTHLY_PRICES_PATH', '')
+    if not prices_path or not os.path.exists(prices_path):
+        logger.warning("MONTHLY_PRICES_PATH not found, skipping MCap filter")
+        return None
+
+    # Load prices, get latest MCap per accode
+    prices_df = pd.read_csv(prices_path, usecols=['accode', 'bse_code', 'mcap', 'year_month'],
+                            dtype={'accode': str, 'bse_code': str}, low_memory=False)
+    prices_df = prices_df.dropna(subset=['mcap'])
+    prices_df = prices_df.sort_values('year_month', ascending=False)
+
+    # Get latest MCap per accode (prefer NSE)
+    latest_mcap = {}
+    for _, row in prices_df.iterrows():
+        ac = str(row.get('accode', '')).strip()
+        bse = str(row.get('bse_code', '')).strip()
+        mcap = float(row['mcap'])
+        key = ac if ac and ac != 'nan' else bse
+        if key and key != 'nan' and key not in latest_mcap:
+            latest_mcap[key] = mcap
+
+    # Map to company_ids via vs_active_companies
+    conn = mysql.connector.connect(
+        host=os.getenv('MYSQL_HOST', 'localhost'),
+        port=int(os.getenv('MYSQL_PORT', 3306)),
+        user=os.getenv('MYSQL_USER', 'root'),
+        password=os.getenv('MYSQL_PASSWORD', ''),
+        database=os.getenv('MYSQL_DATABASE', 'rag')
+    )
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute("SELECT company_id, accord_code, bse_code FROM vs_active_companies")
+    companies = cursor.fetchall()
+    cursor.close()
+    conn.close()
+
+    qualifying_ids = set()
+    for comp in companies:
+        cid = comp['company_id']
+        ac = str(comp.get('accord_code') or '').strip()
+        bse = str(comp.get('bse_code') or '').strip()
+        mcap = latest_mcap.get(ac) or latest_mcap.get(bse) or 0
+        if mcap >= min_mcap_cr:
+            qualifying_ids.add(cid)
+
+    return qualifying_ids
+
+
 def sync_company_drivers(gc, sheet_id):
     """Sync COMPANY drivers to Tab 4 '4. Company Drivers'.
-    Handles large row counts (~29K) by writing in batches of 100 with 1s pause."""
-    import time
+    Only syncs companies with MCap >= MIN_GSHEET_MCAP_CR (default 1000 Cr).
+    Handles large row counts by writing in batches of 100 with 1s pause."""
+
+    min_mcap = float(os.getenv('MIN_GSHEET_MCAP_CR', 1000))
+    print(f"  Filtering to companies with MCap >= {min_mcap:.0f} Cr...")
+    mcap_company_ids = _load_mcap_company_ids(min_mcap)
+    if mcap_company_ids is not None:
+        print(f"  Found {len(mcap_company_ids)} companies with MCap >= {min_mcap:.0f} Cr")
+    else:
+        print("  WARNING: Could not load MCap data, syncing all companies")
 
     sh = gc.open_by_key(sheet_id)
 
@@ -344,15 +438,24 @@ def sync_company_drivers(gc, sheet_id):
         ORDER BY d.valuation_subgroup, a.company_name, d.driver_category, d.driver_name
     """)
 
-    drivers = cursor.fetchall()
+    all_drivers = cursor.fetchall()
     cursor.close()
     conn.close()
 
-    print(f"  Found {len(drivers)} COMPANY drivers in MySQL")
+    # Filter by MCap if available
+    if mcap_company_ids is not None:
+        drivers = [d for d in all_drivers if d['company_id'] in mcap_company_ids]
+        print(f"  Filtered: {len(drivers)} COMPANY drivers (from {len(all_drivers)} total) for {len(mcap_company_ids)} companies with MCap >= {min_mcap:.0f} Cr")
+    else:
+        drivers = all_drivers
+        print(f"  Found {len(drivers)} COMPANY drivers in MySQL (no MCap filter)")
 
     if not drivers:
         print("  No company drivers to sync")
         return 0
+
+    # Normalize weights per company_id to sum to 100%
+    company_sums = _compute_weight_sums(drivers, 'company_id')
 
     headers = [
         'Company ID', 'NSE Symbol', 'Company Name', 'Valuation Group',
@@ -363,8 +466,9 @@ def sync_company_drivers(gc, sheet_id):
     # Build all rows
     data_rows = []
     for d in drivers:
+        cid = d['company_id'] or ''
         data_rows.append([
-            d['company_id'] or '',
+            cid,
             d['nse_symbol'] or '',
             d['company_name'] or '',
             d['valuation_group'] or '',
@@ -374,7 +478,7 @@ def sync_company_drivers(gc, sheet_id):
             d['current_value'] or '',
             d['impact_direction'] or 'NEUTRAL',
             d['trend'] or 'STABLE',
-            float(d['weight']) if d['weight'] else 0.0,
+            _fmt_weight_pct(d['weight'], company_sums.get(cid, 0)),
             d.get('source', 'SEED') or 'SEED',
             'TRUE' if d.get('is_active', 1) else 'FALSE',
             str(d['last_updated']) if d['last_updated'] else ''
@@ -460,7 +564,7 @@ def sync_discovered_drivers(gc, sheet_id):
             d['valuation_subgroup'] or '',
             d['driver_category'] or '',
             d['driver_name'] or '',
-            float(d['suggested_weight']) if d['suggested_weight'] else 0.0,
+            f"{float(d['suggested_weight'])*100:.1f}%" if d['suggested_weight'] else '0.0%',
             d['reasoning'] or '',
             d['source_headline'] or '',
             d['confidence'] or 'MEDIUM',
@@ -571,7 +675,7 @@ def sync_news_events(gc, sheet_id):
         FROM vs_event_timeline e
         LEFT JOIN vs_active_companies ac ON e.company_id = ac.company_id
         WHERE e.event_date >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
-          AND (e.semantic_group_id IS NULL OR e.semantic_group_id = e.id)
+          AND e.semantic_group_id = e.id
         ORDER BY
             FIELD(e.severity, 'CRITICAL', 'HIGH', 'MEDIUM', 'LOW'),
             e.event_timestamp DESC

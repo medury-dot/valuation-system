@@ -34,10 +34,22 @@ class FinancialProcessor:
     - Build DCFInputs dataclass from raw data
     """
 
-    def __init__(self, core_loader, price_loader, damodaran_loader):
+    def __init__(self, core_loader, price_loader, damodaran_loader, nse_loader=None):
         self.core = core_loader
         self.prices = price_loader
         self.damodaran = damodaran_loader
+        self.nse = nse_loader
+
+        # Lazy-load NSE data if not provided
+        if self.nse is None:
+            try:
+                from valuation_system.data.loaders.nse_data_loader import NSEDataLoader
+                self.nse = NSEDataLoader()
+                if self.nse.is_available():
+                    logger.info("NSE data loader initialized and available")
+            except Exception as e:
+                logger.debug(f"NSE data unavailable: {e}")
+                self.nse = None
 
     def _prefer_ttm(self, financials: dict, annual_key: str,
                      quarterly_key: str) -> tuple:
@@ -202,6 +214,12 @@ class FinancialProcessor:
 
         nse_symbol = financials.get('nse_symbol', '')
         bse_code = financials.get('bse_code')
+
+        # Merge NSE data if available and has newer quarters
+        if self.nse and self.nse.is_available() and nse_symbol:
+            from valuation_system.data.loaders.nse_data_loader import merge_nse_into_financials
+            financials = merge_nse_into_financials(financials, nse_symbol, self.nse)
+
         price_data = self.prices.get_latest_data(nse_symbol, bse_code=bse_code, company_name=company_name)
 
         # Get WACC parameters — uses Indian subgroup beta when available

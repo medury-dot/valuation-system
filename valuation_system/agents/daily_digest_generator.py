@@ -247,6 +247,130 @@ class DailyDigestGenerator:
             logger.error("Failed to fetch news events: %s\n%s", e, traceback.format_exc())
             return []
 
+    def _get_top_headlines_by_driver_impact(self) -> list:
+        """
+        Fetch top 10 events from last 24 hours that have structured drivers_affected data,
+        ranked by severity and absolute valuation impact.
+        Returns list of dicts.
+        """
+        sql = """
+            SELECT
+                e.headline,
+                e.severity,
+                e.scope,
+                COALESCE(ac.valuation_subgroup, e.sector, '') as subgroup,
+                e.drivers_affected,
+                e.valuation_impact_pct,
+                e.source,
+                e.source_url,
+                COALESCE(ac.nse_symbol, '') as company_symbol
+            FROM vs_event_timeline e
+            LEFT JOIN vs_active_companies ac ON e.company_id = ac.company_id
+            WHERE e.event_date >= DATE_SUB(CURDATE(), INTERVAL 1 DAY)
+              AND e.severity IN ('CRITICAL', 'HIGH', 'MEDIUM')
+              AND e.drivers_affected IS NOT NULL
+              AND e.semantic_group_id = e.id
+            ORDER BY
+                FIELD(e.severity, 'CRITICAL', 'HIGH', 'MEDIUM'),
+                ABS(e.valuation_impact_pct) DESC
+            LIMIT 10
+        """
+        try:
+            results = self.mysql.query(sql)
+            logger.info("Top headlines by driver impact fetched: %d rows", len(results))
+            return results
+        except Exception as e:
+            logger.error("Failed to fetch top headlines by driver impact: %s\n%s", e, traceback.format_exc())
+            return []
+
+    @staticmethod
+    def _format_drivers_for_display(drivers_affected) -> str:
+        """
+        Format drivers_affected JSON into a human-readable string.
+        Handles both structured [{driver, level, impact_pct}] and flat list formats.
+        """
+        if not drivers_affected:
+            return ''
+        import json as _json
+        if isinstance(drivers_affected, str):
+            try:
+                drivers_affected = _json.loads(drivers_affected)
+            except (ValueError, TypeError):
+                return str(drivers_affected)
+
+        if isinstance(drivers_affected, list):
+            parts = []
+            for item in drivers_affected:
+                if isinstance(item, dict):
+                    name = item.get('driver', item.get('driver_name', ''))
+                    level = item.get('level', '')
+                    impact = item.get('impact_pct', '')
+                    if impact:
+                        try:
+                            parts.append(f"{name}({level}:{float(impact):+.1f}%)")
+                        except (ValueError, TypeError):
+                            parts.append(f"{name}({level})")
+                    else:
+                        parts.append(f"{name}({level})" if level else name)
+                elif isinstance(item, str):
+                    parts.append(item)
+            return ', '.join(parts)
+
+        return str(drivers_affected)
+
+    def _render_section_headline_driver_impact(self, headlines: list) -> str:
+        """Render Top Headlines by Driver Impact section."""
+        count = len(headlines)
+        header = f'Top Headlines by Driver Impact ({count})'
+
+        if count == 0:
+            return self._render_empty_section(header, 'No headline events with driver mappings in the last 24 hours.')
+
+        rows_html = ''
+        for h in headlines:
+            sev = str(h.get('severity', 'LOW'))
+            sev_color = self._severity_color(sev)
+            headline = self._truncate(h.get('headline', ''), 100)
+            url = h.get('source_url', '')
+            headline_html = (
+                f'<a href="{escape(url)}" style="color:#1565c0; text-decoration:none;">{escape(headline)}</a>'
+                if url else escape(headline)
+            )
+            scope = str(h.get('scope', '')).title()
+            subgroup = str(h.get('subgroup', '') or '')
+            drivers_str = self._format_drivers_for_display(h.get('drivers_affected'))
+            impact = h.get('valuation_impact_pct')
+            impact_str = f'{float(impact):+.1f}%' if impact is not None else ''
+            impact_color = '#2e7d32' if impact and float(impact) > 0 else '#d32f2f' if impact and float(impact) < 0 else '#757575'
+
+            rows_html += f'''
+            <tr>
+                <td style="padding:6px 10px; border:1px solid #e0e0e0;">
+                    <span style="color:{sev_color}; font-weight:bold; font-size:11px;">{sev}</span>
+                </td>
+                <td style="padding:6px 10px; border:1px solid #e0e0e0;">{headline_html}</td>
+                <td style="padding:6px 10px; border:1px solid #e0e0e0; font-size:12px;">{escape(scope)}</td>
+                <td style="padding:6px 10px; border:1px solid #e0e0e0; font-size:11px; color:#555; font-family:monospace;">{escape(drivers_str)}</td>
+                <td style="padding:6px 10px; border:1px solid #e0e0e0; text-align:right; color:{impact_color}; font-weight:bold;">{impact_str}</td>
+            </tr>'''
+
+        return f'''
+        <div style="margin-bottom:28px;">
+            <h2 style="color:#ff6f00; border-bottom:2px solid #ff6f00; padding-bottom:6px; font-size:18px;">
+                {header}
+            </h2>
+            <table style="width:100%; border-collapse:collapse; font-size:13px;">
+                <tr style="background:#fff3e0;">
+                    <th style="padding:8px 10px; border:1px solid #e0e0e0; text-align:left; width:70px;">Severity</th>
+                    <th style="padding:8px 10px; border:1px solid #e0e0e0; text-align:left;">Headline</th>
+                    <th style="padding:8px 10px; border:1px solid #e0e0e0; text-align:left; width:70px;">Scope</th>
+                    <th style="padding:8px 10px; border:1px solid #e0e0e0; text-align:left;">Drivers Impacted</th>
+                    <th style="padding:8px 10px; border:1px solid #e0e0e0; text-align:right; width:80px;">Impact %</th>
+                </tr>
+                {rows_html}
+            </table>
+        </div>'''
+
     # =========================================================================
     # HTML RENDERING
     # =========================================================================
@@ -570,13 +694,14 @@ class DailyDigestGenerator:
         # Fetch all data
         critical_alerts = self._get_critical_alerts()
         news_events = self._get_news_events()
+        top_headlines = self._get_top_headlines_by_driver_impact()
         pending_discoveries = self._get_pending_discoveries()
         value_opportunities, value_total_count = self._get_value_opportunities()
         driver_changes = self._get_driver_changes()
 
         # Build summary counts for the header
         total_items = (
-            len(critical_alerts) + len(news_events) + len(pending_discoveries)
+            len(critical_alerts) + len(top_headlines) + len(news_events) + len(pending_discoveries)
             + len(value_opportunities) + len(driver_changes)
         )
 
@@ -585,6 +710,7 @@ class DailyDigestGenerator:
 
         # Render each section
         section_alerts = self._render_section_critical_alerts(critical_alerts)
+        section_top_headlines = self._render_section_headline_driver_impact(top_headlines)
         section_news = self._render_section_news_events(news_events)
         section_discoveries = self._render_section_pending_discoveries(pending_discoveries)
         section_opportunities = self._render_section_value_opportunities(value_opportunities, value_total_count)
@@ -598,6 +724,10 @@ class DailyDigestGenerator:
                     <td style="text-align:center; padding:4px 12px;">
                         <span style="font-size:22px; font-weight:bold; color:#d32f2f;">{len(critical_alerts)}</span><br/>
                         <span style="color:#757575;">Critical Alerts</span>
+                    </td>
+                    <td style="text-align:center; padding:4px 12px;">
+                        <span style="font-size:22px; font-weight:bold; color:#ff6f00;">{len(top_headlines)}</span><br/>
+                        <span style="color:#757575;">Top Headlines</span>
                     </td>
                     <td style="text-align:center; padding:4px 12px;">
                         <span style="font-size:22px; font-weight:bold; color:#0d47a1;">{len(news_events)}</span><br/>
@@ -644,6 +774,8 @@ class DailyDigestGenerator:
 
             {section_alerts}
 
+            {section_top_headlines}
+
             {section_news}
 
             {section_discoveries}
@@ -668,7 +800,7 @@ class DailyDigestGenerator:
 </html>'''
 
         elapsed_ms = (datetime.now() - generation_start).total_seconds() * 1000
-        logger.info("Daily digest HTML generated | sections=4 | total_items=%d | elapsed=%.0fms",
+        logger.info("Daily digest HTML generated | sections=6 | total_items=%d | elapsed=%.0fms",
                      total_items, elapsed_ms)
 
         return html

@@ -359,6 +359,157 @@ CREATE TABLE IF NOT EXISTS vs_materiality_alerts (
     INDEX idx_group (valuation_group)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- 19. NSE FETCH TRACKER (State tracking for NSE filing data fetches)
+CREATE TABLE IF NOT EXISTS vs_nse_fetch_tracker (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    company_id INT NOT NULL COMMENT 'mssdb.kbapp_marketscrip.marketscrip_id',
+    nse_symbol VARCHAR(20) NOT NULL,
+
+    -- Latest data we have
+    latest_quarter_end DATE COMMENT 'e.g., 2024-12-31 = FY2025Q3',
+    latest_quarter_idx INT COMMENT 'e.g., 147 (matches core CSV convention)',
+    result_type CHAR(1) COMMENT 'U=unaudited, A=audited',
+    filing_date DATE COMMENT 'when company filed to NSE',
+
+    -- Fetch metadata
+    last_fetch_date DATETIME COMMENT 'when we last called the API',
+    last_fetch_status ENUM('SUCCESS','FAILED','NO_DATA') DEFAULT 'SUCCESS',
+    quarters_available INT DEFAULT 0 COMMENT 'how many quarters returned',
+    data_hash VARCHAR(32) COMMENT 'MD5 of results JSON (detect changes)',
+
+    -- XBRL tracking
+    xbrl_url VARCHAR(512) COMMENT 'URL for segment/balance sheet parsing',
+    xbrl_parsed TINYINT DEFAULT 0 COMMENT '0=not parsed, 1=parsed',
+    has_segments TINYINT DEFAULT 0 COMMENT '1 if multi-segment company',
+
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+    UNIQUE KEY uq_symbol (nse_symbol),
+    INDEX idx_quarter (latest_quarter_end),
+    INDEX idx_fetch_date (last_fetch_date),
+    INDEX idx_status (last_fetch_status),
+    INDEX idx_company (company_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='NSE filing fetch state tracking for event-driven updates';
+
+-- 20. COMPANY SEGMENTS (Canonical segment names per company)
+CREATE TABLE IF NOT EXISTS vs_company_segments (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    company_id INT NOT NULL COMMENT 'mssdb.kbapp_marketscrip.marketscrip_id',
+    segment_name VARCHAR(100) NOT NULL COMMENT 'e.g., "Royal Enfield", "VECV"',
+    segment_type ENUM('BUSINESS','GEOGRAPHIC') DEFAULT 'BUSINESS',
+    mapped_subgroup VARCHAR(50) COMMENT 'valuation_subgroup for this segment',
+    revenue_share_pct DECIMAL(5,2) COMMENT 'latest known % of total revenue',
+    is_active TINYINT DEFAULT 1,
+    source ENUM('XBRL','MANUAL','LLM_SUGGESTED') DEFAULT 'XBRL',
+    pm_approved TINYINT DEFAULT 0 COMMENT 'PM must approve segment→subgroup mapping',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+    UNIQUE KEY uq_company_segment (company_id, segment_name),
+    INDEX idx_subgroup (mapped_subgroup),
+    INDEX idx_company (company_id),
+    INDEX idx_approval (pm_approved)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Segment master for SOTP valuation';
+
+-- 21. SEGMENT FINANCIALS (Quarterly segment financial data)
+CREATE TABLE IF NOT EXISTS vs_segment_financials (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    company_id INT NOT NULL COMMENT 'mssdb.kbapp_marketscrip.marketscrip_id',
+    segment_id INT NOT NULL COMMENT 'FK to vs_company_segments.id',
+    quarter_idx INT NOT NULL COMMENT 'same convention as core CSV (147=FY2025Q3)',
+
+    revenue_cr DECIMAL(12,2) COMMENT 'segment revenue in crores',
+    profit_cr DECIMAL(12,2) COMMENT 'segment profit (EBIT or PBT)',
+    assets_cr DECIMAL(12,2) COMMENT 'segment assets',
+    liabilities_cr DECIMAL(12,2) COMMENT 'segment liabilities',
+    capex_cr DECIMAL(12,2) COMMENT 'segment capex',
+    depreciation_cr DECIMAL(12,2),
+
+    data_source ENUM('XBRL','MANUAL') DEFAULT 'XBRL',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+
+    UNIQUE KEY uq_seg_quarter (company_id, segment_id, quarter_idx),
+    INDEX idx_quarter (quarter_idx),
+    INDEX idx_segment (segment_id),
+    INDEX idx_company (company_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Quarterly segment financials from XBRL';
+
+-- 19. NSE FETCH TRACKER (State tracking for incremental NSE API fetching)
+-- Tracks which companies have been fetched, when, and what data we have.
+-- Enables event-driven fetching: only re-fetch when new filings are detected.
+CREATE TABLE IF NOT EXISTS vs_nse_fetch_tracker (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    company_id INT NOT NULL COMMENT 'mssdb.kbapp_marketscrip.marketscrip_id',
+    nse_symbol VARCHAR(20) NOT NULL,
+
+    -- Latest data we have
+    latest_quarter_end DATE COMMENT 'e.g., 2024-12-31 = FY2025Q3',
+    latest_quarter_idx INT COMMENT 'e.g., 147 (matches core CSV convention)',
+    result_type CHAR(1) COMMENT 'U=unaudited, A=audited',
+    filing_date DATE COMMENT 'when company filed to NSE',
+
+    -- Fetch metadata
+    last_fetch_date DATETIME COMMENT 'when we last called the API',
+    last_fetch_status ENUM('SUCCESS','FAILED','NO_DATA') DEFAULT 'SUCCESS',
+    quarters_available INT DEFAULT 0 COMMENT 'how many quarters returned',
+    data_hash VARCHAR(32) COMMENT 'MD5 of results JSON (detect changes)',
+
+    -- XBRL tracking (Phase 2)
+    xbrl_url VARCHAR(512) COMMENT 'URL for segment/balance sheet parsing',
+    xbrl_parsed TINYINT DEFAULT 0 COMMENT '0=not parsed, 1=parsed',
+    has_segments TINYINT DEFAULT 0 COMMENT '1 if multi-segment company',
+
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+    UNIQUE KEY uq_symbol (nse_symbol),
+    INDEX idx_company (company_id),
+    INDEX idx_quarter (latest_quarter_end),
+    INDEX idx_fetch_date (last_fetch_date),
+    INDEX idx_status (last_fetch_status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 20. COMPANY SEGMENTS (Canonical segment names per company, from XBRL)
+-- Phase 2: Segment data for SOTP valuation of conglomerates.
+CREATE TABLE IF NOT EXISTS vs_company_segments (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    company_id INT NOT NULL COMMENT 'mssdb.kbapp_marketscrip.marketscrip_id',
+    segment_name VARCHAR(100) NOT NULL COMMENT 'e.g., Royal Enfield, VECV',
+    segment_type ENUM('BUSINESS','GEOGRAPHIC') DEFAULT 'BUSINESS',
+    mapped_subgroup VARCHAR(50) COMMENT 'our valuation_subgroup for this segment',
+    revenue_share_pct DECIMAL(5,2) COMMENT 'latest known pct of total revenue',
+    is_active TINYINT DEFAULT 1,
+    source ENUM('XBRL','MANUAL','LLM_SUGGESTED') DEFAULT 'XBRL',
+    pm_approved TINYINT DEFAULT 0 COMMENT 'PM must approve segment->subgroup mapping',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+    UNIQUE KEY uq_company_segment (company_id, segment_name),
+    INDEX idx_subgroup (mapped_subgroup)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 21. SEGMENT FINANCIALS (Quarterly segment P&L from XBRL)
+CREATE TABLE IF NOT EXISTS vs_segment_financials (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    company_id INT NOT NULL COMMENT 'mssdb.kbapp_marketscrip.marketscrip_id',
+    segment_id INT NOT NULL COMMENT 'FK to vs_company_segments.id',
+    quarter_idx INT NOT NULL COMMENT 'same convention as core CSV (147=FY2025Q3)',
+
+    revenue_cr DECIMAL(12,2) COMMENT 'segment revenue in crores',
+    profit_cr DECIMAL(12,2) COMMENT 'segment profit (EBIT or PBT)',
+    assets_cr DECIMAL(12,2) COMMENT 'segment assets',
+    liabilities_cr DECIMAL(12,2) COMMENT 'segment liabilities',
+    capex_cr DECIMAL(12,2) COMMENT 'segment capex',
+    depreciation_cr DECIMAL(12,2),
+
+    data_source ENUM('XBRL','MANUAL') DEFAULT 'XBRL',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+
+    UNIQUE KEY uq_seg_quarter (company_id, segment_id, quarter_idx),
+    INDEX idx_quarter (quarter_idx)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- =============================================================================
 -- SEED DATA: Initial model version
 -- =============================================================================

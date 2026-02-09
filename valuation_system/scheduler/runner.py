@@ -16,6 +16,11 @@ Usage:
   # Weekly summary (run Sunday ~10:00 IST)
   python -m valuation_system.scheduler.runner weekly
 
+  # NSE filing data fetch (daily event-driven or full sweep)
+  python -m valuation_system.scheduler.runner nse_fetch
+  python -m valuation_system.scheduler.runner nse_fetch --mode sweep
+  python -m valuation_system.scheduler.runner nse_fetch --mode seed
+
   # On-demand single company valuation
   python -m valuation_system.scheduler.runner valuation --symbol AETHER
 
@@ -156,6 +161,21 @@ def run_weekly():
     return summary
 
 
+def run_nse_fetch(mode: str = 'daily', symbol: str = None):
+    """NSE filing data fetch: daily event-driven or full sweep."""
+    from valuation_system.nse_results_prototype.nse_loader import NSELoader
+
+    loader = NSELoader()
+    symbols = [symbol] if symbol else None
+    fetch_mode = 'symbol' if symbol else mode
+
+    result = loader.run(mode=fetch_mode, symbols=symbols)
+    logger.info(f"NSE fetch result: mode={fetch_mode}, "
+                f"fetched={result.get('companies_fetched', 0)}, "
+                f"failed={result.get('companies_failed', 0)}")
+    return result
+
+
 def run_valuation(symbol: str = None, company_key: str = None):
     """On-demand single company valuation."""
     from valuation_system.agents.orchestrator import OrchestratorAgent
@@ -246,14 +266,34 @@ def run_tests():
     return runner.run_all_tests()
 
 
+def run_nse_fetch(mode: str = 'daily', symbol: str = None):
+    """Fetch NSE filing data (daily event-driven or quarterly sweep)."""
+    from valuation_system.nse_results_prototype.nse_loader import NSELoader
+
+    loader = NSELoader()
+
+    if mode == 'daily':
+        result = loader.run_daily()
+    elif mode == 'sweep':
+        result = loader.run_sweep()
+    elif mode == 'single' and symbol:
+        result = loader.run_single(symbol)
+    else:
+        logger.error(f"Invalid NSE fetch mode: {mode}")
+        return {'error': 'invalid_mode'}
+
+    logger.info(f"NSE fetch complete: {result}")
+    return result
+
+
 def run_init():
     """Initialize the system: create tables, seed data, create sheets."""
     logger.info("Initializing valuation system...")
 
     # 1. Create MySQL tables
     try:
-        from valuation_system.storage.mysql_client import get_mysql_client
-        mysql = get_mysql_client()
+        from valuation_system.storage.mysql_client import ValuationMySQLClient
+        mysql = ValuationMySQLClient.get_instance()
         schema_path = os.path.join(os.path.dirname(__file__), '..', 'storage', 'schema.sql')
         with open(schema_path, 'r') as f:
             sql_content = f.read()
@@ -298,7 +338,7 @@ def run_init():
         logger.error(f"MySQL init failed: {e}", exc_info=True)
 
     # 2. Create necessary directories
-    dirs = ['logs', 'reports', 'data/cache', 'data/state']
+    dirs = ['logs', 'reports', 'data/cache', 'data/state', 'nse_results_prototype/cache']
     base = os.path.join(os.path.dirname(__file__), '..')
     for d in dirs:
         os.makedirs(os.path.join(base, d), exist_ok=True)
@@ -311,10 +351,12 @@ def main():
     parser.add_argument('command', choices=[
         'hourly', 'daily', 'social', 'weekly',
         'valuation', 'portfolio', 'catchup',
-        'status', 'test', 'init'
+        'status', 'test', 'init', 'nse_fetch'
     ], help='Command to run')
-    parser.add_argument('--symbol', type=str, help='NSE symbol for on-demand valuation')
+    parser.add_argument('--symbol', type=str, help='NSE symbol for on-demand valuation or NSE fetch')
     parser.add_argument('--company', type=str, help='Company key for on-demand valuation')
+    parser.add_argument('--mode', type=str, choices=['daily', 'sweep', 'seed'], default='daily',
+                        help='NSE fetch mode: daily (event-driven), sweep (full), seed (register + sweep)')
 
     args = parser.parse_args()
 
@@ -342,6 +384,8 @@ def main():
             result = run_tests()
         elif args.command == 'init':
             result = run_init()
+        elif args.command == 'nse_fetch':
+            result = run_nse_fetch(mode=args.mode, symbol=args.symbol)
         else:
             print(f"Unknown command: {args.command}")
             return

@@ -912,6 +912,7 @@ def get_subgroup_to_group_mapping():
 # Every active company gets these 8 drivers with source='AUTO'
 # ============================================================================
 UNIVERSAL_COMPANY_DRIVERS = [
+    # Original 8 drivers
     ('GROWTH',        'revenue_cagr_3yr',          0.12, '3-year quarterly revenue CAGR vs subgroup median'),
     ('PROFITABILITY', 'ebitda_margin_vs_peers',     0.10, 'TTM EBITDA margin percentile within subgroup'),
     ('PROFITABILITY', 'roce_trend',                 0.10, '3-year ROCE direction (improving/declining/stable)'),
@@ -920,6 +921,35 @@ UNIVERSAL_COMPANY_DRIVERS = [
     ('CASH_FLOW',     'fcf_yield',                   0.08, 'TTM FCF / market cap vs subgroup median'),
     ('GROWTH',        'earnings_momentum',           0.08, 'PAT growth acceleration (QoQ trend of YoY growth)'),
     ('VALUATION',     'relative_valuation_gap',      0.06, 'P/E vs subgroup median (premium/discount)'),
+    # New market share + growth drivers (9-11)
+    ('COMPETITIVE',   'market_share_by_revenue',     0.08, 'Subgroup+group revenue share with capex context'),
+    ('COMPETITIVE',   'market_share_by_profit',      0.06, 'Subgroup+group PAT share (profitable cos only)'),
+    ('GROWTH',        'growth_vs_gdp',               0.07, 'Company 3Y revenue CAGR vs GDP growth ratio'),
+    # Exposed DCF metrics (12-16)
+    ('CASH_FLOW',     'capex_to_sales_trend',        0.06, '3Y capex/sales trend-weighted ratio'),
+    ('CASH_FLOW',     'nwc_to_sales_trend',          0.05, 'NWC/Sales from half-yearly balance sheet'),
+    ('PROFITABILITY', 'effective_tax_rate',           0.04, 'Effective tax rate (1 - PAT/PBT)'),
+    ('BALANCE_SHEET', 'cost_of_debt',                0.04, 'Interest/Total Debt ratio'),
+    ('GOVERNANCE',    'promoter_pledge_pct',          0.06, 'Promoter shares pledged percentage'),
+    # Ratio drivers Tier 1 (17-21)
+    ('BALANCE_SHEET', 'interest_coverage',            0.07, 'TTM PBIDT / TTM Interest'),
+    ('PROFITABILITY', 'operating_leverage',           0.05, '%ΔPBIDT / %ΔSales YoY'),
+    ('CASH_FLOW',     'fcf_margin',                   0.06, '(CFO - Capex) / Sales'),
+    ('PROFITABILITY', 'earnings_quality',             0.06, 'Operating CF / PAT ratio'),
+    ('STRATEGIC',     'capex_phase',                  0.05, 'Latest 2Y vs 3Y avg capex (expansion/maintenance/harvesting)'),
+    # Ratio drivers Tier 2 (22-26)
+    ('PROFITABILITY', 'roe_trend_3y',                0.05, '3-year ROE direction from pre-computed CSV'),
+    ('PROFITABILITY', 'gross_margin_trend',           0.04, '3-year gross margin direction'),
+    ('CASH_FLOW',     'cash_conversion_cycle',        0.05, 'CCC in days + trend direction'),
+    ('GROWTH',        'earnings_volatility',          0.05, 'Std dev of quarterly PAT YoY growth'),
+    ('PROFITABILITY', 'asset_turnover_trend',         0.04, 'Sales/TotalAssets trend over 3 years'),
+    # Composite quality scores (27-30)
+    ('COMPETITIVE',   'operational_excellence',       0.07, 'Weighted ROCE+OPM+CapexEfficiency rank in subgroup'),
+    ('BALANCE_SHEET', 'financial_health',             0.06, 'D/E + Interest Coverage + Cash position blend'),
+    ('GROWTH',        'growth_efficiency',            0.06, 'Revenue CAGR / Capital intensity'),
+    ('PROFITABILITY', 'earnings_sustainability',      0.05, 'OCF/PAT + earnings stability blend'),
+    # Employee productivity (31)
+    ('COMPETITIVE',   'employee_productivity',        0.04, 'TTM sales / TTM employee cost ratio'),
 ]
 
 # ============================================================================
@@ -1300,7 +1330,7 @@ def insert_drivers(subgroup, group, drivers, cursor):
 def populate_company_driver_templates():
     """
     Populate COMPANY-level driver templates for all active companies.
-    - 8 universal quantitative drivers (source=AUTO) per company
+    - 31 universal quantitative drivers (source=AUTO) per company
     - 2-4 subgroup-specific qualitative drivers (source=SEED) per company
     Uses INSERT IGNORE to not overwrite existing PM overrides.
     """
@@ -1344,7 +1374,7 @@ def populate_company_driver_templates():
         group = comp['valuation_group']
         inserted = 0
 
-        # 1. Insert 8 universal quantitative drivers
+        # 1. Insert 31 universal quantitative drivers
         for category, name, weight, description in UNIVERSAL_COMPANY_DRIVERS:
             try:
                 cursor.execute("""

@@ -6,11 +6,12 @@ Defines 5 declarative pipelines with scheduling, dependencies, alerting, and mon
 Each pipeline is a sequence of steps that can be executed by the XYOps scheduler.
 
 Pipelines:
-1. macro_sync     — 06:00 IST daily: Scrape macro data, sync to MySQL/GSheet, assess materiality
-2. news_scan      — Every 60 min (08:00-22:00 IST): Scan news, classify, update drivers
-3. daily_valuation — 20:00 IST daily: Full valuation run for all active companies
-4. weekly_review   — Sunday 10:00 IST: Full GSheet sync, trend detection, opportunity scoring
-5. social_posts    — 08:00 IST daily: Generate and queue social media posts
+1. macro_sync      — 06:00 IST daily: Scrape macro data, sync to MySQL/GSheet, assess materiality
+2. news_scan       — Every 60 min (08:00-22:00 IST): Scan news, classify, update drivers
+3. nse_fetch       — Standalone: Full NSE sweep for all tracked companies (quarterly safety net)
+4. daily_valuation — 20:00 IST daily: NSE fetch + batch valuation + alerts + email digest
+5. weekly_review   — Sunday 10:00 IST: Full GSheet sync, trend detection, opportunity scoring
+6. social_posts    — 08:00 IST daily: Generate and queue social media posts
 """
 
 import os
@@ -122,8 +123,32 @@ PIPELINES = {
         'metrics': ['articles_scanned', 'significant_events', 'driver_changes', 'discoveries_pending'],
     },
 
+    'nse_fetch': {
+        'description': 'NSE filing data: full sweep of all tracked companies (quarterly safety net)',
+        'schedule': '0 2 15 2,5,8,11 *',  # 02:00 IST on 15th of Feb/May/Aug/Nov
+        'timezone': 'Asia/Kolkata',
+        'timeout_minutes': 45,
+        'retries': 1,
+        'retry_backoff_minutes': 10,
+        'alert_on_failure': True,
+        'alert_email': os.getenv('ALERT_EMAIL', 'medury@gmail.com'),
+        'dependencies': [],
+        'steps': [
+            {
+                'name': 'nse_full_sweep',
+                'description': 'Fetch NSE filing data for all tracked companies',
+                'module': 'valuation_system.nse_results_prototype.nse_loader',
+                'class': 'NSELoader',
+                'method': 'run',
+                'kwargs': {'mode': 'sweep'},
+                'timeout_minutes': 40,
+            },
+        ],
+        'metrics': ['companies_fetched', 'companies_failed', 'api_calls'],
+    },
+
     'daily_valuation': {
-        'description': 'Full valuation run: approved discoveries → batch valuation → alerts → email digest',
+        'description': 'Full valuation run: NSE fetch → approved discoveries → batch valuation → alerts → email digest',
         'schedule': '0 20 * * *',  # 20:00 IST daily
         'timezone': 'Asia/Kolkata',
         'timeout_minutes': 120,  # 2 hours for ~2,900 companies
@@ -134,6 +159,16 @@ PIPELINES = {
         'dependencies': ['macro_sync'],  # Must run after macro_sync completes
         'sla_minutes': 120,  # SLA: complete within 2 hours
         'steps': [
+            {
+                'name': 'nse_fetch',
+                'description': 'Fetch latest NSE filings (event-driven, ~20-100 companies)',
+                'module': 'valuation_system.nse_results_prototype.nse_loader',
+                'class': 'NSELoader',
+                'method': 'run',
+                'kwargs': {'mode': 'daily'},
+                'timeout_minutes': 10,
+                'note': 'Event-driven: only fetches companies with new filings since last run',
+            },
             {
                 'name': 'process_discoveries',
                 'description': 'Promote APPROVED discovered drivers into vs_drivers',
@@ -166,7 +201,31 @@ PIPELINES = {
                 'timeout_minutes': 5,
             },
         ],
-        'metrics': ['companies_valued', 'valuation_errors', 'alerts_triggered', 'elapsed_minutes'],
+        'metrics': ['nse_companies_fetched', 'companies_valued', 'valuation_errors', 'alerts_triggered', 'elapsed_minutes'],
+    },
+
+    'nse_sweep': {
+        'description': 'Quarterly NSE full sweep: fetch all 1,500 active companies (safety net)',
+        'schedule': '0 2 15 2,5,8,11 *',  # 02:00 IST on 15th of Feb/May/Aug/Nov
+        'timezone': 'Asia/Kolkata',
+        'timeout_minutes': 60,
+        'retries': 2,
+        'retry_backoff_minutes': 10,
+        'alert_on_failure': True,
+        'alert_email': os.getenv('ALERT_EMAIL', 'medury@gmail.com'),
+        'dependencies': [],
+        'steps': [
+            {
+                'name': 'nse_full_sweep',
+                'description': 'Fetch all 1,500 active companies from NSE (45-day staleness check)',
+                'module': 'valuation_system.nse_results_prototype.nse_loader',
+                'class': 'NSELoader',
+                'method': 'run_sweep',
+                'timeout_minutes': 50,
+                'note': 'Safety net: catches any filings missed by daily event-driven mode',
+            },
+        ],
+        'metrics': ['companies_fetched', 'companies_skipped', 'elapsed_minutes'],
     },
 
     'weekly_review': {
