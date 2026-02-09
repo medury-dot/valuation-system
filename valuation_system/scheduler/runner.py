@@ -161,15 +161,21 @@ def run_weekly():
     return summary
 
 
-def run_nse_fetch(mode: str = 'daily', symbol: str = None):
-    """NSE filing data fetch: daily event-driven or full sweep."""
+def run_nse_fetch(mode: str = 'daily', symbol: str = None, min_mcap_cr: float = 2500.0):
+    """NSE filing data fetch: daily event-driven or full sweep.
+
+    Args:
+        mode: 'daily' | 'sweep' | 'seed'
+        symbol: Single NSE symbol for 'symbol' mode
+        min_mcap_cr: Minimum market cap in crores for seed mode (default: 2500)
+    """
     from valuation_system.nse_results_prototype.nse_loader import NSELoader
 
     loader = NSELoader()
     symbols = [symbol] if symbol else None
     fetch_mode = 'symbol' if symbol else mode
 
-    result = loader.run(mode=fetch_mode, symbols=symbols)
+    result = loader.run(mode=fetch_mode, symbols=symbols, min_mcap_cr=min_mcap_cr)
     logger.info(f"NSE fetch result: mode={fetch_mode}, "
                 f"fetched={result.get('companies_fetched', 0)}, "
                 f"failed={result.get('companies_failed', 0)}")
@@ -266,25 +272,6 @@ def run_tests():
     return runner.run_all_tests()
 
 
-def run_nse_fetch(mode: str = 'daily', symbol: str = None):
-    """Fetch NSE filing data (daily event-driven or quarterly sweep)."""
-    from valuation_system.nse_results_prototype.nse_loader import NSELoader
-
-    loader = NSELoader()
-
-    if mode == 'daily':
-        result = loader.run_daily()
-    elif mode == 'sweep':
-        result = loader.run_sweep()
-    elif mode == 'single' and symbol:
-        result = loader.run_single(symbol)
-    else:
-        logger.error(f"Invalid NSE fetch mode: {mode}")
-        return {'error': 'invalid_mode'}
-
-    logger.info(f"NSE fetch complete: {result}")
-    return result
-
 
 def run_init():
     """Initialize the system: create tables, seed data, create sheets."""
@@ -357,6 +344,8 @@ def main():
     parser.add_argument('--company', type=str, help='Company key for on-demand valuation')
     parser.add_argument('--mode', type=str, choices=['daily', 'sweep', 'seed'], default='daily',
                         help='NSE fetch mode: daily (event-driven), sweep (full), seed (register + sweep)')
+    parser.add_argument('--min-mcap', type=float, default=2500.0,
+                        help='Minimum market cap in crores for NSE seed mode (default: 2500)')
 
     args = parser.parse_args()
 
@@ -385,7 +374,7 @@ def main():
         elif args.command == 'init':
             result = run_init()
         elif args.command == 'nse_fetch':
-            result = run_nse_fetch(mode=args.mode, symbol=args.symbol)
+            result = run_nse_fetch(mode=args.mode, symbol=args.symbol, min_mcap_cr=args.min_mcap)
         else:
             print(f"Unknown command: {args.command}")
             return

@@ -348,13 +348,20 @@ def _load_mcap_company_ids(min_mcap_cr):
     prices_df = prices_df.sort_values('year_month', ascending=False)
 
     # Get latest MCap per accode (prefer NSE)
+    # Strip '.0' suffix from CSV float-strings to match DB integer-strings
+    def _clean_code(val):
+        s = str(val).strip()
+        if s.endswith('.0'):
+            s = s[:-2]
+        return s if s and s != 'nan' else ''
+
     latest_mcap = {}
     for _, row in prices_df.iterrows():
-        ac = str(row.get('accode', '')).strip()
-        bse = str(row.get('bse_code', '')).strip()
+        ac = _clean_code(row.get('accode', ''))
+        bse = _clean_code(row.get('bse_code', ''))
         mcap = float(row['mcap'])
-        key = ac if ac and ac != 'nan' else bse
-        if key and key != 'nan' and key not in latest_mcap:
+        key = ac if ac else bse
+        if key and key not in latest_mcap:
             latest_mcap[key] = mcap
 
     # Map to company_ids via vs_active_companies

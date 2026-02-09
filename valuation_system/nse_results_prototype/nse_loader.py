@@ -173,9 +173,15 @@ class NSELoader:
         return result
 
     def decide_fetch_list(self, discovery: Dict, mode: str = 'daily',
-                          symbols: List[str] = None) -> List[Dict]:
+                          symbols: List[str] = None, min_mcap_cr: float = 2500.0) -> List[Dict]:
         """
         Decide which companies to fetch based on mode and discovery.
+
+        Args:
+            discovery: Dict from discover_new_filings()
+            mode: 'daily' | 'sweep' | 'seed' | 'symbol'
+            symbols: list of symbols for 'symbol' mode
+            min_mcap_cr: minimum market cap in crores for seed mode (default: 2500)
 
         Returns list of dicts: [{'nse_symbol': ..., 'company_id': ..., 'reason': ...}, ...]
         """
@@ -227,8 +233,8 @@ class NSELoader:
             return fetch_list
 
         if mode == 'seed':
-            # Seed: register all active companies, then sweep
-            return self._seed_and_list()
+            # Seed: register all active companies (filtered by mcap), then sweep
+            return self._seed_and_list(min_mcap_cr=min_mcap_cr)
 
         # Daily mode: event-driven
         fetch_list = []
@@ -271,12 +277,16 @@ class NSELoader:
                      f"(board: {len(board_meetings)}, filings: {len(recent_filings)})")
         return fetch_list
 
-    def _seed_and_list(self) -> List[Dict]:
+    def _seed_and_list(self, min_mcap_cr: float = 2500.0) -> List[Dict]:
         """
         Register all active companies with NSE symbols in the tracker table.
+        Filters by market cap > min_mcap_cr to avoid seeding small/illiquid companies.
         Returns list for sweep.
+
+        Args:
+            min_mcap_cr: Minimum market cap in crores (default: 2500)
         """
-        logger.info("  Seeding tracker from vs_active_companies...")
+        logger.info(f"  Seeding tracker from vs_active_companies (mcap > {min_mcap_cr} Cr)...")
 
         # Get all active companies with NSE symbols
         companies = self.mysql.query(
@@ -286,6 +296,55 @@ class NSELoader:
             "ORDER BY a.priority ASC, a.company_id ASC"
         )
         logger.info(f"  Found {len(companies)} active companies with NSE symbols")
+
+        # Load monthly prices to get latest market cap
+        prices_path = os.getenv('MONTHLY_PRICES_PATH')
+        if not prices_path or not os.path.exists(prices_path):
+            logger.warning(f"  Prices CSV not found at {prices_path}, proceeding without mcap filter")
+            filtered_companies = companies
+        else:
+            try:
+                logger.info(f"  Loading prices from {prices_path} to filter by mcap...")
+                prices_df = pd.read_csv(prices_path, low_memory=False)
+
+                # Get latest mcap per nse_symbol (prices are sorted by date descending)
+                # Group by nse_symbol and take first row (most recent)
+                latest_mcaps = {}
+                for symbol in prices_df['nse_symbol'].dropna().unique():
+                    symbol_df = prices_df[prices_df['nse_symbol'] == symbol]
+                    if not symbol_df.empty:
+                        latest_row = symbol_df.iloc[0]
+                        mcap = latest_row.get('mcap', 0)
+                        if pd.notna(mcap):
+                            latest_mcaps[symbol] = float(mcap)
+
+                logger.info(f"  Loaded mcap data for {len(latest_mcaps)} symbols")
+
+                # Filter companies by mcap
+                filtered_companies = []
+                below_threshold = 0
+                no_price_data = 0
+
+                for comp in companies:
+                    sym = comp['nse_symbol']
+                    if sym in latest_mcaps:
+                        mcap = latest_mcaps[sym]
+                        if mcap >= min_mcap_cr:
+                            filtered_companies.append(comp)
+                        else:
+                            below_threshold += 1
+                    else:
+                        # No price data - could be newly listed or delisted, skip
+                        no_price_data += 1
+
+                logger.info(f"  Filtered to {len(filtered_companies)} companies with mcap >= {min_mcap_cr} Cr")
+                logger.info(f"  Excluded: {below_threshold} below threshold, {no_price_data} no price data")
+
+            except Exception as e:
+                logger.warning(f"  Failed to filter by mcap: {e}, proceeding with all companies")
+                filtered_companies = companies
+
+        companies = filtered_companies
 
         # Get existing tracker entries
         existing = set()
@@ -724,13 +783,14 @@ class NSELoader:
     # MAIN ORCHESTRATION
     # =========================================================================
 
-    def run(self, mode: str = 'daily', symbols: List[str] = None) -> Dict:
+    def run(self, mode: str = 'daily', symbols: List[str] = None, min_mcap_cr: float = 2500.0) -> Dict:
         """
         Run the full discover → fetch → store → validate cycle.
 
         Args:
             mode: 'daily' | 'sweep' | 'seed' | 'symbol'
             symbols: list of symbols for 'symbol' mode
+            min_mcap_cr: minimum market cap in crores for seed mode (default: 2500)
 
         Returns: summary dict
         """
@@ -757,7 +817,7 @@ class NSELoader:
                 discovery = {}
 
             # Step 2: Decide what to fetch
-            fetch_list = self.decide_fetch_list(discovery, mode=mode, symbols=symbols)
+            fetch_list = self.decide_fetch_list(discovery, mode=mode, symbols=symbols, min_mcap_cr=min_mcap_cr)
             summary['companies_to_fetch'] = len(fetch_list)
 
             if not fetch_list:

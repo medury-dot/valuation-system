@@ -59,7 +59,13 @@
    - Scheduled: 02:00 IST on 15th of Feb/May/Aug/Nov
    - API calls: 2 + 1,500 = 1,502 calls
 
-3. **Single Mode (On-Demand)**
+3. **Seed Mode (Initial Setup)**
+   - Register all active companies with mcap > threshold (default: 2500 Cr)
+   - Filter applied to avoid seeding small/illiquid companies
+   - Runtime: ~20-30 min for ~800-1000 companies (vs 65 min for all 2,655)
+   - Run once on initial setup, then use daily mode for incremental updates
+
+4. **Single Mode (On-Demand)**
    - Fetch one company immediately
    - Used for manual testing and urgent updates
 

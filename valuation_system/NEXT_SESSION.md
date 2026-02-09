@@ -1,6 +1,6 @@
 # Next Session - Quick Start Guide
-**Updated**: 2026-02-09 (Session 5)
-**Status**: 31 auto-computed COMPANY drivers (was 8), 3 price signals, headline intelligence in digest
+**Updated**: 2026-02-09 (Session 6)
+**Status**: NSE filing data production system live. Event-driven fetch + state tracking + CSV merge.
 
 ---
 
@@ -21,6 +21,21 @@
 10. **Daily Digest Generator**: HTML email with 6 sections (critical alerts, **top headlines by driver impact**, news intelligence, pending discoveries, value buy opps, driver changes)
 11. **PM Approval Workflow**: Tab 7 PENDING→APPROVED/REJECTED detection in hourly cycle
 12. **Materiality Dashboard**: Tab 9 color-coded alerts synced daily
+
+### Session 6 Additions (2026-02-09) — NSE Filing Production System
+17. **NSE Production Loader** (`nse_results_prototype/nse_loader.py`):
+    - 4 modes: `daily` (event-driven), `sweep` (full), `seed` (register+sweep), `symbol` (single)
+    - Event-driven discovery: 2 API calls (event calendar + global filings) → only fetch companies with new data
+    - State tracking in `vs_nse_fetch_tracker` table (2,655 companies, latest quarter, data hash)
+    - Incremental CSV merge: reads existing CSV, updates only changed companies, preserves rest
+    - MD5 hash detection for data changes between runs
+    - Batch issues CSV logging for post-run analysis
+    - Validation: random sample comparison against core CSV
+18. **3 New MySQL Tables**: `vs_nse_fetch_tracker`, `vs_company_segments`, `vs_segment_financials`
+19. **Pipeline Integration**: `nse_fetch` step runs before `batch_valuation` in daily cycle
+20. **Runner Command**: `python -m valuation_system.scheduler.runner nse_fetch --mode daily|sweep|seed`
+21. **XBRL Parser Skeleton**: `xbrl_parser.py` ready for Phase 2 segment data extraction
+22. **NSE Data Loader** (already existed): `nse_data_loader.py` merges NSE data into financial_processor
 
 ### Session 5 Additions (2026-02-09)
 13. **31 Auto-Computed COMPANY Drivers** (was 8):
@@ -46,7 +61,22 @@ DAILY:  Macro sync → Cascade → Valuations → Price trends → Qualitative a
 
 ## Priority Tasks (Next Session)
 
-### 1. Configure SMTP for Email Delivery
+### 1. Run NSE Seed (First Time — Register Companies with MCap > 2500 Cr)
+```bash
+# DEFAULT: Only companies with market cap > 2500 Cr (~800-1000 companies, takes ~20-30 min)
+python -m valuation_system.scheduler.runner nse_fetch --mode seed > /tmp/nse_seed.log 2>&1 &
+tail -f /tmp/nse_seed.log
+
+# OPTIONAL: Change mcap threshold (e.g., 5000 Cr for only large caps)
+python -m valuation_system.scheduler.runner nse_fetch --mode seed --min-mcap 5000 > /tmp/nse_seed.log 2>&1 &
+
+# OPTIONAL: Seed ALL companies (no filter, ~2,655 companies) - takes ~65 min
+python -m valuation_system.scheduler.runner nse_fetch --mode seed --min-mcap 0 > /tmp/nse_seed.log 2>&1 &
+
+# After seed, daily mode will only fetch companies with new filings (5-100/day)
+```
+
+### 2. Configure SMTP for Email Delivery
 ```bash
 # Gmail App Password (for daily digest emails)
 # Go to: https://myaccount.google.com/apppasswords
@@ -55,14 +85,14 @@ SMTP_USER=your@gmail.com
 SMTP_PASSWORD=<app-password>
 ```
 
-### 2. Twitter API (for social posting) - OPTIONAL
+### 3. Twitter API (for social posting) - OPTIONAL
 ```bash
 # Go to: https://developer.twitter.com/en/portal/dashboard
 TWITTER_API_KEY=...
 TWITTER_API_SECRET=...
 ```
 
-### 3. Test Full Daily Cycle (includes valuations)
+### 4. Test Full Daily Cycle (includes valuations)
 ```bash
 # WARNING: Runs valuations for 2,655 companies — takes hours
 # Run in separate terminal:
@@ -76,7 +106,7 @@ import json; print(json.dumps(result, indent=2, default=str))
 tail -f /tmp/daily_cycle.log
 ```
 
-### 4. Fine-tune Price Trend Thresholds
+### 5. Fine-tune Price Trend Thresholds
 - Currently 3,951 alerts — might still be noisy for PM
 - Consider raising MIN_MCAP_CR from 500 to 1000
 - Consider adding a "top N" per sector to limit alerts
