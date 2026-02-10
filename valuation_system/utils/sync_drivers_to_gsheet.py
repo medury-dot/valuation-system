@@ -12,7 +12,6 @@ import time
 import logging
 import mysql.connector
 import gspread
-import pandas as pd
 from google.oauth2.service_account import Credentials
 from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
@@ -299,9 +298,10 @@ def sync_active_companies(gc, sheet_id):
             valuation_group,
             valuation_subgroup,
             cd_sector,
-            cd_industry
+            cd_industry,
+            is_active,
+            is_gsheet_sync
         FROM vs_active_companies
-        WHERE is_active = 1 OR is_active = 0
         ORDER BY valuation_group, valuation_subgroup, company_name
     """)
 
@@ -312,7 +312,8 @@ def sync_active_companies(gc, sheet_id):
     print(f"  Found {len(companies)} active companies in MySQL")
 
     # Prepare data with headers
-    headers = ['Company ID', 'NSE Symbol', 'Company Name', 'Valuation Group', 'Valuation Subgroup', 'CD Sector', 'CD Industry']
+    headers = ['Company ID', 'NSE Symbol', 'Company Name', 'Valuation Group', 'Valuation Subgroup',
+               'CD Sector', 'CD Industry', 'Active', 'GSheet Sync']
     rows = [headers]
 
     for c in companies:
@@ -323,7 +324,9 @@ def sync_active_companies(gc, sheet_id):
             c['valuation_group'] or '',
             c['valuation_subgroup'] or '',
             c['cd_sector'] or '',
-            c['cd_industry'] or ''
+            c['cd_industry'] or '',
+            'YES' if c.get('is_active') else 'NO',
+            'YES' if c.get('is_gsheet_sync') else 'NO',
         ])
 
     # Clear and update
@@ -333,38 +336,8 @@ def sync_active_companies(gc, sheet_id):
     return len(rows) - 1
 
 
-def _load_mcap_company_ids(min_mcap_cr):
-    """Load set of company_ids with latest MCap >= min_mcap_cr from monthly prices CSV.
-    Maps accode/bse_code back to company_id via vs_active_companies."""
-    prices_path = os.getenv('MONTHLY_PRICES_PATH', '')
-    if not prices_path or not os.path.exists(prices_path):
-        logger.warning("MONTHLY_PRICES_PATH not found, skipping MCap filter")
-        return None
-
-    # Load prices, get latest MCap per accode
-    prices_df = pd.read_csv(prices_path, usecols=['accode', 'bse_code', 'mcap', 'year_month'],
-                            dtype={'accode': str, 'bse_code': str}, low_memory=False)
-    prices_df = prices_df.dropna(subset=['mcap'])
-    prices_df = prices_df.sort_values('year_month', ascending=False)
-
-    # Get latest MCap per accode (prefer NSE)
-    # Strip '.0' suffix from CSV float-strings to match DB integer-strings
-    def _clean_code(val):
-        s = str(val).strip()
-        if s.endswith('.0'):
-            s = s[:-2]
-        return s if s and s != 'nan' else ''
-
-    latest_mcap = {}
-    for _, row in prices_df.iterrows():
-        ac = _clean_code(row.get('accode', ''))
-        bse = _clean_code(row.get('bse_code', ''))
-        mcap = float(row['mcap'])
-        key = ac if ac else bse
-        if key and key not in latest_mcap:
-            latest_mcap[key] = mcap
-
-    # Map to company_ids via vs_active_companies
+def _load_gsheet_sync_company_ids():
+    """Load set of company_ids with is_gsheet_sync=1 from vs_active_companies."""
     conn = mysql.connector.connect(
         host=os.getenv('MYSQL_HOST', 'localhost'),
         port=int(os.getenv('MYSQL_PORT', 3306)),
@@ -373,35 +346,20 @@ def _load_mcap_company_ids(min_mcap_cr):
         database=os.getenv('MYSQL_DATABASE', 'rag')
     )
     cursor = conn.cursor(dictionary=True)
-    cursor.execute("SELECT company_id, accord_code, bse_code FROM vs_active_companies")
-    companies = cursor.fetchall()
+    cursor.execute("SELECT company_id FROM vs_active_companies WHERE is_gsheet_sync = 1")
+    ids = {row['company_id'] for row in cursor.fetchall()}
     cursor.close()
     conn.close()
-
-    qualifying_ids = set()
-    for comp in companies:
-        cid = comp['company_id']
-        ac = str(comp.get('accord_code') or '').strip()
-        bse = str(comp.get('bse_code') or '').strip()
-        mcap = latest_mcap.get(ac) or latest_mcap.get(bse) or 0
-        if mcap >= min_mcap_cr:
-            qualifying_ids.add(cid)
-
-    return qualifying_ids
+    return ids
 
 
 def sync_company_drivers(gc, sheet_id):
     """Sync COMPANY drivers to Tab 4 '4. Company Drivers'.
-    Only syncs companies with MCap >= MIN_GSHEET_MCAP_CR (default 1000 Cr).
+    Only syncs companies with is_gsheet_sync=1 in vs_active_companies.
     Handles large row counts by writing in batches of 100 with 1s pause."""
 
-    min_mcap = float(os.getenv('MIN_GSHEET_MCAP_CR', 1000))
-    print(f"  Filtering to companies with MCap >= {min_mcap:.0f} Cr...")
-    mcap_company_ids = _load_mcap_company_ids(min_mcap)
-    if mcap_company_ids is not None:
-        print(f"  Found {len(mcap_company_ids)} companies with MCap >= {min_mcap:.0f} Cr")
-    else:
-        print("  WARNING: Could not load MCap data, syncing all companies")
+    gsheet_company_ids = _load_gsheet_sync_company_ids()
+    print(f"  Found {len(gsheet_company_ids)} companies with is_gsheet_sync=1")
 
     sh = gc.open_by_key(sheet_id)
 
@@ -449,13 +407,9 @@ def sync_company_drivers(gc, sheet_id):
     cursor.close()
     conn.close()
 
-    # Filter by MCap if available
-    if mcap_company_ids is not None:
-        drivers = [d for d in all_drivers if d['company_id'] in mcap_company_ids]
-        print(f"  Filtered: {len(drivers)} COMPANY drivers (from {len(all_drivers)} total) for {len(mcap_company_ids)} companies with MCap >= {min_mcap:.0f} Cr")
-    else:
-        drivers = all_drivers
-        print(f"  Found {len(drivers)} COMPANY drivers in MySQL (no MCap filter)")
+    # Filter to is_gsheet_sync=1 companies
+    drivers = [d for d in all_drivers if d['company_id'] in gsheet_company_ids]
+    print(f"  Filtered: {len(drivers)} COMPANY drivers (from {len(all_drivers)} total) for {len(gsheet_company_ids)} GSheet-synced companies")
 
     if not drivers:
         print("  No company drivers to sync")
@@ -683,6 +637,7 @@ def sync_news_events(gc, sheet_id):
         LEFT JOIN vs_active_companies ac ON e.company_id = ac.company_id
         WHERE e.event_date >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
           AND e.semantic_group_id = e.id
+          AND (e.company_id IS NULL OR ac.is_gsheet_sync = 1)
         ORDER BY
             FIELD(e.severity, 'CRITICAL', 'HIGH', 'MEDIUM', 'LOW'),
             e.event_timestamp DESC
@@ -827,6 +782,7 @@ def sync_materiality_dashboard(gc, sheet_id):
         FROM vs_materiality_alerts ma
         LEFT JOIN vs_active_companies ac ON ma.company_id = ac.company_id
         WHERE ma.created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+          AND (ma.company_id IS NULL OR ac.is_gsheet_sync = 1)
         ORDER BY
             FIELD(ma.severity, 'CRITICAL', 'HIGH', 'MEDIUM', 'LOW'),
             ma.created_at DESC
