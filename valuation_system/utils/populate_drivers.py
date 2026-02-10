@@ -250,14 +250,15 @@ SUBGROUP_DRIVERS = {
 
     # =========== FINANCIALS ===========
     'FINANCIALS_BANKING_PRIVATE': [
-        ('DEMAND', 'credit_growth', 0.15, 'Loan book growth'),
-        ('DEMAND', 'casa_ratio', 0.10, 'Low-cost deposits'),
-        ('DEMAND', 'fee_income', 0.08, 'Non-interest income'),
-        ('COST', 'cost_of_funds', 0.10, 'Deposit costs'),
-        ('COST', 'credit_costs', 0.12, 'Provisioning'),
-        ('COST', 'operating_costs', 0.06, 'Cost-to-income'),
-        ('REGULATORY', 'rbi_rates', 0.08, 'Repo rate'),
-        ('REGULATORY', 'capital_norms', 0.04, 'Basel III'),
+        ('DEMAND',        'credit_growth',           0.15, 'Loan book growth YoY'),
+        ('BALANCE_SHEET', 'gross_npa_ratio',         0.12, 'GNPA as % of advances'),
+        ('DEMAND',        'casa_ratio',              0.10, 'CASA % of total deposits'),
+        ('COST',          'cost_of_funds',           0.10, 'Weighted avg deposit cost'),
+        ('BALANCE_SHEET', 'capital_adequacy',        0.08, 'CAR - Basel III compliance'),
+        ('REVENUE',       'fee_income_growth',       0.08, 'Non-interest income growth'),
+        ('REGULATORY',    'rbi_rates',               0.08, 'Repo rate impact on NIMs'),
+        ('EFFICIENCY',    'cost_to_income_ratio',    0.06, 'Operating expenses / Total income'),
+        ('REGULATORY',    'priority_sector_lending', 0.04, 'PSL compliance - regulatory risk'),
     ],
     'FINANCIALS_BANKING_PSU': [
         ('DEMAND', 'credit_growth', 0.12, 'Loan growth'),
@@ -953,6 +954,17 @@ UNIVERSAL_COMPANY_DRIVERS = [
 ]
 
 # ============================================================================
+# EXCLUSIONS: Drivers to exclude for specific valuation groups
+# ============================================================================
+FINANCIALS_EXCLUSIONS = [
+    'ebitda_margin_vs_peers',  # Banks don't report EBITDA
+    'capex_to_sales_trend',    # Minimal traditional capex
+    'nwc_to_sales_trend',      # Working capital not applicable
+    'cash_conversion_cycle',   # Not applicable to banks
+    'debt_equity_change',      # Banks are inherently leveraged
+]
+
+# ============================================================================
 # SUBGROUP-SPECIFIC QUALITATIVE COMPANY DRIVERS (PM-curated, 30% of company weight)
 # 2-4 drivers per subgroup, affect terminal ROCE/reinvestment when PM sets non-NEUTRAL
 # ============================================================================
@@ -1017,9 +1029,24 @@ SUBGROUP_COMPANY_DRIVERS = {
         ('COMPETITIVE', 'distribution_depth',        0.07, 'Rural penetration'),
     ],
     'FINANCIALS_BANKING_PRIVATE': [
-        ('BALANCE_SHEET', 'asset_quality_trend',     0.08, 'NPA trajectory and PCR'),
-        ('GROWTH',        'credit_growth_outlook',   0.07, 'Loan book growth vs system'),
-        ('COMPETITIVE',   'digital_adoption',        0.05, 'Digital transaction share'),
+        # Financial Performance (5 drivers, ~40%)
+        ('PROFITABILITY', 'net_interest_margin',     0.10, 'NIM % - core margin efficiency'),
+        ('PROFITABILITY', 'return_on_assets',        0.08, 'ROA % - asset productivity'),
+        ('PROFITABILITY', 'ppop_margin',             0.07, 'Pre-provision operating profit margin'),
+        ('REVENUE',       'non_interest_income_pct', 0.08, 'Fee income as % of total income'),
+        ('EFFICIENCY',    'cost_to_income_ratio_co', 0.07, 'Opex / Total income'),
+
+        # Asset Quality (4 drivers, ~30%)
+        ('BALANCE_SHEET', 'gross_npa_pct',           0.08, 'GNPA as % of advances'),
+        ('BALANCE_SHEET', 'net_npa_pct',             0.06, 'NNPA as % of advances'),
+        ('BALANCE_SHEET', 'provision_coverage',      0.08, 'PCR - provisions / GNPA'),
+        ('BALANCE_SHEET', 'credit_cost_trend',       0.08, 'Provision expenses / Avg advances'),
+
+        # Growth & Funding (4 drivers, ~30%)
+        ('GROWTH',        'deposit_growth_yoy',      0.08, 'Deposit growth vs system'),
+        ('GROWTH',        'loan_growth_yoy',         0.08, 'Advances growth vs system'),
+        ('BALANCE_SHEET', 'casa_ratio_co',           0.08, 'Low-cost CASA % of deposits'),
+        ('BALANCE_SHEET', 'loan_to_deposit_ratio',   0.06, 'Advances / Deposits ratio'),
     ],
     'FINANCIALS_BANKING_PSU': [
         ('BALANCE_SHEET', 'asset_quality_trend',     0.08, 'NPA cleanup trajectory'),
@@ -1374,8 +1401,12 @@ def populate_company_driver_templates():
         group = comp['valuation_group']
         inserted = 0
 
-        # 1. Insert 31 universal quantitative drivers
+        # 1. Insert 31 universal quantitative drivers (with exclusions for FINANCIALS)
         for category, name, weight, description in UNIVERSAL_COMPANY_DRIVERS:
+            # Skip excluded drivers for FINANCIALS
+            if group == 'FINANCIALS' and name in FINANCIALS_EXCLUSIONS:
+                continue
+
             try:
                 cursor.execute("""
                     INSERT IGNORE INTO vs_drivers

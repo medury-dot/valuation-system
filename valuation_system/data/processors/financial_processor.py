@@ -191,6 +191,200 @@ class FinancialProcessor:
                 })
         return yoy
 
+    def _compute_bank_metrics_ttm(self, financials: dict, valuation_group: str) -> dict:
+        """
+        Compute 13 banking-specific metrics from Core CSV bank_* columns.
+        Uses TTM for flow items (P&L), latest/avg for stock items (balance sheet).
+
+        Args:
+            financials: Company financials dict from core_loader
+            valuation_group: Valuation group (e.g., 'FINANCIALS')
+
+        Returns:
+            dict: 13 banking metrics or None for each if data unavailable
+        """
+        import pandas as pd
+
+        # Only compute for FINANCIALS companies
+        if valuation_group != 'FINANCIALS':
+            return {}
+
+        metrics = {}
+
+        # Determine latest quarter index dynamically from available bank_* columns
+        # Look for bank_advances_XXX columns
+        advances_cols = [k for k in financials.keys() if k.startswith('bank_advances_')]
+        if not advances_cols:
+            logger.debug("No bank_advances columns found - not a banking company")
+            return {}
+
+        # Extract indices and find latest
+        indices = [int(col.split('_')[-1]) for col in advances_cols if col.split('_')[-1].isdigit()]
+        if not indices:
+            logger.debug("No valid bank_advances indices found")
+            return {}
+
+        latest_idx = max(indices)
+        logger.debug(f"[ACTUAL] Latest bank data quarter index: {latest_idx}")
+
+        # Quarter indices for TTM (last 4 quarters)
+        ttm_indices = [latest_idx - 3, latest_idx - 2, latest_idx - 1, latest_idx]
+        yoy_idx = latest_idx - 4  # Same quarter last year
+
+        # Helper: Get TTM sum for flow items
+        def get_ttm(prefix):
+            total = 0
+            for i in ttm_indices:
+                val = financials.get(f'{prefix}_{i}')
+                if val and pd.notna(val):
+                    total += val
+            return total if total > 0 else None
+
+        # Helper: Get average of last 4 quarters for stock items
+        def get_avg4q(prefix):
+            vals = []
+            for i in ttm_indices:
+                val = financials.get(f'{prefix}_{i}')
+                if val and pd.notna(val):
+                    vals.append(val)
+            return sum(vals) / len(vals) if vals else None
+
+        # 1-2: GNPA/NNPA % (already percentages in yearly columns)
+        gnpa_pct = financials.get('2024_gnpa') or financials.get('2025_gnpa')
+        nnpa_pct = financials.get('2024_nnpa') or financials.get('2025_nnpa')
+
+        if gnpa_pct and pd.notna(gnpa_pct):
+            metrics['gross_npa_pct'] = gnpa_pct
+            logger.debug(f"[ACTUAL] GNPA %: {gnpa_pct:.2f}%")
+        else:
+            metrics['gross_npa_pct'] = None
+            logger.debug("[MISSING] GNPA % not available")
+
+        if nnpa_pct and pd.notna(nnpa_pct):
+            metrics['net_npa_pct'] = nnpa_pct
+            logger.debug(f"[ACTUAL] NNPA %: {nnpa_pct:.2f}%")
+        else:
+            metrics['net_npa_pct'] = None
+            logger.debug("[MISSING] NNPA % not available")
+
+        # 3: PCR (Provision Coverage Ratio)
+        provisions_ttm = get_ttm('bank_provisions')
+        advances_latest = financials.get(f'bank_advances_{latest_idx}')
+
+        if provisions_ttm and gnpa_pct and advances_latest:
+            abs_gnpa = (gnpa_pct / 100) * advances_latest
+            if abs_gnpa > 0:
+                pcr = (provisions_ttm / abs_gnpa) * 100
+                metrics['provision_coverage'] = pcr
+                logger.debug(f"[DERIVED] PCR: {pcr:.2f}% (prov_ttm={provisions_ttm:.1f}, abs_gnpa={abs_gnpa:.1f})")
+            else:
+                metrics['provision_coverage'] = None
+        else:
+            metrics['provision_coverage'] = None
+            logger.debug("[MISSING] PCR - insufficient data")
+
+        # 4: Credit Cost Trend
+        advances_avg = get_avg4q('bank_advances')
+        if provisions_ttm and advances_avg and advances_avg > 0:
+            credit_cost = (provisions_ttm / advances_avg) * 100
+            metrics['credit_cost_trend'] = credit_cost
+            logger.debug(f"[DERIVED] Credit Cost: {credit_cost:.2f}% (prov_ttm={provisions_ttm:.1f}, adv_avg={advances_avg:.1f})")
+        else:
+            metrics['credit_cost_trend'] = None
+            logger.debug("[MISSING] Credit Cost - insufficient data")
+
+        # 5: Deposit Growth YoY
+        deposits_current = financials.get(f'bank_deposits_{latest_idx}')
+        deposits_yoy = financials.get(f'bank_deposits_{yoy_idx}')
+        if deposits_current and deposits_yoy and deposits_yoy > 0:
+            dep_growth = ((deposits_current - deposits_yoy) / deposits_yoy) * 100
+            metrics['deposit_growth_yoy'] = dep_growth
+            logger.debug(f"[DERIVED] Deposit Growth: {dep_growth:.2f}% ({deposits_current:.1f} vs {deposits_yoy:.1f})")
+        else:
+            metrics['deposit_growth_yoy'] = None
+            logger.debug("[MISSING] Deposit Growth - insufficient data")
+
+        # 6: Loan Growth YoY
+        advances_current = financials.get(f'bank_advances_{latest_idx}')
+        advances_yoy = financials.get(f'bank_advances_{yoy_idx}')
+        if advances_current and advances_yoy and advances_yoy > 0:
+            loan_growth = ((advances_current - advances_yoy) / advances_yoy) * 100
+            metrics['loan_growth_yoy'] = loan_growth
+            logger.debug(f"[DERIVED] Loan Growth: {loan_growth:.2f}% ({advances_current:.1f} vs {advances_yoy:.1f})")
+        else:
+            metrics['loan_growth_yoy'] = None
+            logger.debug("[MISSING] Loan Growth - insufficient data")
+
+        # 7: Loan-to-Deposit Ratio
+        if advances_current and deposits_current and deposits_current > 0:
+            ld_ratio = (advances_current / deposits_current) * 100
+            metrics['loan_to_deposit_ratio'] = ld_ratio
+            logger.debug(f"[DERIVED] L/D Ratio: {ld_ratio:.2f}% ({advances_current:.1f} / {deposits_current:.1f})")
+        else:
+            metrics['loan_to_deposit_ratio'] = None
+            logger.debug("[MISSING] L/D Ratio - insufficient data")
+
+        # 8: ROA (already computed in yearly columns)
+        roa = financials.get('2025_roa') or financials.get('2024_roa')
+        if roa and pd.notna(roa):
+            metrics['return_on_assets'] = roa
+            logger.debug(f"[ACTUAL] ROA: {roa:.2f}%")
+        else:
+            metrics['return_on_assets'] = None
+            logger.debug("[MISSING] ROA not available")
+
+        # 9: NIM (Net Interest Margin)
+        int_earned_ttm = get_ttm('bank_interest_earned')
+        int_expend_ttm = get_ttm('bank_interest_expended')
+        tot_assets_avg = get_avg4q('tot_assets')
+
+        if int_earned_ttm and int_expend_ttm and tot_assets_avg and tot_assets_avg > 0:
+            nii_ttm = int_earned_ttm - int_expend_ttm
+            nim = (nii_ttm / tot_assets_avg) * 100
+            metrics['net_interest_margin'] = nim
+            logger.debug(f"[DERIVED] NIM: {nim:.2f}% (NII_ttm={nii_ttm:.1f}, assets_avg={tot_assets_avg:.1f})")
+        else:
+            metrics['net_interest_margin'] = None
+            logger.debug("[MISSING] NIM - insufficient interest/asset data")
+
+        # 10: Non-Interest Income %
+        other_inc_ttm = get_ttm('bank_other_income')
+        total_inc_ttm = get_ttm('bank_total_income')
+
+        if other_inc_ttm and total_inc_ttm and total_inc_ttm > 0:
+            non_int_pct = (other_inc_ttm / total_inc_ttm) * 100
+            metrics['non_interest_income_pct'] = non_int_pct
+            logger.debug(f"[DERIVED] Non-Int Income %: {non_int_pct:.2f}% ({other_inc_ttm:.1f} / {total_inc_ttm:.1f})")
+        else:
+            metrics['non_interest_income_pct'] = None
+            logger.debug("[MISSING] Non-Int Income % - insufficient data")
+
+        # 11: Cost to Income Ratio
+        opex_ttm = get_ttm('bank_operating_expenses')
+        if opex_ttm and total_inc_ttm and total_inc_ttm > 0:
+            cost_income = (opex_ttm / total_inc_ttm) * 100
+            metrics['cost_to_income_ratio_co'] = cost_income
+            logger.debug(f"[DERIVED] Cost/Income: {cost_income:.2f}% ({opex_ttm:.1f} / {total_inc_ttm:.1f})")
+        else:
+            metrics['cost_to_income_ratio_co'] = None
+            logger.debug("[MISSING] Cost/Income - insufficient data")
+
+        # 12: PPOPM (Pre-Provision Operating Profit Margin)
+        if int_earned_ttm and int_expend_ttm and other_inc_ttm and opex_ttm and total_inc_ttm and total_inc_ttm > 0:
+            ppop = int_earned_ttm - int_expend_ttm + other_inc_ttm - opex_ttm
+            ppopm = (ppop / total_inc_ttm) * 100
+            metrics['ppop_margin'] = ppopm
+            logger.debug(f"[DERIVED] PPOPM: {ppopm:.2f}% (PPOP={ppop:.1f} / total_inc={total_inc_ttm:.1f})")
+        else:
+            metrics['ppop_margin'] = None
+            logger.debug("[MISSING] PPOPM - insufficient data")
+
+        # 13: CASA Ratio (not available yet - user will provide later)
+        metrics['casa_ratio_co'] = None
+        logger.debug("[MISSING] CASA Ratio - requires deposit breakdown (future XBRL)")
+
+        return metrics
+
     def build_dcf_inputs(self, company_name: str, sector: str,
                           sector_config: dict = None,
                           overrides: dict = None,
@@ -219,6 +413,14 @@ class FinancialProcessor:
         if self.nse and self.nse.is_available() and nse_symbol:
             from valuation_system.data.loaders.nse_data_loader import merge_nse_into_financials
             financials = merge_nse_into_financials(financials, nse_symbol, self.nse)
+
+        # Compute banking-specific metrics for FINANCIALS companies
+        valuation_group = financials.get('valuation_group', sector)
+        bank_metrics = self._compute_bank_metrics_ttm(financials, valuation_group)
+        if bank_metrics:
+            # Merge banking metrics into financials dict for downstream use
+            financials.update(bank_metrics)
+            logger.debug(f"Added {len(bank_metrics)} banking metrics to financials")
 
         price_data = self.prices.get_latest_data(nse_symbol, bse_code=bse_code, company_name=company_name)
 
@@ -332,6 +534,8 @@ class FinancialProcessor:
             'tax_components': ratio_components.get('tax', []),
             'cash_source_detail': ratio_components.get('cash_source', ''),
             'cost_of_debt_components': ratio_components.get('cost_of_debt', []),
+            # Banking-specific metrics (for FINANCIALS companies)
+            'bank_metrics': bank_metrics,
         }
 
         # Apply overrides
