@@ -133,8 +133,9 @@ SUBGROUP_DRIVERS = {
     ],
     'CONSUMER_TEXTILE': [
         ('DEMAND', 'domestic_demand', 0.12, 'India consumption'),
-        ('DEMAND', 'export_orders', 0.10, 'Global brands orders'),
+        ('DEMAND', 'export_order_book', 0.08, 'Forward export order visibility from global brands'),
         ('DEMAND', 'fashion_cycles', 0.06, 'Trend changes'),
+        ('COST', 'yarn_cotton_price_exposure', 0.08, '60% of COGS for most textile companies'),
         ('COST', 'cotton_prices', 0.15, 'Cotton commodity'),
         ('COST', 'yarn_prices', 0.08, 'Yarn costs'),
         ('COST', 'labor_costs', 0.08, 'Wage inflation'),
@@ -513,6 +514,7 @@ SUBGROUP_DRIVERS = {
         ('COST', 'iron_ore_prices', 0.15, 'Iron ore costs'),
         ('COST', 'coking_coal_prices', 0.12, 'Met coal costs'),
         ('COST', 'power_costs', 0.06, 'Energy costs'),
+        ('COST', 'carbon_cost_exposure', 0.05, 'EU CBAM and domestic carbon pricing impact'),
         ('REGULATORY', 'import_duties', 0.05, 'Trade protection'),
         ('REGULATORY', 'export_duties', 0.04, 'Export taxes'),
     ],
@@ -550,11 +552,13 @@ SUBGROUP_DRIVERS = {
     ],
     'INFRA_CONSTRUCTION': [
         ('DEMAND', 'government_capex', 0.18, 'Govt infra spend'),
+        ('DEMAND', 'order_book_to_sales', 0.10, '3-5Y revenue visibility from order book/sales ratio'),
         ('DEMAND', 'order_book', 0.12, 'Contract backlog'),
         ('DEMAND', 'private_capex', 0.08, 'Private investment'),
         ('COST', 'steel_prices', 0.10, 'Steel costs'),
         ('COST', 'cement_prices', 0.08, 'Cement costs'),
         ('COST', 'labor_costs', 0.06, 'Wage inflation'),
+        ('DEMAND', 'execution_efficiency', 0.06, 'Project completion rate vs timeline'),
         ('REGULATORY', 'land_acquisition', 0.05, 'Right of way'),
         ('REGULATORY', 'environmental_clearances', 0.04, 'EC delays'),
     ],
@@ -679,8 +683,9 @@ SUBGROUP_DRIVERS = {
         ('DEMAND', 'commodity_volumes', 0.12, 'Trading commodity throughput'),
         ('DEMAND', 'domestic_demand', 0.10, 'India consumption of traded goods'),
         ('DEMAND', 'export_demand', 0.08, 'Re-export volumes'),
-        ('DEMAND', 'working_capital_availability', 0.06, 'Credit availability for trade finance'),
+        ('DEMAND', 'working_capital_turnover', 0.08, 'Inventory/receivable efficiency — the margin driver'),
         ('COST', 'forex_volatility', 0.10, 'Currency fluctuation impact on margins'),
+        ('COST', 'forex_exposure', 0.06, 'Export-oriented trading house FX risk'),
         ('COST', 'logistics_costs', 0.08, 'Freight and warehousing'),
         ('COST', 'financing_costs', 0.06, 'Trade credit interest'),
         ('REGULATORY', 'import_duties', 0.06, 'Customs tariffs and anti-dumping'),
@@ -955,14 +960,28 @@ UNIVERSAL_COMPANY_DRIVERS = [
 
 # ============================================================================
 # EXCLUSIONS: Drivers to exclude for specific valuation groups
+# Only exclude where the metric is STRUCTURALLY MEANINGLESS, not just less relevant.
+# If a driver is merely "less important", it gets a low weight — no need to exclude.
 # ============================================================================
-FINANCIALS_EXCLUSIONS = [
-    'ebitda_margin_vs_peers',  # Banks don't report EBITDA
-    'capex_to_sales_trend',    # Minimal traditional capex
-    'nwc_to_sales_trend',      # Working capital not applicable
-    'cash_conversion_cycle',   # Not applicable to banks
-    'debt_equity_change',      # Banks are inherently leveraged
-]
+GROUP_EXCLUSIONS = {
+    'FINANCIALS': [
+        'ebitda_margin_vs_peers',  # Banks don't report EBITDA
+        'capex_to_sales_trend',    # Minimal traditional capex
+        'nwc_to_sales_trend',      # Working capital not applicable
+        'cash_conversion_cycle',   # Not applicable to banks
+        'debt_equity_change',      # Banks are inherently leveraged
+    ],
+    'SERVICES': [
+        'nwc_to_sales_trend',      # Asset-light; NWC minimal for most services
+        'capex_to_sales_trend',    # Minimal capex for trading/BPO/professional services
+    ],
+    'TECHNOLOGY': [
+        'nwc_to_sales_trend',      # Asset-light; negative NWC common (prepaid contracts)
+        'cash_conversion_cycle',   # Not meaningful for project-based billing
+    ],
+}
+# Backward-compat alias
+FINANCIALS_EXCLUSIONS = GROUP_EXCLUSIONS['FINANCIALS']
 
 # ============================================================================
 # SUBGROUP-SPECIFIC QUALITATIVE COMPANY DRIVERS (PM-curated, 30% of company weight)
@@ -1401,10 +1420,11 @@ def populate_company_driver_templates():
         group = comp['valuation_group']
         inserted = 0
 
-        # 1. Insert 31 universal quantitative drivers (with exclusions for FINANCIALS)
+        # 1. Insert universal quantitative drivers (with group-specific exclusions)
+        group_excl = GROUP_EXCLUSIONS.get(group, [])
         for category, name, weight, description in UNIVERSAL_COMPANY_DRIVERS:
-            # Skip excluded drivers for FINANCIALS
-            if group == 'FINANCIALS' and name in FINANCIALS_EXCLUSIONS:
+            # Skip excluded drivers for this group
+            if name in group_excl:
                 continue
 
             try:
@@ -1577,13 +1597,171 @@ def main():
     return subgroups_updated, total_inserted
 
 
+def normalize_subgroup_weights():
+    """
+    Normalize all SUBGROUP driver weights so each subgroup sums to exactly 1.0 (100%).
+    Uses proportional scaling: new_weight = old_weight / sum(old_weights).
+    """
+    print("=" * 70)
+    print("NORMALIZE SUBGROUP WEIGHTS TO 100%")
+    print("=" * 70)
+
+    conn = mysql.connector.connect(
+        host=os.getenv('MYSQL_HOST', 'localhost'),
+        port=int(os.getenv('MYSQL_PORT', 3306)),
+        user=os.getenv('MYSQL_USER', 'root'),
+        password=os.getenv('MYSQL_PASSWORD', ''),
+        database=os.getenv('MYSQL_DATABASE', 'rag')
+    )
+    cursor = conn.cursor(dictionary=True)
+
+    # Get current weight sums per subgroup
+    cursor.execute("""
+        SELECT valuation_subgroup, SUM(weight) as total_weight, COUNT(*) as cnt
+        FROM vs_drivers
+        WHERE driver_level = 'SUBGROUP' AND valuation_subgroup IS NOT NULL
+        GROUP BY valuation_subgroup
+    """)
+    subgroups = cursor.fetchall()
+
+    normalized = 0
+    already_ok = 0
+
+    for sg in subgroups:
+        subgroup = sg['valuation_subgroup']
+        total = float(sg['total_weight'])
+        cnt = sg['cnt']
+
+        if abs(total - 1.0) < 0.002:
+            already_ok += 1
+            continue
+
+        # Proportional normalization
+        cursor.execute("""
+            UPDATE vs_drivers
+            SET weight = ROUND(weight / %s, 3)
+            WHERE driver_level = 'SUBGROUP' AND valuation_subgroup = %s
+        """, (total, subgroup))
+        normalized += 1
+
+        # Fix rounding: adjust the largest-weight driver so the sum is exactly 1.000
+        cursor.execute("""
+            SELECT id, weight FROM vs_drivers
+            WHERE driver_level = 'SUBGROUP' AND valuation_subgroup = %s
+            ORDER BY weight DESC LIMIT 1
+        """, (subgroup,))
+        top_driver = cursor.fetchone()
+
+        cursor.execute("""
+            SELECT SUM(weight) as new_total FROM vs_drivers
+            WHERE driver_level = 'SUBGROUP' AND valuation_subgroup = %s
+        """, (subgroup,))
+        new_total = float(cursor.fetchone()['new_total'])
+        rounding_gap = round(1.000 - new_total, 3)
+        if abs(rounding_gap) > 0:
+            cursor.execute("""
+                UPDATE vs_drivers SET weight = ROUND(weight + %s, 3)
+                WHERE id = %s
+            """, (rounding_gap, top_driver['id']))
+
+        print(f"  {subgroup}: {cnt} drivers, {total:.3f} → 1.000")
+
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+    print(f"\n  Normalized: {normalized}, Already at 100%: {already_ok}")
+    return normalized
+
+
+def normalize_group_weights():
+    """
+    Normalize all GROUP driver weights so each group sums to exactly 1.0 (100%).
+    Uses proportional scaling: new_weight = old_weight / sum(old_weights).
+    """
+    print("=" * 70)
+    print("NORMALIZE GROUP WEIGHTS TO 100%")
+    print("=" * 70)
+
+    conn = mysql.connector.connect(
+        host=os.getenv('MYSQL_HOST', 'localhost'),
+        port=int(os.getenv('MYSQL_PORT', 3306)),
+        user=os.getenv('MYSQL_USER', 'root'),
+        password=os.getenv('MYSQL_PASSWORD', ''),
+        database=os.getenv('MYSQL_DATABASE', 'rag')
+    )
+    cursor = conn.cursor(dictionary=True)
+
+    cursor.execute("""
+        SELECT valuation_group, SUM(weight) as total_weight, COUNT(*) as cnt
+        FROM vs_drivers
+        WHERE driver_level = 'GROUP' AND valuation_group IS NOT NULL
+        GROUP BY valuation_group
+    """)
+    groups = cursor.fetchall()
+
+    normalized = 0
+    already_ok = 0
+
+    for g in groups:
+        group = g['valuation_group']
+        total = float(g['total_weight'])
+        cnt = g['cnt']
+
+        if abs(total - 1.0) < 0.002:
+            already_ok += 1
+            continue
+
+        cursor.execute("""
+            UPDATE vs_drivers
+            SET weight = ROUND(weight / %s, 3)
+            WHERE driver_level = 'GROUP' AND valuation_group = %s
+        """, (total, group))
+        normalized += 1
+
+        # Fix rounding gap on largest driver
+        cursor.execute("""
+            SELECT id, weight FROM vs_drivers
+            WHERE driver_level = 'GROUP' AND valuation_group = %s
+            ORDER BY weight DESC LIMIT 1
+        """, (group,))
+        top_driver = cursor.fetchone()
+
+        cursor.execute("""
+            SELECT SUM(weight) as new_total FROM vs_drivers
+            WHERE driver_level = 'GROUP' AND valuation_group = %s
+        """, (group,))
+        new_total = float(cursor.fetchone()['new_total'])
+        rounding_gap = round(1.000 - new_total, 3)
+        if abs(rounding_gap) > 0:
+            cursor.execute("""
+                UPDATE vs_drivers SET weight = ROUND(weight + %s, 3)
+                WHERE id = %s
+            """, (rounding_gap, top_driver['id']))
+
+        print(f"  {group}: {cnt} drivers, {total:.3f} → 1.000")
+
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+    print(f"\n  Normalized: {normalized}, Already at 100%: {already_ok}")
+    return normalized
+
+
 if __name__ == '__main__':
     import sys
-    if len(sys.argv) > 1 and sys.argv[1] == '--company':
+    args = sys.argv[1:]
+    do_normalize = '--normalize' in args
+    args = [a for a in args if a != '--normalize']
+
+    action = args[0] if args else None
+
+    if action == '--company':
         populate_company_driver_templates()
-    elif len(sys.argv) > 1 and sys.argv[1] == '--macro-links':
+    elif action == '--macro-links':
         apply_macro_link_mappings()
-    elif len(sys.argv) > 1 and sys.argv[1] == '--all':
+    elif action == '--all':
         main()
         print("\n")
         populate_company_driver_templates()
@@ -1591,3 +1769,9 @@ if __name__ == '__main__':
         apply_macro_link_mappings()
     else:
         main()
+
+    if do_normalize:
+        print("\n")
+        normalize_subgroup_weights()
+        print("\n")
+        normalize_group_weights()
