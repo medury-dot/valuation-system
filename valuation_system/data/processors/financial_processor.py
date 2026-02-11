@@ -39,6 +39,9 @@ class FinancialProcessor:
         self.prices = price_loader
         self.damodaran = damodaran_loader
         self.nse = nse_loader
+        # Track data source for each key metric (ACTUAL_CF, DERIVED_BS, DEFAULT, etc.)
+        # Reset per company in build_dcf_inputs()
+        self._data_sources = {}
 
         # Lazy-load NSE data if not provided
         if self.nse is None:
@@ -402,6 +405,9 @@ class FinancialProcessor:
         Returns:
             Dict compatible with DCFInputs dataclass.
         """
+        # Reset data source tracking for this company
+        self._data_sources = {}
+
         financials = self.core.get_company_financials(company_name)
         if not financials:
             raise ValueError(f"No financial data for {company_name}")
@@ -421,6 +427,11 @@ class FinancialProcessor:
             # Merge banking metrics into financials dict for downstream use
             financials.update(bank_metrics)
             logger.debug(f"Added {len(bank_metrics)} banking metrics to financials")
+
+        # Compute banking drivers from fullstats columns (CASA, NIM, C/I, credit growth)
+        banking_drivers_fullstats = self._compute_banking_drivers_from_fullstats(financials)
+        if banking_drivers_fullstats:
+            logger.info(f"Computed {len(banking_drivers_fullstats)} banking drivers from fullstats columns")
 
         price_data = self.prices.get_latest_data(nse_symbol, bse_code=bse_code, company_name=company_name)
 
@@ -536,6 +547,12 @@ class FinancialProcessor:
             'cost_of_debt_components': ratio_components.get('cost_of_debt', []),
             # Banking-specific metrics (for FINANCIALS companies)
             'bank_metrics': bank_metrics,
+            # Banking drivers from fullstats (CASA, NIM, C/I ratio, credit growth)
+            'banking_drivers_fullstats': banking_drivers_fullstats,
+            # R&D data for applicable subgroups
+            'rd_pct_of_sales': self._get_rd_to_sales(financials, valuation_subgroup),
+            # Data source tracking for Excel audit trail
+            'data_sources': dict(self._data_sources),
         }
 
         # Apply overrides
@@ -963,12 +980,10 @@ class FinancialProcessor:
     def _calculate_nwc_to_sales(self, financials: dict) -> Optional[float]:
         """
         Calculate Net Working Capital / Sales.
-        ACTUAL → DERIVED → DEFAULT fallback chain.
+        ACTUAL_CF → ACTUAL_BS → DERIVED → DEFAULT fallback chain.
 
-        NWC = (Inventories + Sundry Debtors) - ALL Current Liabilities
-
-        Where Current Liabilities = Total Liabilities - Long-term Borrowings
-        This captures trade payables, customer advances, provisions, other CL.
+        Priority 1: Actual CF WC change from cash flow statement (cf_wc_change)
+        Priority 2: BS estimation: NWC = (Inv + Dr) - (TotLiab - LT_Borrow)
 
         For high-growth companies, NWC can be abnormally high due to inventory
         build-up and extended receivables. Normalize to industry standards.
@@ -991,6 +1006,34 @@ class FinancialProcessor:
 
         # High-growth if EITHER condition: CAGR >20% OR recent YoY >50%
         is_high_growth = (recent_cagr_3y and recent_cagr_3y > 0.20) or recent_yoy > 0.50
+
+        # Method 0 [ACTUAL_CF]: Use actual CF WC change from cash flow statement
+        # This is the gold standard — actual cash impact of working capital changes
+        cf_wc_change = financials.get('cf_wc_change_yearly', {})
+        if cf_wc_change and sales:
+            # Average last 3 years of cf_wc_change / sales
+            common_years = sorted(set(cf_wc_change.keys()) & set(sales.keys()), reverse=True)[:3]
+            if common_years:
+                ratios = []
+                for year in common_years:
+                    if sales[year] and sales[year] > 0:
+                        # CF WC change is typically negative when WC increases (cash outflow)
+                        # NWC/Sales ratio should be positive when WC grows with revenue
+                        ratio = abs(cf_wc_change[year]) / sales[year]
+                        # Preserve sign: positive cf_wc_change = cash inflow (WC decreased)
+                        if cf_wc_change[year] > 0:
+                            ratio = -ratio  # WC decreased → negative NWC/Sales
+                        ratios.append(ratio)
+                        logger.debug(f"  CF WC/Sales {year}: cf_wc={cf_wc_change[year]:,.1f} / "
+                                     f"sales={sales[year]:,.1f} = {ratio:.4f}")
+                if ratios:
+                    avg_ratio = round(np.mean(ratios), 4)
+                    self._data_sources['nwc'] = 'ACTUAL_CF'
+                    logger.info(f"  NWC/Sales: {avg_ratio:.4f} [ACTUAL_CF: cash flow WC change / sales avg {len(ratios)}yr]")
+                    if is_high_growth and avg_ratio > 0.60:
+                        logger.info(f"  ** NORMALIZED to 0.30 for high-growth (actual CF WC)")
+                        return 0.30
+                    return avg_ratio
 
         # Method 1A [ACTUAL-HALFYEARLY]: Try half-yearly first (most recent data)
         inv_hy = financials.get('inventories_hy', {})
@@ -1020,10 +1063,11 @@ class FinancialProcessor:
                         nwc = inv + debtors - current_liab
                         ratio = nwc / ttm_sales
 
-                        logger.info(f"  NWC/Sales: {ratio:.4f} [ACTUAL: (inv+debtors-ALL_CL)/sales from {latest_hy}]")
+                        logger.info(f"  NWC/Sales: {ratio:.4f} [DERIVED_BS: (inv+debtors-ALL_CL)/sales from {latest_hy}]")
                         logger.info(f"    Operating CA: Rs {inv + debtors:,.0f} Cr")
                         logger.info(f"    Current Liab: Rs {current_liab:,.0f} Cr (Total={tot_liab:.0f} - LT={lt_borrow:.0f})")
                         logger.info(f"    Net WC:       Rs {nwc:,.0f} Cr")
+                        self._data_sources.setdefault('nwc', 'DERIVED_BS')
 
                         # HIGH-GROWTH NORMALIZATION (only if NWC is very positive)
                         if is_high_growth and ratio > 0.60:
@@ -1183,15 +1227,35 @@ class FinancialProcessor:
 
     def _estimate_effective_tax_rate(self, financials: dict) -> float:
         """
-        Estimate effective tax rate. Tax = 1 - PAT/PBT.
-        ACTUAL → DERIVED → DEFAULT fallback chain.
+        Estimate effective tax rate.
+        ACTUAL_CF (cash tax paid) → DERIVED_ACCRUAL (1-PAT/PBT) → DEFAULT fallback chain.
         """
         pat = financials.get('pat_annual', financials.get('pat', {}))
         if not pat:
+            self._data_sources['tax'] = 'DEFAULT'
             logger.info(f"  Tax rate: 0.2500 [DEFAULT: no PAT data]")
             return 0.25
 
-        # Method 1 [ACTUAL]: Use pbt_excp_yearly (actual yearly PBT excl exceptional items)
+        # Method 0 [ACTUAL_CF]: Use actual cash tax paid from CF statement
+        cf_tax_paid = financials.get('cf_tax_paid_yearly', {})
+        pbt_for_cash_tax = financials.get('pbt_excp_yearly', {})
+        if cf_tax_paid and pbt_for_cash_tax:
+            cash_tax_rates = []
+            for year in sorted(cf_tax_paid.keys(), reverse=True)[:3]:
+                if year in pbt_for_cash_tax and pbt_for_cash_tax[year] and pbt_for_cash_tax[year] > 0:
+                    # cf_tax_paid is typically negative (cash outflow) — use absolute value
+                    tax = abs(cf_tax_paid[year]) / pbt_for_cash_tax[year]
+                    if 0 < tax < 0.50:
+                        cash_tax_rates.append(tax)
+                        logger.debug(f"  Cash tax rate {year}: |{cf_tax_paid[year]:.1f}|/{pbt_for_cash_tax[year]:.1f} "
+                                     f"= {tax:.4f} [ACTUAL_CF: cf_tax_paid]")
+            if cash_tax_rates:
+                result = round(np.mean(cash_tax_rates), 4)
+                self._data_sources['tax'] = 'ACTUAL_CF'
+                logger.info(f"  Tax rate: {result:.4f} [ACTUAL_CF: cash tax paid / PBT avg {len(cash_tax_rates)}yr]")
+                return result
+
+        # Method 1 [DERIVED_ACCRUAL]: Use pbt_excp_yearly (actual yearly PBT excl exceptional items)
         pbt_yearly = financials.get('pbt_excp_yearly', {})
         if pbt_yearly:
             tax_rates = []
@@ -1216,7 +1280,8 @@ class FinancialProcessor:
                                    f"+ Method3={method3_rate:.4f} (PBIDT-Int-Dep), avg of both]")
                         return blended
 
-                logger.info(f"  Tax rate: {method1_result:.4f} [ACTUAL: 1 - PAT/pbt_excp avg {len(tax_rates)}yr]")
+                self._data_sources.setdefault('tax', 'DERIVED_ACCRUAL')
+                logger.info(f"  Tax rate: {method1_result:.4f} [DERIVED_ACCRUAL: 1 - PAT/pbt_excp avg {len(tax_rates)}yr]")
                 return method1_result
 
         # Method 2 [DERIVED]: PBT from annualized quarterly pbt_excp
@@ -1414,15 +1479,37 @@ class FinancialProcessor:
     def _estimate_shares_outstanding(self, financials: dict,
                                       price_data: dict) -> float:
         """
-        Estimate shares from MCap / CMP.
-        MCap (Rs Cr) = N_shares * CMP / 1e7
-        N_shares_cr = MCap_Cr / CMP
+        Estimate shares outstanding.
+        ACTUAL_COLUMN (paid-up shares) → DERIVED_MCAP (MCap/CMP) → DEFAULT fallback.
         """
+        # Method 0 [ACTUAL_COLUMN]: Use actual shares_outstanding from balance sheet
+        shares_yearly = financials.get('shares_outstanding_yearly', {})
+        if shares_yearly:
+            latest_shares = self.core.get_latest_value(shares_yearly)
+            if latest_shares and latest_shares > 0:
+                # shares_outstanding is in absolute numbers, convert to crores
+                # BS_Number of Equity Shares Paid Up is in actual count
+                # If value > 100, it's likely in lakhs or actual count
+                if latest_shares > 1e6:
+                    # Actual count → convert to crores (1 Cr = 1e7)
+                    shares_cr = latest_shares / 1e7
+                elif latest_shares > 100:
+                    # Likely in lakhs → convert to crores (1 Cr = 100 lakhs)
+                    shares_cr = latest_shares / 100
+                else:
+                    # Already in crores
+                    shares_cr = latest_shares
+                self._data_sources['shares'] = 'ACTUAL_COLUMN'
+                logger.info(f"  Shares outstanding: {shares_cr:.4f} Cr [ACTUAL_COLUMN: paid-up shares = {latest_shares:,.0f}]")
+                return round(shares_cr, 4)
+
+        # Method 1 [DERIVED_MCAP]: MCap / CMP
         mcap = price_data.get('mcap_cr')
         cmp = price_data.get('cmp')
 
         if mcap and cmp and cmp > 0:
             shares_in_crores = mcap / cmp
+            self._data_sources.setdefault('shares', 'DERIVED_MCAP')
             return round(shares_in_crores, 4)
 
         # Fallback: use latest market cap from quarterly data
@@ -1431,16 +1518,47 @@ class FinancialProcessor:
         core_mcap = self.core.get_latest_quarterly(mcap_quarterly) if hasattr(
             self.core, 'get_latest_quarterly') else self.core.get_latest_value(mcap_quarterly)
         if core_mcap and cmp and cmp > 0:
+            self._data_sources.setdefault('shares', 'DERIVED_MCAP')
             return round(core_mcap / cmp, 4)
 
+        self._data_sources['shares'] = 'DEFAULT'
         logger.warning(f"Cannot estimate shares for {financials.get('company_name')}")
         return 1.0
 
     def _estimate_terminal_roce(self, financials: dict,
                                  terminal_assumptions: dict) -> float:
-        """Estimate sustainable ROCE for terminal value."""
+        """
+        Estimate sustainable ROCE for terminal value.
+        ACTUAL_CE (capital employed) → DERIVED_NWDEBT (NW+Debt proxy) → DEFAULT.
+        """
+        # Method 0 [ACTUAL_CE]: Use actual capital_employed for ROCE calculation
+        capital_employed_yearly = financials.get('capital_employed_yearly', {})
+        op_profit_yearly = financials.get('op_profit_yearly', {})
+        if capital_employed_yearly and op_profit_yearly:
+            tax_rate = self._estimate_effective_tax_rate(financials)
+            roce_from_ce = []
+            for year in sorted(capital_employed_yearly.keys(), reverse=True)[:5]:
+                ce = capital_employed_yearly[year]
+                ebit = op_profit_yearly.get(year)
+                if ce and ce > 0 and ebit and ebit > 0:
+                    nopat = ebit * (1 - tax_rate)
+                    roce = nopat / ce
+                    roce_from_ce.append(roce)
+                    logger.debug(f"  ROCE {year}: NOPAT={nopat:.1f} / CE={ce:.1f} = {roce:.4f} [ACTUAL_CE]")
+            if roce_from_ce:
+                avg_roce = np.mean(roce_from_ce)
+                convergence = terminal_assumptions.get('roce_convergence', 0.15)
+                terminal = avg_roce * 0.6 + convergence * 0.4
+                result = round(max(0.08, min(terminal, 0.30)), 4)
+                self._data_sources['roce'] = 'ACTUAL_CE'
+                logger.info(f"  Terminal ROCE: {result:.4f} [ACTUAL_CE: avg {len(roce_from_ce)}yr NOPAT/CapitalEmployed "
+                            f"blended 60/40 with convergence={convergence:.2%}]")
+                return result
+
+        # Method 1 [DERIVED_NWDEBT]: Use roce from CSV (based on NW+Debt proxy)
         roce_series = financials.get('roce', {})
         if not roce_series:
+            self._data_sources['roce'] = 'DEFAULT'
             return terminal_assumptions.get('roce_convergence', 0.15)
 
         avg_roce = self.core.calculate_average(roce_series, years=5)
@@ -1452,17 +1570,19 @@ class FinancialProcessor:
             convergence = terminal_assumptions.get('roce_convergence', 0.15)
             # Blend historical with sector convergence
             terminal = avg_roce * 0.6 + convergence * 0.4
+            self._data_sources.setdefault('roce', 'DERIVED_NWDEBT')
             return round(max(0.08, min(terminal, 0.30)), 4)
 
+        self._data_sources.setdefault('roce', 'DEFAULT')
         return terminal_assumptions.get('roce_convergence', 0.15)
 
     def _estimate_terminal_reinvestment(self, financials: dict,
                                          terminal_assumptions: dict) -> float:
         """
         Estimate terminal reinvestment rate.
-        Reinvestment Rate = Capex / NOPAT
-        ACTUAL → DERIVED → DEFAULT fallback chain.
+        ACTUAL_PAYOUT (1 - dividend payout) → DERIVED_CAPEX (capex/NOPAT) → DEFAULT.
 
+        When both methods available, use weighted average: 60% capex method, 40% payout method.
         For high-growth companies, recent capex is inflated by expansion.
         Use sector default for terminal (steady-state) reinvestment.
         """
@@ -1485,7 +1605,23 @@ class FinancialProcessor:
         # High-growth if EITHER condition: CAGR >20% OR recent YoY >50%
         is_high_growth = (recent_cagr_3y and recent_cagr_3y > 0.20) or recent_yoy > 0.50
 
-        # Method 1 [ACTUAL]: Use op_profit_yearly + pur_of_fixed_assets
+        # Check dividend payout ratio for cross-check / alternative method
+        payout_reinvestment = None
+        dividend_payout = financials.get('dividend_payout_ratio_yearly', {})
+        if dividend_payout:
+            recent_payouts = sorted(dividend_payout.keys(), reverse=True)[:3]
+            payout_vals = [dividend_payout[y] for y in recent_payouts
+                           if dividend_payout[y] is not None and 0 < dividend_payout[y] < 100]
+            if payout_vals:
+                avg_payout = np.mean(payout_vals)
+                # Payout is in %, convert to decimal
+                if avg_payout > 1:
+                    avg_payout = avg_payout / 100
+                payout_reinvestment = round(max(0.10, min(1 - avg_payout, 0.60)), 4)
+                logger.info(f"  Payout-based reinvestment: {payout_reinvestment:.4f} "
+                            f"[ACTUAL_PAYOUT: 1 - avg_payout({avg_payout:.1%}) = {1-avg_payout:.1%}]")
+
+        # Method 1 [DERIVED_CAPEX]: Use op_profit_yearly + pur_of_fixed_assets
         op_profit_yearly = financials.get('op_profit_yearly', {})
         pur_fa = financials.get('pur_of_fixed_assets', {})
         if op_profit_yearly and pur_fa:
@@ -1504,12 +1640,22 @@ class FinancialProcessor:
                                     f"[NORMALIZED for high-growth: historical {historical_reinv:.1%} "
                                     f"includes expansion capex, using sector steady-state. "
                                     f"3Y CAGR: {cagr_str}]")
+                        self._data_sources['reinvest'] = 'DERIVED_CAPEX'
                         return sector_default
                     else:
-                        result = round(max(0.10, min(historical_reinv, 0.60)), 4)
-                        logger.info(f"  Terminal reinvestment: {result:.4f} "
-                                    f"[ACTUAL: pur_of_fixed_assets/NOPAT = {abs(latest_capex):.1f}/{nopat:.1f}]")
-                        return result
+                        capex_result = round(max(0.10, min(historical_reinv, 0.60)), 4)
+                        # Blend with payout method if both available (60% capex, 40% payout)
+                        if payout_reinvestment is not None:
+                            blended = round(capex_result * 0.60 + payout_reinvestment * 0.40, 4)
+                            self._data_sources['reinvest'] = 'ACTUAL_PAYOUT'
+                            logger.info(f"  Terminal reinvestment: {blended:.4f} "
+                                        f"[BLENDED: capex_method={capex_result:.4f}*0.6 + "
+                                        f"payout_method={payout_reinvestment:.4f}*0.4]")
+                            return blended
+                        self._data_sources['reinvest'] = 'DERIVED_CAPEX'
+                        logger.info(f"  Terminal reinvestment: {capex_result:.4f} "
+                                    f"[DERIVED_CAPEX: pur_of_fixed_assets/NOPAT = {abs(latest_capex):.1f}/{nopat:.1f}]")
+                        return capex_result
 
         # Method 2 [DERIVED]: TTM quarterly op_profit + annualized capex
         op_profit_quarterly = financials.get('op_profit_quarterly',
@@ -1530,12 +1676,124 @@ class FinancialProcessor:
                     cap = abs(latest_capex)
                     reinv = cap / nopat
                     result = round(max(0.10, min(reinv, 0.60)), 4)
-                    logger.info(f"  Terminal reinvestment: {result:.4f} [DERIVED: quarterly TTM]")
+                    # Blend with payout if available
+                    if payout_reinvestment is not None:
+                        blended = round(result * 0.60 + payout_reinvestment * 0.40, 4)
+                        self._data_sources['reinvest'] = 'ACTUAL_PAYOUT'
+                        logger.info(f"  Terminal reinvestment: {blended:.4f} "
+                                    f"[BLENDED: qtr_capex={result:.4f}*0.6 + payout={payout_reinvestment:.4f}*0.4]")
+                        return blended
+                    self._data_sources.setdefault('reinvest', 'DERIVED_CAPEX')
+                    logger.info(f"  Terminal reinvestment: {result:.4f} [DERIVED_CAPEX: quarterly TTM]")
                     return result
 
+        # If only payout-based available (no capex data)
+        if payout_reinvestment is not None:
+            self._data_sources['reinvest'] = 'ACTUAL_PAYOUT'
+            logger.info(f"  Terminal reinvestment: {payout_reinvestment:.4f} [ACTUAL_PAYOUT: 1 - dividend_payout]")
+            return payout_reinvestment
+
         default = terminal_assumptions.get('reinvestment_rate', 0.30)
+        self._data_sources['reinvest'] = 'DEFAULT'
         logger.info(f"  Terminal reinvestment: {default:.4f} [DEFAULT]")
         return default
+
+    def _get_rd_to_sales(self, financials: dict, valuation_subgroup: str = None) -> Optional[float]:
+        """
+        Get R&D as % of sales for applicable subgroups.
+        Only relevant for PHARMA_MFG, DEFENSE, MEDICAL_EQUIPMENT, PRODUCT_SAAS.
+        For these subgroups, R&D should be treated as growth capex in DCF.
+        """
+        RD_SUBGROUPS = {
+            'HEALTHCARE_PHARMA_MFG', 'INDUSTRIALS_DEFENSE',
+            'HEALTHCARE_MEDICAL_EQUIPMENT', 'TECHNOLOGY_PRODUCT_SAAS',
+        }
+        if valuation_subgroup and valuation_subgroup not in RD_SUBGROUPS:
+            return None
+
+        rd_series = financials.get('rd_pct_of_sales_yearly', {})
+        if not rd_series:
+            return None
+
+        # Average last 3 years
+        recent = sorted(rd_series.keys(), reverse=True)[:3]
+        vals = [rd_series[y] for y in recent if rd_series[y] is not None and rd_series[y] > 0]
+        if not vals:
+            return None
+
+        avg_rd = round(np.mean(vals), 4)
+        # Convert from % to decimal if needed
+        if avg_rd > 1:
+            avg_rd = avg_rd / 100
+
+        logger.info(f"  R&D/Sales: {avg_rd:.4f} [ACTUAL: rd_pct_of_sales avg {len(vals)}yr]")
+        return avg_rd
+
+    def _compute_banking_drivers_from_fullstats(self, financials: dict) -> dict:
+        """
+        Compute banking-specific driver values from fullstats YYYY_metric columns.
+        Returns dict mapping driver_name → {value, trend, source}.
+        """
+        drivers = {}
+
+        # CASA ratio (direct value)
+        casa = financials.get('casa_yearly', {})
+        if casa:
+            recent = sorted(casa.keys(), reverse=True)[:3]
+            vals = [casa[y] for y in recent if casa[y] is not None and casa[y] > 0]
+            if vals:
+                drivers['casa_ratio'] = {
+                    'value': round(vals[0], 2),
+                    'trend': 'UP' if len(vals) >= 2 and vals[0] > vals[1] else
+                             ('DOWN' if len(vals) >= 2 and vals[0] < vals[1] else 'STABLE'),
+                    'source': 'COMPUTED',
+                }
+                logger.debug(f"  CASA ratio: {vals[0]:.2f}% [COMPUTED from fullstats]")
+
+        # Cost-to-income ratio (direct value, lower is better)
+        ci = financials.get('cost_income_ratio_yearly', {})
+        if ci:
+            recent = sorted(ci.keys(), reverse=True)[:3]
+            vals = [ci[y] for y in recent if ci[y] is not None and ci[y] > 0]
+            if vals:
+                drivers['cost_to_income_ratio'] = {
+                    'value': round(vals[0], 2),
+                    'trend': 'DOWN' if len(vals) >= 2 and vals[0] < vals[1] else
+                             ('UP' if len(vals) >= 2 and vals[0] > vals[1] else 'STABLE'),
+                    'source': 'COMPUTED',
+                }
+                logger.debug(f"  Cost/Income: {vals[0]:.2f}% [COMPUTED from fullstats]")
+
+        # Credit-deposit ratio (for credit_growth driver — YoY change)
+        cd = financials.get('credit_deposits_yearly', {})
+        if cd and len(cd) >= 2:
+            recent = sorted(cd.keys(), reverse=True)[:2]
+            curr = cd.get(recent[0])
+            prev = cd.get(recent[1])
+            if curr and prev and prev > 0:
+                yoy_change = (curr - prev) / prev * 100
+                drivers['credit_growth'] = {
+                    'value': round(yoy_change, 2),
+                    'trend': 'UP' if yoy_change > 0 else ('DOWN' if yoy_change < 0 else 'STABLE'),
+                    'source': 'COMPUTED',
+                }
+                logger.debug(f"  Credit growth: {yoy_change:.2f}% YoY [COMPUTED from credit_deposits]")
+
+        # NIM (direct value from fullstats)
+        nim = financials.get('nim_yearly', {})
+        if nim:
+            recent = sorted(nim.keys(), reverse=True)[:3]
+            vals = [nim[y] for y in recent if nim[y] is not None and nim[y] > 0]
+            if vals:
+                drivers['net_interest_margin'] = {
+                    'value': round(vals[0], 2),
+                    'trend': 'UP' if len(vals) >= 2 and vals[0] > vals[1] else
+                             ('DOWN' if len(vals) >= 2 and vals[0] < vals[1] else 'STABLE'),
+                    'source': 'COMPUTED',
+                }
+                logger.debug(f"  NIM: {vals[0]:.2f}% [COMPUTED from fullstats]")
+
+        return drivers
 
     def _get_promoter_pledge(self, financials: dict) -> float:
         """Get promoter pledge percentage."""

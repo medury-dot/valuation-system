@@ -49,3 +49,8 @@
 - ChromaDB: localhost:8001
 
 ❯ for sales figure use the sales_* columns (dont see <year>_sales column); use them to calculate TTM sales. same for pbidt, pat also.
+
+## Input Data Column Inventory
+- **Column Tracking CSV**: See `valuation_system/docs/input_data_columns.csv` for the complete list of all available data columns, their frequency, naming patterns, source (core CSV / fullstats / proposed), usage status, and driver mappings.
+- **Data Source Tracking**: `financial_processor.py` tracks which key inputs use actual vs estimated data via `_data_sources` dict (keys: nwc, shares, tax, roce, reinvest). Values: ACTUAL_CF, ACTUAL_COLUMN, ACTUAL_CE, ACTUAL_PAYOUT, DERIVED_BS, DERIVED_MCAP, DERIVED_ACCRUAL, DERIVED_NWDEBT, DERIVED_CAPEX, DEFAULT. These are saved to `vs_valuation_snapshots` and shown in Excel Assumptions sheet column D.
+- **TIER 1 New Columns** (6 from Accord, to be added to fullstats): cf_wc_change, shares_outstanding, capital_employed, dividend_payout_ratio, cf_tax_paid, rd_pct_of_sales. Code is ready — columns loaded in core_loader.py, fallback logic in financial_processor.py. Will activate when data appears in fullstats.

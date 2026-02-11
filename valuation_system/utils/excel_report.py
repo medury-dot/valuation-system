@@ -106,6 +106,33 @@ def _remark(ws, row, col, text):
     return cell
 
 
+# Data source tag styles
+ACTUAL_SOURCE_FILL = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')  # Green
+DERIVED_SOURCE_FILL = PatternFill(start_color='FFF2CC', end_color='FFF2CC', fill_type='solid')  # Yellow
+DEFAULT_SOURCE_FILL = PatternFill(start_color='FFC7CE', end_color='FFC7CE', fill_type='solid')  # Red
+
+
+def _data_source_cell(ws, row, col, source_tag):
+    """Write a data source tag cell with color coding."""
+    if not source_tag:
+        return
+    cell = ws.cell(row=row, column=col, value=source_tag)
+    cell.font = Font(bold=True, size=9)
+    cell.alignment = Alignment(horizontal='center')
+    cell.border = THIN_BORDER
+    # Color code: green for actual, yellow for derived, red for default
+    if 'ACTUAL' in source_tag:
+        cell.fill = ACTUAL_SOURCE_FILL
+        cell.font = Font(bold=True, size=9, color='006100')
+    elif 'DERIVED' in source_tag:
+        cell.fill = DERIVED_SOURCE_FILL
+        cell.font = Font(bold=True, size=9, color='9C6500')
+    elif 'DEFAULT' in source_tag:
+        cell.fill = DEFAULT_SOURCE_FILL
+        cell.font = Font(bold=True, size=9, color='9C0006')
+    return cell
+
+
 def _format_ratio_components(components, metric_label=''):
     """Build a readable remark string like 'avg(949/18148=5.2%, 850/16500=5.2%)'."""
     if not components:
@@ -268,10 +295,12 @@ def _build_assumptions_sheet(ws, result, refs):
     ws.column_dimensions['A'].width = 32
     ws.column_dimensions['B'].width = 18
     ws.column_dimensions['C'].width = 60
+    ws.column_dimensions['D'].width = 18  # Data Source column
 
     assumptions = result.get('dcf_assumptions', {})
     dcf_details = result.get('dcf_details', {})
     dcf_assum = dcf_details.get('assumptions', {})
+    data_sources = result.get('data_sources', {})
     outlook = result.get('sector_outlook', {})
 
     r = 1
@@ -286,12 +315,12 @@ def _build_assumptions_sheet(ws, result, refs):
     ws.cell(row=r, column=1, value='Risk-Free Rate (Rf)')
     refs['rf_rate'] = r
     _inp(ws, r, 2, assumptions.get('risk_free_rate', dcf_assum.get('risk_free_rate', 0.0674)), PCT_FMT)
-    _remark(ws, r, 3, '[DERIVED: US 10Y + India premium]')
+    _remark(ws, r, 3, '[ACTUAL: interest_rate_10y from market_indicators.csv]')
     r += 1
     ws.cell(row=r, column=1, value='Equity Risk Premium (ERP)')
     refs['erp'] = r
     _inp(ws, r, 2, assumptions.get('equity_risk_premium', assumptions.get('erp', dcf_assum.get('erp', 0.0708))), PCT_FMT)
-    _remark(ws, r, 3, '[ACTUAL: Damodaran India ERP]')
+    _remark(ws, r, 3, '[ACTUAL: India equity risk premium]')
 
     # ── GROUP LEVEL ──
     r += 3
@@ -301,7 +330,7 @@ def _build_assumptions_sheet(ws, result, refs):
     ws.cell(row=r, column=1, value='Beta (Levered)')
     refs['beta'] = r
     _inp(ws, r, 2, assumptions.get('beta', dcf_assum.get('beta', 0)), '0.0000')
-    _remark(ws, r, 3, '[ACTUAL: Damodaran sector beta]')
+    _remark(ws, r, 3, '[ACTUAL: Sector beta]')
 
     r += 1
     ws.cell(row=r, column=1, value='Sector Outlook')
@@ -519,12 +548,14 @@ def _build_assumptions_sheet(ws, result, refs):
     nwc_s = assumptions.get('nwc_to_sales', dcf_assum.get('nwc_to_sales', 0.15))
     _inp(ws, r, 2, nwc_s, PCT_FMT)
     _remark(ws, r, 3, _format_nwc_components(result.get('nwc_components', [])))
+    _data_source_cell(ws, r, 4, data_sources.get('nwc', ''))
 
     r += 1
     ws.cell(row=r, column=1, value='Effective Tax Rate')
     refs['tax_rate'] = r
     _inp(ws, r, 2, assumptions.get('tax_rate', dcf_assum.get('tax_rate', 0.25)), PCT_FMT)
     _remark(ws, r, 3, _format_tax_components(result.get('tax_components', [])))
+    _data_source_cell(ws, r, 4, data_sources.get('tax', ''))
 
     r += 1
     ws.cell(row=r, column=1, value='Cost of Debt (pre-tax)')
@@ -541,11 +572,13 @@ def _build_assumptions_sheet(ws, result, refs):
     ws.cell(row=r, column=1, value='Terminal ROCE')
     refs['terminal_roce'] = r
     _inp(ws, r, 2, assumptions.get('terminal_roce', dcf_assum.get('terminal_roce', 0.15)), PCT_FMT)
+    _data_source_cell(ws, r, 4, data_sources.get('roce', ''))
 
     r += 1
     ws.cell(row=r, column=1, value='Terminal Reinvestment Rate')
     refs['terminal_reinvestment'] = r
     _inp(ws, r, 2, assumptions.get('terminal_reinvestment', dcf_assum.get('terminal_reinvestment', 0.30)), PCT_FMT)
+    _data_source_cell(ws, r, 4, data_sources.get('reinvest', ''))
 
     r += 1
     ws.cell(row=r, column=1, value='Net Debt (Rs Cr)')
@@ -563,7 +596,9 @@ def _build_assumptions_sheet(ws, result, refs):
     ws.cell(row=r, column=1, value='Shares Outstanding (Cr)')
     refs['shares'] = r
     _inp(ws, r, 2, assumptions.get('shares_outstanding', dcf_assum.get('shares_outstanding', 0)), '0.0000')
-    _remark(ws, r, 3, '= MCap / CMP')
+    shares_remark = '= MCap / CMP' if data_sources.get('shares') != 'ACTUAL_COLUMN' else '= Actual paid-up shares'
+    _remark(ws, r, 3, shares_remark)
+    _data_source_cell(ws, r, 4, data_sources.get('shares', ''))
 
 
 def _get_peer_median(result, key):
@@ -1241,20 +1276,20 @@ def _build_macro_drivers_sheet(ws, result, refs):
     r += 1
     ws.cell(row=r, column=1, value='Risk-Free Rate (Rf)')
     _fml(ws, r, 2, f"='Assumptions'!B{refs['rf_rate']}", PCT_FMT)
-    ws.cell(row=r, column=3, value='Damodaran')
+    ws.cell(row=r, column=3, value='Macro: interest_rate_10y')
     ws.cell(row=r, column=4, value='WACC via Cost of Equity (Ke)')
 
     r += 1
     ws.cell(row=r, column=1, value='Equity Risk Premium (ERP)')
     _fml(ws, r, 2, f"='Assumptions'!B{refs['erp']}", PCT_FMT)
-    ws.cell(row=r, column=3, value='Damodaran India')
+    ws.cell(row=r, column=3, value='India ERP')
     ws.cell(row=r, column=4, value='WACC via Cost of Equity (Ke)')
 
     r += 1
     ws.cell(row=r, column=1, value='India 10Y Yield')
     assumptions = result.get('dcf_assumptions', {})
     ws.cell(row=r, column=2, value=assumptions.get('risk_free_rate', 0.0674)).number_format = PCT_FMT
-    ws.cell(row=r, column=3, value='Damodaran / RBI')
+    ws.cell(row=r, column=3, value='Macro: market_indicators.csv')
     ws.cell(row=r, column=4, value='Rf calibration')
 
     r += 2
@@ -1594,15 +1629,15 @@ def _build_driver_hierarchy_sheet(ws, result, refs):
     assumptions = result.get('dcf_assumptions', {})
     ws.cell(row=r, column=1, value='Risk-Free Rate (Rf)')
     ws.cell(row=r, column=2, value=assumptions.get('risk_free_rate', 0.0674)).number_format = PCT_FMT
-    ws.cell(row=r, column=3, value='Damodaran / RBI')
+    ws.cell(row=r, column=3, value='Macro: interest_rate_10y')
     r += 1
     ws.cell(row=r, column=1, value='Equity Risk Premium (ERP)')
     ws.cell(row=r, column=2, value=assumptions.get('erp', 0.0708)).number_format = PCT_FMT
-    ws.cell(row=r, column=3, value='Damodaran India')
+    ws.cell(row=r, column=3, value='India ERP')
     r += 1
     ws.cell(row=r, column=1, value='Beta (Levered)')
     ws.cell(row=r, column=2, value=assumptions.get('beta', 1.0)).number_format = '0.00'
-    ws.cell(row=r, column=3, value='Damodaran sector')
+    ws.cell(row=r, column=3, value='Sector beta')
 
     # ── GROUP LEVEL (20%) ──
     r += 2

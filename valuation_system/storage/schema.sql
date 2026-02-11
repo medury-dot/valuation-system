@@ -60,6 +60,13 @@ CREATE TABLE IF NOT EXISTS vs_valuation_snapshots (
     confidence_score DECIMAL(5,2),
     peer_multiples_snapshot JSON,
 
+    -- Data source tracking (which inputs used actual vs estimated data)
+    nwc_source ENUM('ACTUAL_CF','DERIVED_BS','DEFAULT') DEFAULT NULL COMMENT 'NWC: actual CF WC change vs BS estimation',
+    shares_source ENUM('ACTUAL_COLUMN','DERIVED_MCAP','DEFAULT') DEFAULT NULL COMMENT 'Shares: actual paid-up vs MCap/CMP',
+    tax_source ENUM('ACTUAL_CF','DERIVED_ACCRUAL','DEFAULT') DEFAULT NULL COMMENT 'Tax: actual cash tax vs 1-PAT/PBT',
+    roce_source ENUM('ACTUAL_CE','DERIVED_NWDEBT','DEFAULT') DEFAULT NULL COMMENT 'ROCE: actual capital employed vs NW+Debt',
+    reinvest_source ENUM('ACTUAL_PAYOUT','DERIVED_CAPEX','DEFAULT') DEFAULT NULL COMMENT 'Reinvestment: payout ratio vs capex/NOPAT',
+
     model_version VARCHAR(50),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 

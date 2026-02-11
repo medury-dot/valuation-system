@@ -1,0 +1,128 @@
+column_stem,frequency,naming_pattern,source,used_by_valuation,category,driver_mapping,notes
+# === P&L ITEMS — QUARTERLY + ANNUAL (88 companies diverge between quarterly sum and annual column) ===
+sales,quarterly+annual,sales_NNN / YYYY_sales,BOTH,YES,pl_flow,revenue_cagr_3yr (0.08) + base_revenue,Quarterly preferred — annual columns unreliable for ~818 companies
+pbidt,quarterly+annual,pbidt_NNN / YYYY_pbidt,BOTH,YES,pl_flow,ebitda_margin,Quarterly preferred
+pat,quarterly+annual,pat_NNN / YYYY_pat,BOTH,YES,pl_flow,earnings_momentum (0.08),Quarterly preferred
+interest,quarterly+annual,interest_NNN / YYYY_interest,BOTH,YES,pl_flow,cost_of_debt,Quarterly preferred
+op_profit,quarterly+annual,op_profit_NNN / YYYY_op_profit,BOTH,YES,pl_flow,terminal_reinvestment,Quarterly preferred
+pbt_excp,quarterly+annual,pbt_excp_NNN / YYYY_pbt_excp,BOTH,YES,pl_flow,effective_tax_rate,Quarterly preferred
+totalincome,quarterly+annual,totalincome_NNN / YYYY_totalincome,BOTH,YES,pl_flow,,
+# === P&L ITEMS — QUARTERLY ONLY ===
+empcost,quarterly,empcost_NNN,BOTH,YES,pl_flow,,Employee cost
+opex,quarterly,opex_NNN,BOTH,YES,pl_flow,,Operating expenses
+genadminexp,quarterly,genadminexp_NNN,BOTH,YES,pl_flow,,General admin expenses
+totalexp,quarterly,totalexp_NNN,BOTH,YES,pl_flow,,Total expenditure
+pbdt,quarterly,pbdt_NNN,BOTH,YES,pl_flow,,Profit before depreciation and tax
+grs_sales,quarterly,grs_sales_NNN,BOTH,YES,pl_flow,,Gross sales
+# === CASH FLOW — HALF-YEARLY + ANNUAL ===
+cashflow_ops,half_yearly+annual,hN_YYYY_cashflow_ops / YYYY_cashflow_ops,BOTH,YES,cf_flow,actual_cfo,Prefer half-yearly sums for TTM
+cashflow_investing,half_yearly+annual,hN_YYYY_cashflow_investing / YYYY_cashflow_investing,BOTH,YES,cf_flow,,
+cashflow_financing,half_yearly+annual,hN_YYYY_cashflow_financing / YYYY_cashflow_financing,BOTH,YES,cf_flow,,
+# === CASH FLOW — HALF-YEARLY ONLY ===
+cashflow_purchase_fixedassets,half_yearly,hN_YYYY_cashflow_purchase_fixedassets,BOTH,YES,cf_flow,capex_to_sales,Annual equivalent: pur_of_fixed_assets
+cashflow_sale_fixedassets,half_yearly,hN_YYYY_cashflow_sale_fixedassets,BOTH,YES,cf_flow,,Annual equivalent: sale_of_fixed_assets
+# === BALANCE SHEET — HALF-YEARLY + ANNUAL ===
+inventories,half_yearly+annual,hN_YYYY_inventories / YYYY_inventories,BOTH,YES,bs_stock,nwc_to_sales,Used in NWC calculation
+sundrydebtors,half_yearly+annual,hN_YYYY_sundrydebtors / YYYY_sundrydebtors,BOTH,YES,bs_stock,nwc_to_sales,Used in NWC calculation
+tot_liab,half_yearly+annual,hN_YYYY_tot_liab / YYYY_tot_liab,BOTH,YES,bs_stock,nwc_to_sales,Current liab = tot_liab - LT_borrow
+LT_borrow,half_yearly+annual,hN_YYYY_LT_borrow / YYYY_LT_borrow,BOTH,YES,bs_stock,nwc_to_sales,Long-term borrowings for NWC calc
+tot_assets,half_yearly+annual,hN_YYYY_tot_assets / YYYY_tot_assets,BOTH,YES,bs_stock,,
+# === BALANCE SHEET — HALF-YEARLY ONLY ===
+Trade_payables,half_yearly,hN_YYYY_Trade_payables,BOTH,YES,bs_stock,,Title case! HY only
+acc_depr,half_yearly,hN_YYYY_acc_depr,BOTH,YES,bs_stock,depreciation_to_sales,HY only (with 'r'). Year-end h2 preferred
+fixed_assets,half_yearly,hN_YYYY_fixed_assets,BOTH,YES,bs_stock,,
+cash_and_bank,half_yearly,hN_YYYY_cash_and_bank,BOTH,YES,bs_stock,cash_and_equivalents,No annual version exists
+# === BALANCE SHEET / P&L — ANNUAL ONLY ===
+trade_payables,annual,YYYY_trade_payables,BOTH,YES,bs_stock,,Lowercase for annual
+acc_dep,annual,YYYY_acc_dep,BOTH,YES,bs_stock,depreciation_to_sales,Annual only (no 'r')
+pur_of_fixed_assets,annual,YYYY_pur_of_fixed_assets,BOTH,YES,cf_flow,capex_to_sales,HY equivalent: cashflow_purchase_fixedassets
+sale_of_fixed_assets,annual,YYYY_sale_of_fixed_assets,BOTH,YES,cf_flow,,HY equivalent: cashflow_sale_fixedassets
+debt,annual,YYYY_debt,BOTH,YES,bs_stock,debt_ratio + net_debt,Total debt
+networth,annual,YYYY_networth,BOTH,YES,bs_stock,terminal_roce (proxy),Net worth
+totalassets,annual,YYYY_totalassets,BOTH,YES,bs_stock,,
+grsblk,annual,YYYY_grsblk,BOTH,YES,bs_stock,,Gross block
+netblk,annual,YYYY_netblk,BOTH,YES,bs_stock,cash_residual_calc,Net block
+cwip,annual,YYYY_cwip,BOTH,YES,bs_stock,cash_residual_calc,Capital work in progress
+share_capital,annual,YYYY_share_capital,BOTH,YES,bs_stock,,
+total_reserves,annual,YYYY_total_reserves,BOTH,YES,bs_stock,,
+fcf_per_share,annual,YYYY_fcf_per_share,BOTH,YES,derived,,Only 2024-2025 available
+# === RATIOS — ANNUAL ONLY ===
+roe,annual,YYYY_roe,BOTH,YES,ratio,roe_trend_3y,Return on equity %
+roce,annual,YYYY_roce,BOTH,YES,ratio,roce_trend (0.10),Return on capital employed %
+roa,annual,YYYY_roa,BOTH,YES,ratio,,Return on assets %
+gpm,annual,YYYY_gpm,BOTH,YES,ratio,,Gross profit margin %
+ebidtm,annual,YYYY_ebidtm,BOTH,YES,ratio,,EBITDA margin %
+pbidtm,annual,YYYY_pbidtm,BOTH,YES,ratio,,PBIDT margin %
+patm,annual,YYYY_patm,BOTH,YES,ratio,,PAT margin %
+ptm,annual,YYYY_ptm,BOTH,YES,ratio,,Profit before tax margin %
+inv_tr,annual,YYYY_inv_tr,BOTH,YES,ratio,,Inventory turnover
+recv_days,annual,YYYY_recv_days,BOTH,YES,ratio,,Receivable days
+inv_days,annual,YYYY_inv_days,BOTH,YES,ratio,,Inventory days
+paybl_days,annual,YYYY_paybl_days,BOTH,YES,ratio,,Payable days
+debtor_tr,annual,YYYY_debtor_tr,BOTH,YES,ratio,,Debtor turnover
+ccc,annual,YYYY_ccc,BOTH,YES,ratio,,Cash conversion cycle
+debt_mcap_ratio,annual,YYYY_debt_mcap_ratio,BOTH,YES,ratio,,
+# === POINT-IN-TIME — QUARTERLY ONLY ===
+actualmcap_in_crores,quarterly,actualmcap_in_crores_NNN,BOTH,YES,market,shares_outstanding (MCap/CMP),Market cap snapshots
+promoter,quarterly,promoter_NNN,BOTH,YES,governance,promoter_holding_change (0.06),Promoter holding %
+# === BANKING — QUARTERLY ===
+bank_sales,quarterly,bank_sales_NNN,CORE,YES,banking,,Banking P&L: total income
+bank_pbidt,quarterly,bank_pbidt_NNN,CORE,YES,banking,,Banking P&L: pre-provision operating profit
+bank_pat,quarterly,bank_pat_NNN,CORE,YES,banking,,Banking P&L: profit after tax
+gnpa,quarterly+annual,gnpa_NNN / YYYY_gnpa,BOTH,YES,banking,asset_quality (gross_npa_pct),Gross NPA %
+nnpa,quarterly+annual,nnpa_NNN / YYYY_nnpa,BOTH,YES,banking,asset_quality (net_npa_pct),Net NPA %
+bank_netprofit,annual,YYYY_bank_netprofit,CORE,YES,banking,,
+bank_networth,annual,YYYY_bank_networth,CORE,YES,banking,,
+bank_totalincome,annual,YYYY_bank_totalincome,CORE,YES,banking,,
+# === ADDITIONAL ANNUAL P&L/DERIVED ===
+change_in_stock,annual,YYYY_change_in_stock,BOTH,NO,pl_flow,,Not used in valuation
+long_term_borrowings,annual,YYYY_long_term_borrowings,BOTH,NO,bs_stock,,Duplicate of LT_borrow
+misexp,annual,YYYY_misexp,BOTH,NO,pl_flow,,Miscellaneous expenses
+netprofit,annual,YYYY_netprofit,BOTH,YES,pl_flow,,Net profit
+opex_minus_otherinc,annual,YYYY_opex_minus_otherinc,BOTH,NO,derived,,
+powergen_distbn,annual,YYYY_powergen_distbn,BOTH,NO,industry_specific,,Power generation/distribution
+sales_cashflow_ratio,annual,YYYY_sales_cashflow_ratio,BOTH,YES,ratio,,Sales to cashflow ratio
+seldistexp,annual,YYYY_seldistexp,BOTH,NO,pl_flow,,Selling & distribution expenses
+totexp,annual,YYYY_totexp,BOTH,NO,pl_flow,,Annual total expenditure (quarterly totalexp is separate)
+# === FULLSTATS — PRE-COMPUTED QUARTERLY GROWTH/TTM (not yet wired) ===
+3Yr_ttm-sales_growth,quarterly,3Yr_ttm-sales_growth_NNN,FULLSTATS,PROPOSED,derived,revenue_cagr_3yr (0.08),Pre-computed 3Y TTM sales CAGR
+YoY_qtrly_pat_growth,quarterly,YoY_qtrly_pat_growth_NNN,FULLSTATS,PROPOSED,derived,earnings_momentum (0.08),Pre-computed YoY PAT growth
+debt_equity,quarterly,debt_equity_NNN,FULLSTATS,PROPOSED,derived,debt_equity_change (0.08),Pre-computed D/E ratio per quarter
+pledgebypromoter,quarterly,pledgebypromoter_NNN,FULLSTATS,PROPOSED,derived,promoter_pledge_pct (0.06),100-quarter pledge trend
+3yr_roe,quarterly,3yr_roe_NNN,FULLSTATS,NO,derived,,Rolling 3Y ROE — redundant with roce_trend
+ttm-sales,quarterly,ttm-sales_NNN,FULLSTATS,NO,derived,,Pre-computed TTM sales — we compute our own
+ttm-pbidt,quarterly,ttm-pbidt_NNN,FULLSTATS,NO,derived,,Pre-computed TTM PBIDT
+ttm-pat,quarterly,ttm-pat_NNN,FULLSTATS,NO,derived,,Pre-computed TTM PAT
+YoY_qtrly_sales_growth,quarterly,YoY_qtrly_sales_growth_NNN,FULLSTATS,NO,derived,,YoY quarterly sales growth
+YoY_qtrly_pbidt_growth,quarterly,YoY_qtrly_pbidt_growth_NNN,FULLSTATS,NO,derived,,
+3Yr_ttm-pbidt_growth,quarterly,3Yr_ttm-pbidt_growth_NNN,FULLSTATS,NO,derived,,
+3Yr_ttm-pat_growth,quarterly,3Yr_ttm-pat_growth_NNN,FULLSTATS,NO,derived,,
+3yr_sales,quarterly,3yr_sales_NNN,FULLSTATS,NO,derived,,Rolling 3Y sales
+3yr_pat,quarterly,3yr_pat_NNN,FULLSTATS,NO,derived,,Rolling 3Y PAT
+3yr_pbidt,quarterly,3yr_pbidt_NNN,FULLSTATS,NO,derived,,Rolling 3Y PBIDT
+annual_sales_growth,annual,annual_sales_growth_NNN,FULLSTATS,NO,derived,,
+annual_pbidt_growth,annual,annual_pbidt_growth_NNN,FULLSTATS,NO,derived,,
+annual_pat_growth,annual,annual_pat_growth_NNN,FULLSTATS,NO,derived,,
+# === FULLSTATS — BANKING ANNUAL (naming now CONFIRMED correct: YYYY_metric) ===
+casa,annual_fixed,YYYY_casa,FULLSTATS,PROPOSED,banking,casa_ratio (0.123 BANKING_PRIVATE),CASA % of deposits. Naming fixed in latest fullstats
+nim,annual_fixed,YYYY_nim,FULLSTATS,PROPOSED,banking,net_interest_margin (company-level),Net interest margin %. Already computed from quarterly but fullstats gives direct
+cost_income_ratio,annual_fixed,YYYY_cost_income_ratio,FULLSTATS,PROPOSED,banking,cost_to_income_ratio (0.074),Operating efficiency ratio
+credit_deposits,annual_fixed,YYYY_credit_deposits,FULLSTATS,PROPOSED,banking,credit_growth (0.186/0.172),Credit-deposit ratio for growth drivers
+gnpa_pct,annual_fixed,YYYY_gnpa,BOTH,YES,banking,asset_quality,Gross NPA percentage — already used
+nnpa_pct,annual_fixed,YYYY_nnpa,BOTH,YES,banking,asset_quality,Net NPA percentage — already used
+# === PROPOSED NEW TIER 1 — FROM ACCORD (6 columns to add to fullstats) ===
+cf_wc_change,annual+half_yearly,YYYY_cf_wc_change / hN_YYYY_cf_wc_change,PROPOSED,PROPOSED,cf_flow,nwc_to_sales_trend (0.05),Accord: CF_Changes In Working Capital. Replaces BS estimation. Critical for negative-NWC companies
+shares_outstanding,annual,YYYY_shares_outstanding,PROPOSED,PROPOSED,bs_stock,per-share intrinsic value,Accord: BS_Number of Equity Shares Paid Up. Replaces MCap/CMP approximation
+capital_employed,annual,YYYY_capital_employed,PROPOSED,PROPOSED,bs_stock,roce_trend (0.10),Accord: FH_Capital Employed. Direct ROCE denominator replacing (PBT+Int)/(NW+Debt)
+dividend_payout_ratio,annual,YYYY_dividend_payout_ratio,PROPOSED,PROPOSED,ratio,terminal_reinvestment,Accord: FR_Dividend Pay Out Ratio(%). Cross-check for reinvestment = 1 - payout
+cf_tax_paid,annual+half_yearly,YYYY_cf_tax_paid / hN_YYYY_cf_tax_paid,PROPOSED,PROPOSED,cf_flow,effective_tax_rate,Accord: CF_Tax Paid. Actual cash tax vs accrual 1-(PAT/PBT)
+rd_pct_of_sales,annual,YYYY_rd_pct_of_sales,PROPOSED,PROPOSED,ratio,rd_spend/rd_investment (0.071-0.143),Accord: ERD_% of Turnover. R&D for PHARMA/DEFENSE/MEDICAL_EQUIP/PRODUCT_SAAS
+# === METADATA (non-numeric identification columns) ===
+Company Name,metadata,Company Name,BOTH,YES,id,,Primary lookup key
+CD_NSE Symbol1,metadata,CD_NSE Symbol1,BOTH,YES,id,,NSE symbol for price lookup
+CD_BSE Code,metadata,CD_BSE Code,BOTH,YES,id,,BSE code for price lookup
+CD_ISIN No,metadata,CD_ISIN No,BOTH,YES,id,,ISIN for dedup
+CD_Sector,metadata,CD_Sector,BOTH,NO,id,,Legacy screener.in sector — use valuation_group instead
+CD_Industry1,metadata,CD_Industry1,BOTH,NO,id,,Legacy screener.in industry — use valuation_subgroup instead
+valuation_group,metadata,valuation_group,FULLSTATS,YES,taxonomy,,Our sector classification (66 groups)
+valuation_subgroup,metadata,valuation_subgroup,FULLSTATS,YES,taxonomy,,Our industry classification (66+ subgroups)

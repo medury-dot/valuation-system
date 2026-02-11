@@ -122,6 +122,25 @@ METRIC_FREQUENCY_MAP = {
     'sales_cashflow_ratio': ['annual'],
     'seldistexp': ['annual'],
     'totexp': ['annual'],   # annual version (quarterly 'totalexp' is separate)
+    # --- TIER 1 NEW COLUMNS (from Accord, added to fullstats) ---
+    # These replace estimation-based calculations with actual data when available.
+    # cf_wc_change: Actual CF working capital change (replaces BS-based NWC estimation)
+    'cf_wc_change': ['annual', 'half_yearly'],
+    # shares_outstanding: Actual paid-up equity shares (replaces MCap/CMP approximation)
+    'shares_outstanding': ['annual'],
+    # capital_employed: Actual capital employed (replaces (NW+Debt) proxy for ROCE)
+    'capital_employed': ['annual'],
+    # dividend_payout_ratio: Actual payout % (cross-check for terminal reinvestment)
+    'dividend_payout_ratio': ['annual'],
+    # cf_tax_paid: Actual cash tax paid (replaces accrual-based 1-PAT/PBT)
+    'cf_tax_paid': ['annual', 'half_yearly'],
+    # rd_pct_of_sales: R&D as % of turnover (for PHARMA, DEFENSE, MEDICAL_EQUIP, SAAS)
+    'rd_pct_of_sales': ['annual'],
+    # --- Banking-specific from fullstats (YYYY_metric prefix confirmed) ---
+    'casa': ['annual'],
+    'cost_income_ratio': ['annual'],
+    'credit_deposits': ['annual'],
+    'nim': ['annual'],   # NIM % — also derived from quarterly bank data
 }
 
 
@@ -435,6 +454,32 @@ class CoreDataLoader:
             # Banking specific (year-based)
             'gnpa': self._extract_year_series(row, 'gnpa'),
             'nnpa': self._extract_year_series(row, 'nnpa'),
+
+            # === TIER 1 NEW COLUMNS (actual data replacing estimations) ===
+            # CF Working Capital Change — replaces BS-based NWC estimation
+            'cf_wc_change_yearly': (self._annualize_halfyearly(
+                self._extract_halfyearly_series(row, 'cf_wc_change'))
+                or self._extract_year_series(row, 'cf_wc_change')),
+            'cf_wc_change_hy': self._extract_halfyearly_series(row, 'cf_wc_change'),
+            # Shares Outstanding — replaces MCap/CMP approximation
+            'shares_outstanding_yearly': self._extract_year_series(row, 'shares_outstanding'),
+            # Capital Employed — replaces (NW+Debt) proxy for ROCE
+            'capital_employed_yearly': self._extract_year_series(row, 'capital_employed'),
+            # Dividend Payout Ratio — cross-check for terminal reinvestment
+            'dividend_payout_ratio_yearly': self._extract_year_series(row, 'dividend_payout_ratio'),
+            # CF Tax Paid — replaces accrual-based 1-PAT/PBT
+            'cf_tax_paid_yearly': (self._annualize_halfyearly(
+                self._extract_halfyearly_series(row, 'cf_tax_paid'))
+                or self._extract_year_series(row, 'cf_tax_paid')),
+            'cf_tax_paid_hy': self._extract_halfyearly_series(row, 'cf_tax_paid'),
+            # R&D % of Sales — for PHARMA, DEFENSE, MEDICAL_EQUIP, SAAS subgroups
+            'rd_pct_of_sales_yearly': self._extract_year_series(row, 'rd_pct_of_sales'),
+
+            # === BANKING-SPECIFIC FROM FULLSTATS (YYYY_metric prefix) ===
+            'casa_yearly': self._extract_year_series(row, 'casa'),
+            'cost_income_ratio_yearly': self._extract_year_series(row, 'cost_income_ratio'),
+            'credit_deposits_yearly': self._extract_year_series(row, 'credit_deposits'),
+            'nim_yearly': self._extract_year_series(row, 'nim'),
 
             # === BACKWARD COMPAT ALIASES (quarterly-derived, same as _annual keys) ===
             'sales': sales_annual,
