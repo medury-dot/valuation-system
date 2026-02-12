@@ -1553,6 +1553,8 @@ class FinancialProcessor:
                 self._data_sources['roce'] = 'ACTUAL_CE'
                 logger.info(f"  Terminal ROCE: {result:.4f} [ACTUAL_CE: avg {len(roce_from_ce)}yr NOPAT/CapitalEmployed "
                             f"blended 60/40 with convergence={convergence:.2%}]")
+                # Cross-check with fullstats 5Y avg ROE if available
+                self._crosscheck_terminal_roce_with_roe(financials, result)
                 return result
 
         # Method 1 [DERIVED_NWDEBT]: Use roce from CSV (based on NW+Debt proxy)
@@ -1570,11 +1572,51 @@ class FinancialProcessor:
             convergence = terminal_assumptions.get('roce_convergence', 0.15)
             # Blend historical with sector convergence
             terminal = avg_roce * 0.6 + convergence * 0.4
+            terminal_result = round(max(0.08, min(terminal, 0.30)), 4)
             self._data_sources.setdefault('roce', 'DERIVED_NWDEBT')
-            return round(max(0.08, min(terminal, 0.30)), 4)
+            # Cross-check with fullstats 5Y avg ROE if available
+            self._crosscheck_terminal_roce_with_roe(financials, terminal_result)
+            return terminal_result
 
         self._data_sources.setdefault('roce', 'DEFAULT')
         return terminal_assumptions.get('roce_convergence', 0.15)
+
+    def _crosscheck_terminal_roce_with_roe(self, financials: dict, terminal_roce: float):
+        """
+        Cross-check computed terminal ROCE against fullstats 5Y avg ROE.
+        If divergence > 5pp, log WARNING and average both for a more robust estimate.
+        This is informational — does not override the terminal ROCE value.
+        """
+        # Try fullstats 5Y avg ROE (quarterly series, latest value = rolling 5Y average)
+        avg_roe_5yr_q = financials.get('avg_roe_5yr_quarterly', {})
+        avg_roe_5yr = None
+        if avg_roe_5yr_q:
+            sorted_keys = sorted(avg_roe_5yr_q.keys())
+            avg_roe_5yr = avg_roe_5yr_q[sorted_keys[-1]]
+            # Convert from % to decimal if needed
+            if avg_roe_5yr is not None and avg_roe_5yr > 1:
+                avg_roe_5yr = avg_roe_5yr / 100
+
+        # Fall back to annual ROE series average
+        if avg_roe_5yr is None:
+            roe_series = financials.get('roe', {})
+            if roe_series:
+                avg_roe_raw = self.core.calculate_average(roe_series, years=5)
+                if avg_roe_raw is not None:
+                    avg_roe_5yr = avg_roe_raw / 100 if avg_roe_raw > 1 else avg_roe_raw
+
+        if avg_roe_5yr is None:
+            return
+
+        divergence_pp = abs(terminal_roce - avg_roe_5yr) * 100
+
+        if divergence_pp > 5:
+            logger.warning(f"  Terminal ROCE cross-check: ROCE={terminal_roce:.2%} vs "
+                           f"5Y avg ROE={avg_roe_5yr:.2%} (divergence={divergence_pp:.1f}pp > 5pp threshold). "
+                           f"Blended average={(terminal_roce + avg_roe_5yr) / 2:.2%}")
+        else:
+            logger.info(f"  Terminal ROCE cross-check: ROCE={terminal_roce:.2%} vs "
+                        f"5Y avg ROE={avg_roe_5yr:.2%} (divergence={divergence_pp:.1f}pp — within 5pp)")
 
     def _estimate_terminal_reinvestment(self, financials: dict,
                                          terminal_assumptions: dict) -> float:

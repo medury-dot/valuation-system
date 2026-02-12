@@ -141,6 +141,9 @@ METRIC_FREQUENCY_MAP = {
     'cost_income_ratio': ['annual'],
     'credit_deposits': ['annual'],
     'nim': ['annual'],   # NIM % — also derived from quarterly bank data
+    # --- Employee count from fullstats (CD_No of Employees via Accord) ---
+    # Quarterly series: number_employees_NNN — activates when data appears in fullstats
+    'number_employees': ['quarterly'],
 }
 
 
@@ -161,12 +164,18 @@ class CoreDataLoader:
       Q1=Apr-Jun, Q2=Jul-Sep, Q3=Oct-Dec, Q4=Jan-Mar
     """
 
+    # Fullstats column stems we extract (not all 8,607 columns!)
+    FULLSTATS_STEMS = ['debt_equity', 'pledgebypromoter', '5yr_avg_roe', '3yr_roe',
+                        'number_employees']
+
     def __init__(self, csv_path: str = None):
         self.csv_path = csv_path or self._resolve_csv_path()
         if not self.csv_path:
             raise ValueError("CORE_CSV_PATH not set in .env and no CSV found in CORE_CSV_DIR")
 
         self._df = None
+        self._fullstats_df = None  # Lazy-loaded fullstats supplement
+        self._fullstats_path = None  # Resolved fullstats CSV path
         self._column_index_cache = {}  # {prefix: max_index}
         logger.info(f"CoreDataLoader initialized with: {self.csv_path}")
 
@@ -199,6 +208,127 @@ class CoreDataLoader:
         latest = max(csv_files, key=os.path.getmtime)
         logger.info(f"Auto-detected latest core CSV: {os.path.basename(latest)}")
         return latest
+
+    # =========================================================================
+    # FULLSTATS SUPPLEMENT LOADING
+    # =========================================================================
+
+    @staticmethod
+    def _resolve_fullstats_path() -> Optional[str]:
+        """Resolve fullstats CSV path from FULLSTATS_CSV_PATH env var.
+        Auto-detects latest fullstats_dump_notranspose_*.csv in the directory."""
+        fullstats_dir = os.getenv('FULLSTATS_CSV_PATH', '').strip()
+        if not fullstats_dir or not os.path.isdir(fullstats_dir):
+            return None
+
+        import glob as globmod
+        csv_files = globmod.glob(os.path.join(fullstats_dir, 'fullstats_dump_notranspose_*.csv'))
+        if not csv_files:
+            logger.debug(f"No fullstats CSV files found in {fullstats_dir}")
+            return None
+
+        latest = max(csv_files, key=os.path.getmtime)
+        logger.info(f"Auto-detected latest fullstats CSV: {os.path.basename(latest)}")
+        return latest
+
+    @property
+    def fullstats_df(self) -> Optional[pd.DataFrame]:
+        """Lazy load fullstats CSV — only the columns we need (not all 8,607)."""
+        if self._fullstats_df is not None:
+            return self._fullstats_df
+
+        if self._fullstats_path is None:
+            self._fullstats_path = self._resolve_fullstats_path()
+
+        if not self._fullstats_path:
+            return None
+
+        try:
+            # Read just the header to discover available columns
+            header_df = pd.read_csv(self._fullstats_path, nrows=0)
+            all_cols = list(header_df.columns)
+
+            # Select only columns we need: identifiers + target stems
+            cols_to_load = ['company_name']
+            # Add optional identifier columns if present
+            for id_col in ['nse_symbol', 'bse_code', 'isin']:
+                if id_col in all_cols:
+                    cols_to_load.append(id_col)
+
+            # Add columns matching our target stems (stem_NNN pattern)
+            for stem in self.FULLSTATS_STEMS:
+                for col in all_cols:
+                    if col.startswith(f'{stem}_'):
+                        suffix = col[len(stem) + 1:]
+                        if suffix.isdigit():
+                            cols_to_load.append(col)
+
+            logger.info(f"Loading fullstats supplement: {len(cols_to_load)} columns "
+                        f"(of {len(all_cols)} total) from {os.path.basename(self._fullstats_path)}")
+
+            self._fullstats_df = pd.read_csv(
+                self._fullstats_path, usecols=cols_to_load, low_memory=False
+            )
+            logger.info(f"Fullstats loaded: {len(self._fullstats_df)} companies, "
+                        f"{len(self._fullstats_df.columns)} columns")
+            return self._fullstats_df
+
+        except Exception as e:
+            logger.warning(f"Failed to load fullstats CSV: {e}")
+            import traceback
+            logger.debug(traceback.format_exc())
+            self._fullstats_df = pd.DataFrame()  # Empty — don't retry
+            return None
+
+    def _get_fullstats_row(self, company_name: str) -> Optional[pd.Series]:
+        """Look up a company row in fullstats by company_name (case-insensitive)."""
+        fdf = self.fullstats_df
+        if fdf is None or fdf.empty:
+            return None
+
+        # Exact match first (fullstats uses lowercase 'company_name')
+        matches = fdf[fdf['company_name'] == company_name]
+        if not matches.empty:
+            return matches.iloc[0]
+
+        # Case-insensitive fallback
+        matches = fdf[fdf['company_name'].str.lower() == company_name.lower()]
+        if not matches.empty:
+            return matches.iloc[0]
+
+        return None
+
+    def _extract_fullstats_quarterly(self, fs_row: pd.Series, stem: str,
+                                      num_quarters: int = 20) -> dict:
+        """Extract quarterly series from fullstats row for a given stem.
+        Returns {quarter_index: value} for most recent num_quarters with data."""
+        if fs_row is None:
+            return {}
+
+        result = {}
+        # Scan for all stem_NNN columns in the row
+        for col in fs_row.index:
+            if col.startswith(f'{stem}_'):
+                suffix = col[len(stem) + 1:]
+                if suffix.isdigit():
+                    idx = int(suffix)
+                    val = fs_row[col]
+                    if pd.notna(val):
+                        try:
+                            result[idx] = float(val)
+                        except (ValueError, TypeError):
+                            pass
+
+        if not result:
+            return {}
+
+        # Return only most recent num_quarters entries
+        sorted_keys = sorted(result.keys())
+        if len(sorted_keys) > num_quarters:
+            recent_keys = sorted_keys[-num_quarters:]
+            result = {k: result[k] for k in recent_keys}
+
+        return result
 
     # =========================================================================
     # QUARTER INDEX HELPERS
@@ -330,7 +460,7 @@ class CoreDataLoader:
                 if half == 2:  # h2 = year-end balance
                     acc_dep_annual[yr] = val
 
-        return {
+        result = {
             # Identification
             'company_name': row['Company Name'],
             'sector': row.get('CD_Sector', ''),
@@ -505,6 +635,35 @@ class CoreDataLoader:
             'promoter_pledged': self._extract_quarterly_series(
                 row, 'promoter', suffix='_pledged'),
         }
+
+        # === FULLSTATS SUPPLEMENT (quarterly series not in core CSV) ===
+        fs_row = self._get_fullstats_row(row['Company Name'])
+        if fs_row is not None:
+            de_q = self._extract_fullstats_quarterly(fs_row, 'debt_equity', num_quarters=20)
+            pledge_q = self._extract_fullstats_quarterly(fs_row, 'pledgebypromoter', num_quarters=20)
+            roe_5yr_q = self._extract_fullstats_quarterly(fs_row, '5yr_avg_roe', num_quarters=12)
+            roe_3yr_q = self._extract_fullstats_quarterly(fs_row, '3yr_roe', num_quarters=12)
+
+            if de_q:
+                result['debt_equity_quarterly'] = de_q
+                logger.debug(f"  Fullstats: debt_equity_quarterly loaded ({len(de_q)} quarters)")
+            if pledge_q:
+                result['pledgebypromoter_quarterly'] = pledge_q
+                logger.debug(f"  Fullstats: pledgebypromoter_quarterly loaded ({len(pledge_q)} quarters)")
+            if roe_5yr_q:
+                result['avg_roe_5yr_quarterly'] = roe_5yr_q
+                logger.debug(f"  Fullstats: avg_roe_5yr_quarterly loaded ({len(roe_5yr_q)} quarters)")
+            if roe_3yr_q:
+                result['roe_3yr_quarterly'] = roe_3yr_q
+                logger.debug(f"  Fullstats: roe_3yr_quarterly loaded ({len(roe_3yr_q)} quarters)")
+
+            # Employee count — placeholder for CD_No of Employees (Accord)
+            emp_q = self._extract_fullstats_quarterly(fs_row, 'number_employees', num_quarters=12)
+            if emp_q:
+                result['number_employees_quarterly'] = emp_q
+                logger.debug(f"  Fullstats: number_employees_quarterly loaded ({len(emp_q)} quarters)")
+
+        return result
 
     def _extract_quarterly_series(self, row: pd.Series, prefix: str,
                                    suffix: str = '',

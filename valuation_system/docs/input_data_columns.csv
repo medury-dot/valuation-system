@@ -87,9 +87,11 @@ totexp,annual,YYYY_totexp,BOTH,NO,pl_flow,,Annual total expenditure (quarterly t
 # === FULLSTATS — PRE-COMPUTED QUARTERLY GROWTH/TTM (not yet wired) ===
 3Yr_ttm-sales_growth,quarterly,3Yr_ttm-sales_growth_NNN,FULLSTATS,PROPOSED,derived,revenue_cagr_3yr (0.08),Pre-computed 3Y TTM sales CAGR
 YoY_qtrly_pat_growth,quarterly,YoY_qtrly_pat_growth_NNN,FULLSTATS,PROPOSED,derived,earnings_momentum (0.08),Pre-computed YoY PAT growth
-debt_equity,quarterly,debt_equity_NNN,FULLSTATS,PROPOSED,derived,debt_equity_change (0.08),Pre-computed D/E ratio per quarter
-pledgebypromoter,quarterly,pledgebypromoter_NNN,FULLSTATS,PROPOSED,derived,promoter_pledge_pct (0.06),100-quarter pledge trend
-3yr_roe,quarterly,3yr_roe_NNN,FULLSTATS,NO,derived,,Rolling 3Y ROE — redundant with roce_trend
+debt_equity,quarterly,debt_equity_NNN,FULLSTATS,YES,derived,debt_equity_change (0.08),101 quarterly D/E ratios — primary source for trend analysis
+pledgebypromoter,quarterly,pledgebypromoter_NNN,FULLSTATS,YES,derived,promoter_pledge_pct (0.06),100-quarter pledge trend — only source of pledge data
+3yr_roe,quarterly,3yr_roe_NNN,FULLSTATS,YES,derived,roe_trend_3y (0.05),Rolling 3Y ROE — pre-computed quarterly for more granular trend
+5yr_avg_roe,quarterly,5yr_avg_roe_NNN,FULLSTATS,YES,derived,terminal_roce_crosscheck,78-quarter rolling 5Y avg ROE — cross-check for terminal ROCE estimation
+number_employees,quarterly,number_employees_NNN,FULLSTATS,YES,derived,employee_productivity (0.04),CD_No of Employees from Accord — placeholder ready for data
 ttm-sales,quarterly,ttm-sales_NNN,FULLSTATS,NO,derived,,Pre-computed TTM sales — we compute our own
 ttm-pbidt,quarterly,ttm-pbidt_NNN,FULLSTATS,NO,derived,,Pre-computed TTM PBIDT
 ttm-pat,quarterly,ttm-pat_NNN,FULLSTATS,NO,derived,,Pre-computed TTM PAT

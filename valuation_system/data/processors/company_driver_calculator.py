@@ -593,7 +593,47 @@ class CompanyDriverCalculator:
         }
 
     def _compute_debt_equity_change(self, financials: dict) -> Optional[dict]:
-        """D/E ratio trend from yearly LT_borrow and NW."""
+        """D/E ratio trend. Prefers fullstats quarterly series (100 pts) over annual (5-6 pts)."""
+        # Method 1 [ACTUAL_FULLSTATS]: Use quarterly debt_equity from fullstats
+        de_quarterly = financials.get('debt_equity_quarterly', {})
+        if de_quarterly and len(de_quarterly) >= 4:
+            sorted_keys = sorted(de_quarterly.keys())
+            # Use latest 20 quarters for trend (5 years quarterly)
+            recent = sorted_keys[-20:] if len(sorted_keys) >= 20 else sorted_keys
+            de_values = [de_quarterly[k] for k in recent if de_quarterly.get(k) is not None]
+
+            if len(de_values) >= 4:
+                latest = de_values[-1]
+                # Compare latest vs 8 quarters ago (2 years) for trend
+                compare_idx = max(0, len(de_values) - 8)
+                earlier = de_values[compare_idx]
+
+                if latest < earlier - 0.1:
+                    direction = 'POSITIVE'
+                    trend = 'DOWN'
+                elif latest > earlier + 0.1:
+                    direction = 'NEGATIVE'
+                    trend = 'UP'
+                else:
+                    direction = 'NEUTRAL'
+                    trend = 'STABLE'
+
+                # Compute linear slope for richer trend signal
+                if len(de_values) >= 8:
+                    x = np.arange(len(de_values))
+                    slope = np.polyfit(x, de_values, 1)[0]
+                    slope_per_year = slope * 4  # Quarterly to annualized
+                    logger.debug(f"  D/E quarterly trend: {len(de_values)} pts, "
+                                 f"latest={latest:.2f}, slope/yr={slope_per_year:+.3f} [ACTUAL_FULLSTATS]")
+
+                return {
+                    'driver_name': 'debt_equity_change',
+                    'current_value': f"{latest:.2f}x",
+                    'impact_direction': direction,
+                    'trend': trend,
+                }
+
+        # Method 2 [DERIVED]: Fall back to annual debt/networth from core CSV
         debt_series = financials.get('debt', {})
         nw_series = financials.get('networth', {})
 
@@ -1100,12 +1140,32 @@ class CompanyDriverCalculator:
         }
 
     def _compute_promoter_pledge_pct(self, financials: dict) -> Optional[dict]:
-        """Promoter pledge percentage from quarterly data."""
-        pledged = financials.get('promoter_pledged_quarterly', {})
-        if not pledged:
-            return None
+        """Promoter pledge percentage. Prefers fullstats quarterly series over core CSV."""
+        latest = None
+        trend = 'STABLE'
 
-        latest = self.core.get_latest_value(pledged)
+        # Method 1 [ACTUAL_FULLSTATS]: Use pledgebypromoter from fullstats (100 quarterly pts)
+        pledge_quarterly = financials.get('pledgebypromoter_quarterly', {})
+        if pledge_quarterly:
+            sorted_keys = sorted(pledge_quarterly.keys())
+            latest = pledge_quarterly[sorted_keys[-1]]
+
+            # Trend: compare latest vs 8 quarters ago
+            if len(sorted_keys) >= 8:
+                earlier_key = sorted_keys[-8]
+                earlier = pledge_quarterly.get(earlier_key, latest)
+                if latest > earlier + 2:
+                    trend = 'UP'  # Increasing pledge — risk
+                elif latest < earlier - 2:
+                    trend = 'DOWN'  # Decreasing pledge — positive
+                logger.debug(f"  Promoter pledge: {latest:.1f}% (was {earlier:.1f}% 8Q ago) [ACTUAL_FULLSTATS]")
+
+        # Method 2 [DERIVED]: Fall back to core CSV promoter_pledged_quarterly
+        if latest is None:
+            pledged = financials.get('promoter_pledged_quarterly', {})
+            if pledged:
+                latest = self.core.get_latest_value(pledged)
+
         if latest is None:
             return None
 
@@ -1122,7 +1182,7 @@ class CompanyDriverCalculator:
             'driver_name': 'promoter_pledge_pct',
             'current_value': f"{latest:.1f}%",
             'impact_direction': direction,
-            'trend': 'STABLE',
+            'trend': trend,
         }
 
     # =========================================================================
@@ -1317,20 +1377,39 @@ class CompanyDriverCalculator:
     # =========================================================================
 
     def _compute_roe_trend_3y(self, financials: dict) -> Optional[dict]:
-        """Direction of ROE over 3 years from pre-computed CSV ratios."""
-        roe_series = financials.get('roe', {})
-        if not roe_series or len(roe_series) < 2:
-            return None
+        """Direction of ROE over 3 years. Prefers fullstats pre-computed rolling 3Y ROE."""
+        latest = None
+        change = None
 
-        years_sorted = sorted(roe_series.keys())
-        recent = years_sorted[-3:] if len(years_sorted) >= 3 else years_sorted
-        values = [roe_series[y] for y in recent if roe_series.get(y) is not None]
-        if len(values) < 2:
-            return None
+        # Method 1 [ACTUAL_FULLSTATS]: Use pre-computed 3yr rolling ROE from fullstats
+        roe_3yr_q = financials.get('roe_3yr_quarterly', {})
+        if roe_3yr_q and len(roe_3yr_q) >= 4:
+            sorted_keys = sorted(roe_3yr_q.keys())
+            latest = roe_3yr_q[sorted_keys[-1]]
+            # Compare latest vs 12 quarters ago (3 years) for trend direction
+            compare_idx = max(0, len(sorted_keys) - 12)
+            earlier = roe_3yr_q[sorted_keys[compare_idx]]
+            change = latest - earlier
+            logger.debug(f"  ROE 3Y trend: {latest:.1f}% (was {earlier:.1f}% 12Q ago) [ACTUAL_FULLSTATS]")
 
-        latest = values[-1]
-        first = values[0]
-        change = latest - first
+        # Method 2 [DERIVED]: Fall back to annual ROE from core CSV
+        if latest is None:
+            roe_series = financials.get('roe', {})
+            if not roe_series or len(roe_series) < 2:
+                return None
+
+            years_sorted = sorted(roe_series.keys())
+            recent = years_sorted[-3:] if len(years_sorted) >= 3 else years_sorted
+            values = [roe_series[y] for y in recent if roe_series.get(y) is not None]
+            if len(values) < 2:
+                return None
+
+            latest = values[-1]
+            first = values[0]
+            change = latest - first
+
+        if change is None:
+            return None
 
         if change > 3:
             direction = 'POSITIVE'
@@ -1676,19 +1755,56 @@ class CompanyDriverCalculator:
     # =========================================================================
 
     def _compute_employee_productivity(self, financials: dict, valuation_subgroup: str) -> Optional[dict]:
-        """TTM sales / TTM empcost — how much revenue per rupee of employee cost."""
+        """Employee productivity: TTM sales / employee count (preferred), or TTM sales / empcost (fallback)."""
         sales_q = financials.get('sales_quarterly', {})
-        empcost_q = financials.get('employee_cost_quarterly', {})
-
         ttm_sales = self.core.get_ttm(sales_q)
+
+        if not ttm_sales or ttm_sales <= 0:
+            return None
+
+        # Method 1 [ACTUAL_FULLSTATS]: Use number_employees from fullstats (revenue per employee in Cr)
+        emp_count_q = financials.get('number_employees_quarterly', {})
+        if emp_count_q:
+            latest_emp = self.core.get_latest_value(emp_count_q)
+            if latest_emp and latest_emp > 0:
+                productivity_per_emp = ttm_sales / latest_emp  # Revenue per employee (Cr)
+                # Trend: compare vs 4 quarters ago
+                trend = 'STABLE'
+                sorted_keys = sorted(emp_count_q.keys())
+                if len(sorted_keys) >= 4:
+                    earlier_emp = emp_count_q.get(sorted_keys[-4])
+                    if earlier_emp and earlier_emp > 0:
+                        earlier_prod = ttm_sales / earlier_emp  # Approximate
+                        if productivity_per_emp > earlier_prod * 1.05:
+                            trend = 'UP'
+                        elif productivity_per_emp < earlier_prod * 0.95:
+                            trend = 'DOWN'
+
+                if productivity_per_emp > 1.0:
+                    direction = 'POSITIVE'  # >1 Cr per employee
+                elif productivity_per_emp < 0.2:
+                    direction = 'NEGATIVE'
+                else:
+                    direction = 'NEUTRAL'
+
+                logger.debug(f"  Employee productivity: {productivity_per_emp:.2f} Cr/employee "
+                             f"({int(latest_emp)} employees) [ACTUAL_FULLSTATS]")
+                return {
+                    'driver_name': 'employee_productivity',
+                    'current_value': f"{productivity_per_emp:.2f} Cr/emp ({int(latest_emp)} employees)",
+                    'impact_direction': direction,
+                    'trend': trend,
+                }
+
+        # Method 2 [DERIVED]: Fall back to sales/empcost ratio
+        empcost_q = financials.get('employee_cost_quarterly', {})
         ttm_empcost = self.core.get_ttm(empcost_q)
 
-        if not ttm_sales or ttm_sales <= 0 or not ttm_empcost or ttm_empcost <= 0:
+        if not ttm_empcost or ttm_empcost <= 0:
             return None
 
         productivity = ttm_sales / ttm_empcost
 
-        # Compare to subgroup (would need more data, use simple thresholds)
         if productivity > 8:
             direction = 'POSITIVE'
         elif productivity < 3:
