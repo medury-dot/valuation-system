@@ -295,6 +295,105 @@ class DamodaranLoader:
 
         return result
 
+    def get_all_beta_scenarios(self, valuation_group: str, valuation_subgroup: str,
+                                company_symbol: str, de_ratio: float,
+                                tax_rate: float = 0.25) -> dict:
+        """
+        Compute 3 beta scenarios for multi-scenario DCF valuation.
+
+        Scenario A: Individual company beta (from weekly cache, company-specific)
+        Scenario B: Damodaran India industry beta (professional estimate)
+        Scenario C: Subgroup aggregate beta (current default, peer average)
+
+        Returns dict with keys: 'individual_weekly', 'damodaran_india', 'subgroup_aggregate'
+        Each scenario has: levered_beta, unlevered_beta, source, wacc (optional)
+        """
+        scenarios = {}
+
+        # Scenario A: Individual company beta from weekly cache
+        weekly_cache_file = os.path.join(self.cache_dir, 'subgroup_betas_weekly.json')
+        if os.path.exists(weekly_cache_file):
+            try:
+                with open(weekly_cache_file, 'r') as f:
+                    weekly_cache = json.load(f)
+
+                subgroups = weekly_cache.get('subgroups', {})
+                lookup_key = valuation_subgroup.upper()
+
+                if lookup_key in subgroups:
+                    subgroup_data = subgroups[lookup_key]
+                    companies = subgroup_data.get('companies', [])
+
+                    # Search for this specific company
+                    for comp in companies:
+                        if comp.get('symbol') == company_symbol:
+                            scenarios['individual_weekly'] = {
+                                'levered_beta': comp['levered_beta'],
+                                'unlevered_beta': comp['unlevered_beta'],
+                                'source': f'individual_weekly:{company_symbol}',
+                                'de_ratio': comp.get('de_ratio', de_ratio),
+                                'tax_rate': comp.get('tax_rate', tax_rate)
+                            }
+                            logger.info(f"Scenario A (Individual): β_lev={comp['levered_beta']:.3f} "
+                                       f"for {company_symbol} from weekly cache")
+                            break
+            except Exception as e:
+                logger.warning(f"Failed to load individual weekly beta: {e}")
+
+        # Scenario B: Damodaran India industry beta
+        india_beta = self._get_damodaran_india_beta(valuation_subgroup)
+        if india_beta:
+            ub = india_beta['unlevered_beta']
+            lb = self._relever_beta(ub, de_ratio, tax_rate)
+            scenarios['damodaran_india'] = {
+                'unlevered_beta': ub,
+                'levered_beta': lb,
+                'source': f'damodaran_india:{india_beta["industry"]}',
+                'industry': india_beta['industry'],  # Explicit industry field for GSheet display
+                'subgroup_mapped': valuation_subgroup,  # Which subgroup was mapped to this industry
+                'n_firms': india_beta.get('n_firms'),
+                'de_ratio': de_ratio,
+                'tax_rate': tax_rate
+            }
+            logger.info(f"Scenario B (Damodaran India): β_u={ub:.3f} → β_lev={lb:.3f} "
+                       f"from {india_beta['industry']} (mapped from {valuation_subgroup})")
+
+        # Scenario C: Subgroup aggregate beta (current logic)
+        subgroup_beta = self._get_subgroup_beta(valuation_subgroup)
+        if subgroup_beta:
+            ub = subgroup_beta['unlevered_beta']
+            lb = self._relever_beta(ub, de_ratio, tax_rate)
+            scenarios['subgroup_aggregate'] = {
+                'unlevered_beta': ub,
+                'levered_beta': lb,
+                'source': f'subgroup_aggregate:{valuation_subgroup}',
+                'n_companies': subgroup_beta['n_companies'],
+                'de_ratio': de_ratio,
+                'tax_rate': tax_rate
+            }
+            logger.info(f"Scenario C (Subgroup Aggregate): β_u={ub:.3f} → β_lev={lb:.3f} "
+                       f"from {valuation_subgroup} (n={subgroup_beta['n_companies']})")
+
+        # If no scenarios found, add market beta fallback
+        if not scenarios:
+            scenarios['market_fallback'] = {
+                'unlevered_beta': 1.0,
+                'levered_beta': self._relever_beta(1.0, de_ratio, tax_rate),
+                'source': 'default_market',
+                'de_ratio': de_ratio,
+                'tax_rate': tax_rate
+            }
+            logger.warning(f"No beta scenarios found for {company_symbol}, using market beta=1.0")
+
+        return scenarios
+
+    def _relever_beta(self, unlevered_beta: float, de_ratio: float, tax_rate: float) -> float:
+        """
+        Re-lever unlevered beta for company's capital structure.
+        Levered Beta = Unlevered Beta × (1 + (1-t) × D/E)
+        """
+        return unlevered_beta * (1 + (1 - tax_rate) * de_ratio)
+
     def _get_subgroup_beta(self, valuation_subgroup: str) -> Optional[dict]:
         """
         Look up Indian subgroup beta from cached JSON files.

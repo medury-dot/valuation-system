@@ -482,7 +482,8 @@ class FinancialProcessor:
         if sector_config:
             terminal_assumptions = sector_config.get('terminal_assumptions', {})
 
-        terminal_roce = self._estimate_terminal_roce(financials, terminal_assumptions)
+        # WEEK 2 FIX: Pass valuation_subgroup for dynamic ROCE blending
+        terminal_roce = self._estimate_terminal_roce(financials, terminal_assumptions, valuation_subgroup)
         terminal_reinvestment = self._estimate_terminal_reinvestment(
             financials, terminal_assumptions
         )
@@ -599,6 +600,156 @@ class FinancialProcessor:
             logger.info(f"  Actual Capex:        Rs {actual_capex:,.1f} Cr  [{capex_source}]")
 
         return dcf_inputs
+
+    def build_roe_model_inputs(self, company_name: str, sector_config: dict = None,
+                                valuation_subgroup: str = None, overrides: dict = None) -> dict:
+        """
+        WEEK 3 FIX: Build inputs for ROE-based residual income valuation (for banks/financials).
+
+        Formula: Equity Value = Book Value × (ROE - g) / (Ke - g)
+
+        This is more appropriate for banks than FCFF DCF because:
+        - Banks don't have traditional capex/depreciation
+        - Deposits are business model, not debt
+        - ROE directly measures return on equity capital
+        - Book value is the capital base generating returns
+        """
+        financials = self.core.get_company_financials(company_name)
+        if not financials:
+            raise ValueError(f"No financial data for {company_name}")
+
+        nse_symbol = financials.get('nse_symbol', '')
+        price_data = self.prices.get_latest_data(nse_symbol)
+
+        # Get banking-specific metrics
+        bank_metrics = financials.get('banking_metrics_ttm', {})
+        if not bank_metrics:
+            # Compute if not already in financials
+            valuation_group = financials.get('valuation_group', '')
+            bank_metrics = self._compute_bank_metrics_ttm(financials, valuation_group)
+
+        # Extract banking quality metrics early (needed for terminal ROE logic)
+        npa_pct = bank_metrics.get('npa_pct', 0)
+        pcr = bank_metrics.get('provision_coverage_ratio', 0)
+
+        # Book value (networth/shareholders equity)
+        networth_series = financials.get('networth', {})
+        latest_networth = self.core.get_latest_value(networth_series)
+
+        # ROE (5-year average for terminal)
+        avg_roe_5yr = self._get_avg_roe_5yr(financials)
+        if not avg_roe_5yr or avg_roe_5yr <= 0:
+            # Fall back to simple ROE calculation
+            roe_series = financials.get('roe', {})
+            avg_roe_5yr = self.core.calculate_average(roe_series, years=5)
+            if avg_roe_5yr and avg_roe_5yr > 1:
+                avg_roe_5yr = avg_roe_5yr / 100
+
+        # Terminal ROE - use actual 5Y average WITHOUT blending for quality banks
+        # Quality banks sustain high ROE, no need for mean reversion
+        terminal_assumptions = sector_config.get('terminal_assumptions', {}) if sector_config else {}
+
+        # WEEK 3 FIX: For quality banks (ROE >15%, NPA <2%), use actual ROE
+        # For average/weak banks, blend with sector target
+        sector_roe_target = terminal_assumptions.get('roe_target', 0.15)  # 15% default
+
+        if avg_roe_5yr and avg_roe_5yr > 0.15 and npa_pct < 0.02:
+            # Quality bank - use 90% actual ROE, 10% sector (minimal reversion)
+            hist_weight, conv_weight = 0.9, 0.1
+            terminal_roe = avg_roe_5yr * hist_weight + sector_roe_target * conv_weight
+            logger.info(f"  Quality bank: Using 90/10 blend (ROE={avg_roe_5yr:.2%}, NPA={npa_pct:.2%})")
+        else:
+            # Average bank - use dynamic blend
+            hist_weight, conv_weight = self._get_dynamic_blend_ratio(financials, valuation_subgroup or '')
+            terminal_roe = avg_roe_5yr * hist_weight + sector_roe_target * conv_weight if avg_roe_5yr else sector_roe_target
+
+        # Adjust for asset quality (NPA, PCR) - already extracted above
+        roe_adjustment = 0.0
+        if npa_pct > 0.03:  # NPA > 3%
+            roe_adjustment = -0.02  # Reduce ROE by 2pp
+            logger.info(f"  ROE adjustment: -2pp (NPA={npa_pct:.2%} > 3%)")
+        elif npa_pct < 0.02 and pcr > 0.70:  # Low NPA + strong PCR
+            roe_adjustment = +0.01  # Increase ROE by 1pp
+            logger.info(f"  ROE adjustment: +1pp (NPA={npa_pct:.2%} < 2%, PCR={pcr:.2%} > 70%)")
+
+        terminal_roe = max(0.08, min(terminal_roe + roe_adjustment, 0.25))
+
+        # Terminal growth - higher for quality banks with strong metrics
+        # Quality banks can sustain higher growth (loan book expansion)
+        base_growth = terminal_assumptions.get('growth_rate', 0.04)  # 4% default
+
+        if avg_roe_5yr and avg_roe_5yr > 0.18 and npa_pct < 0.015:
+            # High-quality bank (ROE >18%, NPA <1.5%): 6% terminal growth
+            terminal_growth = 0.06
+            logger.info(f"  Quality bank growth: 6% (ROE={avg_roe_5yr:.2%}, NPA={npa_pct:.2%})")
+        elif avg_roe_5yr and avg_roe_5yr > 0.15 and npa_pct < 0.02:
+            # Good bank (ROE >15%, NPA <2%): 5% terminal growth
+            terminal_growth = 0.05
+        else:
+            # Average bank: 4% terminal growth
+            terminal_growth = base_growth
+
+        terminal_growth = min(terminal_growth, 0.07)  # Cap at 7%
+
+        # Cost of equity for banks - use ROE-based approach
+        # For banks, Ke should be close to ROE (investors expect returns close to what bank earns)
+        # CAPM often gives wrong Ke for banks due to beta issues
+        de_ratio = self._calculate_de_ratio(financials)
+        tax_rate = self._estimate_effective_tax_rate(financials)
+        damodaran_params = self.damodaran.get_all_params(
+            sector='FINANCIALS',
+            company_de_ratio=de_ratio,
+            company_tax_rate=tax_rate,
+            valuation_subgroup=valuation_subgroup
+        )
+        cost_of_equity_capm = damodaran_params['cost_of_equity']
+
+        # WEEK 3 FIX: For banks, use CAPM Ke from beta scenarios
+        # For value creation: ROE > Ke → P/B > 1x
+        # Use the best beta scenario to get reasonable Ke
+        beta_scenarios = self.damodaran.get_all_beta_scenarios(
+            valuation_group='FINANCIALS',
+            valuation_subgroup=valuation_subgroup or '',
+            company_symbol=financials.get('nse_symbol', ''),
+            de_ratio=de_ratio,
+            tax_rate=tax_rate
+        )
+
+        # Prefer individual beta scenario for Ke (most accurate)
+        if 'individual_weekly' in beta_scenarios:
+            cost_of_equity = beta_scenarios['individual_weekly'].get('cost_of_equity', cost_of_equity_capm)
+            logger.info(f"  Banking Ke: Using individual beta Ke={cost_of_equity:.2%}")
+        else:
+            cost_of_equity = cost_of_equity_capm
+            logger.info(f"  Banking Ke: Using CAPM Ke={cost_of_equity:.2%}")
+
+        # Shares outstanding
+        shares = self._estimate_shares_outstanding(financials, price_data)
+
+        logger.info(f"ROE Model Inputs for {company_name}:")
+        logger.info(f"  Book Value:          Rs {latest_networth:,.1f} Cr")
+        logger.info(f"  5Y Avg ROE:          {avg_roe_5yr:.2%}")
+        logger.info(f"  Terminal ROE:        {terminal_roe:.2%} (blended {hist_weight:.0%}/{conv_weight:.0%})")
+        logger.info(f"  Terminal Growth:     {terminal_growth:.2%}")
+        logger.info(f"  Cost of Equity:      {cost_of_equity:.2%}")
+        logger.info(f"  Shares Outstanding:  {shares:.2f} Cr")
+        logger.info(f"  Banking NIM:         {bank_metrics.get('net_interest_margin', 0):.2%}")
+        logger.info(f"  Banking NPA:         {npa_pct:.2%}")
+
+        return {
+            'method': 'ROE_RESIDUAL_INCOME',
+            'company_name': company_name,
+            'nse_symbol': nse_symbol,
+            'book_value': latest_networth,
+            'avg_roe_5yr': avg_roe_5yr,
+            'terminal_roe': terminal_roe,
+            'terminal_growth': terminal_growth,
+            'cost_of_equity': cost_of_equity,
+            'shares_outstanding': shares,
+            'banking_metrics': bank_metrics,
+            'damodaran_params': damodaran_params,
+            'blend_ratio': (hist_weight, conv_weight),
+        }
 
     def build_relative_inputs(self, company_name: str) -> dict:
         """Build inputs needed for relative valuation."""
@@ -1542,11 +1693,101 @@ class FinancialProcessor:
         logger.warning(f"Cannot estimate shares for {financials.get('company_name')}")
         return 1.0
 
+    def _get_avg_roe_5yr(self, financials: dict) -> float:
+        """Helper to get 5-year average ROE from fullstats or annual data."""
+        # Try fullstats 5Y avg ROE (quarterly series, latest value = rolling 5Y average)
+        avg_roe_5yr_q = financials.get('avg_roe_5yr_quarterly', {})
+        if avg_roe_5yr_q:
+            sorted_keys = sorted(avg_roe_5yr_q.keys())
+            avg_roe_5yr = avg_roe_5yr_q[sorted_keys[-1]]
+            # Convert from % to decimal if needed
+            if avg_roe_5yr is not None and avg_roe_5yr > 1:
+                avg_roe_5yr = avg_roe_5yr / 100
+            return avg_roe_5yr
+
+        # Fall back to annual ROE series average
+        roe_series = financials.get('roe', {})
+        if roe_series:
+            avg_roe = self.core.calculate_average(roe_series, years=5)
+            if avg_roe and avg_roe > 1:
+                avg_roe = avg_roe / 100
+            return avg_roe
+
+        return None
+
+    def _get_dynamic_blend_ratio(self, financials: dict, valuation_subgroup: str) -> tuple:
+        """
+        WEEK 2 FIX: Determine dynamic blend ratio based on ROE stability.
+
+        Returns: (historical_weight, convergence_weight)
+
+        Logic:
+        - Network/regulated moat sectors: 90/10 (minimal mean reversion)
+        - Stable ROE (σ < 3pp): 80/20 (trust historical more)
+        - Moderate volatility: 60/40 (default)
+        - Declining trend (>2pp/yr): 50/50 (sector convergence important)
+        - High volatility (σ > 5pp): 60/40 (moderate reversion)
+        """
+        # Default: 60/40 (moderate volatility)
+        hist_weight, conv_weight = 0.6, 0.4
+
+        roe_series = financials.get('roe', {})
+        if not roe_series or len(roe_series) < 3:
+            return (hist_weight, conv_weight)
+
+        # Get last 5 years of ROE
+        sorted_years = sorted(roe_series.keys(), reverse=True)[:5]
+        roe_values = [roe_series[y] for y in sorted_years if roe_series.get(y) is not None]
+
+        if len(roe_values) < 3:
+            return (hist_weight, conv_weight)
+
+        # Convert from % to decimal if needed
+        roe_values = [v / 100 if v > 1 else v for v in roe_values]
+
+        # Calculate volatility (standard deviation)
+        roe_std = np.std(roe_values)
+
+        # Calculate trend (linear slope)
+        years_numeric = list(range(len(roe_values)))
+        slope, _ = np.polyfit(years_numeric, roe_values, 1) if len(roe_values) >= 2 else (0, 0)
+
+        # Check for network/regulated moat sectors
+        moat_subgroups = [
+            'TELECOM', 'UTILITIES', 'INFRA_POWER', 'INFRA_ROADS',
+            'INFRA_PORTS', 'INFRA_AIRPORTS', 'ENERGY_TRANSMISSION'
+        ]
+        is_moat_sector = any(mg in valuation_subgroup.upper() for mg in moat_subgroups)
+
+        # Determine blend ratio
+        if is_moat_sector:
+            hist_weight, conv_weight = 0.9, 0.1
+            reason = "regulated moat"
+        elif roe_std < 0.03:  # σ < 3pp
+            hist_weight, conv_weight = 0.8, 0.2
+            reason = f"stable (σ={roe_std:.1%})"
+        elif slope < -0.02:  # Declining >2pp/yr
+            hist_weight, conv_weight = 0.5, 0.5
+            reason = f"declining ({slope:.1%}/yr)"
+        elif roe_std > 0.05:  # σ > 5pp
+            hist_weight, conv_weight = 0.6, 0.4
+            reason = f"volatile (σ={roe_std:.1%})"
+        else:
+            # Moderate (default)
+            reason = "moderate"
+
+        logger.info(f"  Dynamic ROCE blend: {hist_weight:.0%}/{conv_weight:.0%} ({reason})")
+        return (hist_weight, conv_weight)
+
     def _estimate_terminal_roce(self, financials: dict,
-                                 terminal_assumptions: dict) -> float:
+                                 terminal_assumptions: dict,
+                                 valuation_subgroup: str = None) -> float:
         """
         Estimate sustainable ROCE for terminal value.
         ACTUAL_CE (capital employed) → DERIVED_NWDEBT (NW+Debt proxy) → DEFAULT.
+
+        WEEK 2 FIX: Uses dynamic blend ratio based on ROE stability and
+        company-specific convergence when ROE-ROCE divergence >5pp.
         """
         # Method 0 [ACTUAL_CE]: Use actual capital_employed for ROCE calculation
         capital_employed_yearly = financials.get('capital_employed_yearly', {})
@@ -1591,12 +1832,26 @@ class FinancialProcessor:
                         logger.debug(f"  ROCE {year}: NOPAT={nopat:.1f} / CE={ce:.1f} = {roce:.4f} [ACTUAL_CE]")
                 if roce_from_ce:
                     avg_roce = np.mean(roce_from_ce)
+
+                    # WEEK 2 FIX: Dynamic blend ratio + company-specific convergence
+                    hist_weight, conv_weight = self._get_dynamic_blend_ratio(financials, valuation_subgroup or '')
                     convergence = terminal_assumptions.get('roce_convergence', 0.15)
-                    terminal = avg_roce * 0.6 + convergence * 0.4
+
+                    # WEEK 2 FIX: Use company-specific convergence if ROE-ROCE divergence >5pp
+                    avg_roe_5yr = self._get_avg_roe_5yr(financials)
+                    if avg_roe_5yr and avg_roe_5yr > 0:
+                        divergence_pp = abs(avg_roe_5yr - avg_roce) * 100
+                        if divergence_pp > 5:
+                            company_convergence = avg_roce * 0.7 + avg_roe_5yr * 0.3
+                            logger.info(f"  Company-specific convergence: {company_convergence:.2%} "
+                                       f"(ROCE={avg_roce:.2%}, ROE={avg_roe_5yr:.2%}, div={divergence_pp:.1f}pp)")
+                            convergence = company_convergence
+
+                    terminal = avg_roce * hist_weight + convergence * conv_weight
                     result = round(max(0.08, min(terminal, 0.30)), 4)
                     self._data_sources['roce'] = 'ACTUAL_CE'
                     logger.info(f"  Terminal ROCE: {result:.4f} [ACTUAL_CE: avg {len(roce_from_ce)}yr NOPAT/CapitalEmployed "
-                                f"blended 60/40 with convergence={convergence:.2%}]")
+                                f"blended {hist_weight:.0%}/{conv_weight:.0%} with convergence={convergence:.2%}]")
                     # Cross-check with fullstats 5Y avg ROE if available
                     self._crosscheck_terminal_roce_with_roe(financials, result)
                     return result
@@ -1613,11 +1868,26 @@ class FinancialProcessor:
             if avg_roce > 1:
                 avg_roce = avg_roce / 100
 
+            # WEEK 2 FIX: Dynamic blend ratio + company-specific convergence
+            hist_weight, conv_weight = self._get_dynamic_blend_ratio(financials, valuation_subgroup or '')
             convergence = terminal_assumptions.get('roce_convergence', 0.15)
+
+            # WEEK 2 FIX: Use company-specific convergence if ROE-ROCE divergence >5pp
+            avg_roe_5yr = self._get_avg_roe_5yr(financials)
+            if avg_roe_5yr and avg_roe_5yr > 0:
+                divergence_pp = abs(avg_roe_5yr - avg_roce) * 100
+                if divergence_pp > 5:
+                    company_convergence = avg_roce * 0.7 + avg_roe_5yr * 0.3
+                    logger.info(f"  Company-specific convergence: {company_convergence:.2%} "
+                               f"(ROCE={avg_roce:.2%}, ROE={avg_roe_5yr:.2%}, div={divergence_pp:.1f}pp)")
+                    convergence = company_convergence
+
             # Blend historical with sector convergence
-            terminal = avg_roce * 0.6 + convergence * 0.4
+            terminal = avg_roce * hist_weight + convergence * conv_weight
             terminal_result = round(max(0.08, min(terminal, 0.30)), 4)
             self._data_sources.setdefault('roce', 'DERIVED_NWDEBT')
+            logger.info(f"  Terminal ROCE: {terminal_result:.4f} [DERIVED_NWDEBT: "
+                       f"blended {hist_weight:.0%}/{conv_weight:.0%} with convergence={convergence:.2%}]")
             # Cross-check with fullstats 5Y avg ROE if available
             self._crosscheck_terminal_roce_with_roe(financials, terminal_result)
             return terminal_result

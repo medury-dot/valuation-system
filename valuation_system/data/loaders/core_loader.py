@@ -330,6 +330,39 @@ class CoreDataLoader:
 
         return result
 
+    def _extract_fullstats_yearly(self, fs_row: pd.Series, stem: str,
+                                   num_years: int = 10) -> dict:
+        """Extract yearly series from fullstats row for a given stem.
+        Fullstats format: YYYY_column_name (e.g., 2024_shares_outstanding).
+        Returns {year: value} for most recent num_years with data."""
+        if fs_row is None:
+            return {}
+
+        result = {}
+        # Scan for all YYYY_stem columns in the row
+        for col in fs_row.index:
+            if col.endswith(f'_{stem}'):
+                prefix = col[:-(len(stem) + 1)]
+                if prefix.isdigit() and len(prefix) == 4:
+                    year = int(prefix)
+                    val = fs_row[col]
+                    if pd.notna(val):
+                        try:
+                            result[year] = float(val)
+                        except (ValueError, TypeError):
+                            pass
+
+        if not result:
+            return {}
+
+        # Return only most recent num_years entries
+        sorted_keys = sorted(result.keys())
+        if len(sorted_keys) > num_years:
+            recent_keys = sorted_keys[-num_years:]
+            result = {k: result[k] for k in recent_keys}
+
+        return result
+
     # =========================================================================
     # QUARTER INDEX HELPERS
     # =========================================================================
@@ -662,6 +695,37 @@ class CoreDataLoader:
             if emp_q:
                 result['number_employees_quarterly'] = emp_q
                 logger.debug(f"  Fullstats: number_employees_quarterly loaded ({len(emp_q)} quarters)")
+
+            # === TIER 1 YEARLY COLUMNS FROM FULLSTATS (YYYY_metric format) ===
+            # These replace core CSV fallbacks when available
+            shares_yr = self._extract_fullstats_yearly(fs_row, 'shares_outstanding', num_years=10)
+            if shares_yr:
+                # Override core CSV yearly series if fullstats has more recent data
+                if not result.get('shares_outstanding_yearly') or \
+                   max(shares_yr.keys()) > max(result['shares_outstanding_yearly'].keys() or [0]):
+                    result['shares_outstanding_yearly'] = shares_yr
+                    logger.debug(f"  Fullstats: shares_outstanding_yearly loaded ({len(shares_yr)} years)")
+
+            ce_yr = self._extract_fullstats_yearly(fs_row, 'capital_employed', num_years=10)
+            if ce_yr:
+                if not result.get('capital_employed_yearly') or \
+                   max(ce_yr.keys()) > max(result['capital_employed_yearly'].keys() or [0]):
+                    result['capital_employed_yearly'] = ce_yr
+                    logger.debug(f"  Fullstats: capital_employed_yearly loaded ({len(ce_yr)} years)")
+
+            payout_yr = self._extract_fullstats_yearly(fs_row, 'dividend_payout_ratio', num_years=10)
+            if payout_yr:
+                if not result.get('dividend_payout_ratio_yearly') or \
+                   max(payout_yr.keys()) > max(result['dividend_payout_ratio_yearly'].keys() or [0]):
+                    result['dividend_payout_ratio_yearly'] = payout_yr
+                    logger.debug(f"  Fullstats: dividend_payout_ratio_yearly loaded ({len(payout_yr)} years)")
+
+            rd_yr = self._extract_fullstats_yearly(fs_row, 'rd_pct_of_sales', num_years=10)
+            if rd_yr:
+                if not result.get('rd_pct_of_sales_yearly') or \
+                   max(rd_yr.keys()) > max(result['rd_pct_of_sales_yearly'].keys() or [0]):
+                    result['rd_pct_of_sales_yearly'] = rd_yr
+                    logger.debug(f"  Fullstats: rd_pct_of_sales_yearly loaded ({len(rd_yr)} years)")
 
         return result
 

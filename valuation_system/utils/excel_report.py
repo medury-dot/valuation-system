@@ -214,6 +214,10 @@ def generate_valuation_excel(result: dict, output_path: str = None) -> str:
     ws_assumptions = wb.create_sheet('Assumptions')
     _build_assumptions_sheet(ws_assumptions, result, refs)
 
+    # WEEK 1 FIX: Add Beta Scenarios sheet
+    ws_beta = wb.create_sheet('Beta Scenarios')
+    _build_beta_scenarios_sheet(ws_beta, result, refs)
+
     ws_dcf = wb.create_sheet('DCF Model')
     _build_dcf_sheet(ws_dcf, result, refs)
 
@@ -252,8 +256,8 @@ def generate_valuation_excel(result: dict, output_path: str = None) -> str:
     ws_summary.title = 'Summary'
     _build_summary_sheet(ws_summary, result, refs)
 
-    # Move Summary to position 0 (now 8 sheets: Summary + 7 others)
-    wb.move_sheet('Summary', offset=-7)
+    # Move Summary to position 0 (now 9 sheets: Summary + 8 others)
+    wb.move_sheet('Summary', offset=-8)
 
     wb.save(output_path)
 
@@ -608,7 +612,350 @@ def _get_peer_median(result, key):
     return implied.get(key, {}).get('peer_median', 0) or 0
 
 
-# ── Sheet 3: DCF Model ─────────────────────────────────────────────────────
+# ── Sheet 3: Beta Scenarios ────────────────────────────────────────────────
+
+def _build_beta_scenarios_sheet(ws, result, refs):
+    """
+    Week 1 FIX: Beta scenario comparison sheet.
+    Shows 3 beta scenarios (A/B/C) side-by-side with:
+    - Beta calculations (unlevered and levered)
+    - WACC breakdown
+    - DCF intrinsic values
+    - Comparison to CMP and BASE DCF
+    """
+    ws.column_dimensions['A'].width = 28
+    for c in 'BCDEFGH':
+        ws.column_dimensions[c].width = 18
+
+    # Get beta scenarios from result
+    beta_scenarios = result.get('dcf_beta_scenarios', {})
+
+    # WEEK 1 DEBUG: Log what's in result
+    logger.info(f"Beta Scenarios sheet: dcf_beta_scenarios key exists = {'dcf_beta_scenarios' in result}")
+    logger.info(f"Beta Scenarios sheet: number of scenarios = {len(beta_scenarios)}")
+    if beta_scenarios:
+        logger.info(f"Beta Scenarios sheet: scenario keys = {list(beta_scenarios.keys())}")
+
+    if not beta_scenarios:
+        # No beta scenarios available
+        ws.cell(row=1, column=1, value='Beta Scenarios Not Available').font = TITLE_FONT
+        ws.cell(row=2, column=1, value='Beta scenarios are only computed in full valuation mode.')
+        ws.cell(row=3, column=1, value=f'Debug: Result keys = {list(result.keys())[:20]}').font = REMARK_FONT
+        return
+
+    # Title
+    company = result.get('company_name', 'Unknown')
+    symbol = result.get('nse_symbol', '')
+    ws.cell(row=1, column=1, value=f'Beta Scenario Analysis: {company}').font = TITLE_FONT
+    ws.merge_cells('A1:H1')
+
+    # Company info
+    r = 3
+    ws.cell(row=r, column=1, value='Symbol:').font = BOLD_FONT
+    ws.cell(row=r, column=2, value=symbol)
+    ws.cell(row=r, column=3, value='CMP:').font = BOLD_FONT
+    cmp = result.get('cmp', 0)
+    ws.cell(row=r, column=4, value=cmp).number_format = NUM_FMT
+    ws.cell(row=r, column=5, value='BASE DCF:').font = BOLD_FONT
+    base_dcf = result.get('dcf_base', 0)
+    ws.cell(row=r, column=6, value=base_dcf).number_format = NUM_FMT
+
+    r += 1
+    ws.cell(row=r, column=1, value='Valuation Group:').font = BOLD_FONT
+    ws.cell(row=r, column=2, value=result.get('valuation_group', ''))
+    ws.cell(row=r, column=3, value='Valuation Subgroup:').font = BOLD_FONT
+    ws.cell(row=r, column=4, value=result.get('valuation_subgroup', ''))
+    ws.merge_cells(f'D{r}:F{r}')
+
+    # Section: Beta Scenario Comparison
+    r += 2
+    _style_section(ws, r, 8, 'BETA SCENARIO COMPARISON')
+
+    r += 1
+    # Headers
+    headers = ['Scenario', 'Beta (Levered)', 'Beta (Unlevered)', 'WACC', 'Cost of Equity', 'DCF Intrinsic', 'vs CMP', 'Beta Source']
+    for col_idx, header in enumerate(headers, start=1):
+        cell = ws.cell(row=r, column=col_idx, value=header)
+        cell.font = BOLD_FONT
+        cell.fill = SECTION_FILL
+        cell.border = THIN_BORDER
+        cell.alignment = Alignment(horizontal='center')
+
+    # Scenario rows
+    scenario_labels = {
+        'individual_weekly': 'A: Individual (Weekly)',
+        'damodaran_india': 'B: Damodaran (India)',
+        'subgroup_aggregate': 'C: Subgroup (Aggregate)'
+    }
+
+    scenario_colors = {
+        'individual_weekly': PatternFill(start_color='E2EFDA', end_color='E2EFDA', fill_type='solid'),  # Green
+        'damodaran_india': PatternFill(start_color='FFF2CC', end_color='FFF2CC', fill_type='solid'),    # Yellow
+        'subgroup_aggregate': PatternFill(start_color='DDEBF7', end_color='DDEBF7', fill_type='solid')  # Blue
+    }
+
+    for scenario_key in ['individual_weekly', 'damodaran_india', 'subgroup_aggregate']:
+        if scenario_key not in beta_scenarios:
+            continue
+
+        r += 1
+        scenario_data = beta_scenarios[scenario_key]
+        label = scenario_labels.get(scenario_key, scenario_key)
+        fill = scenario_colors.get(scenario_key, FORMULA_FILL)
+
+        # Scenario name
+        cell = ws.cell(row=r, column=1, value=label)
+        cell.font = BOLD_FONT
+        cell.fill = fill
+        cell.border = THIN_BORDER
+
+        # Beta (levered)
+        cell = ws.cell(row=r, column=2, value=scenario_data.get('beta', 0))
+        cell.number_format = '0.000'
+        cell.fill = fill
+        cell.border = THIN_BORDER
+
+        # Beta (unlevered)
+        cell = ws.cell(row=r, column=3, value=scenario_data.get('beta_unlevered', 0))
+        cell.number_format = '0.000'
+        cell.fill = fill
+        cell.border = THIN_BORDER
+
+        # WACC
+        cell = ws.cell(row=r, column=4, value=scenario_data.get('wacc', 0))
+        cell.number_format = PCT_FMT
+        cell.fill = fill
+        cell.border = THIN_BORDER
+
+        # Cost of Equity
+        cell = ws.cell(row=r, column=5, value=scenario_data.get('cost_of_equity', 0))
+        cell.number_format = PCT_FMT
+        cell.fill = fill
+        cell.border = THIN_BORDER
+
+        # DCF Intrinsic
+        dcf_value = scenario_data.get('intrinsic_value', 0)
+        cell = ws.cell(row=r, column=6, value=dcf_value)
+        cell.number_format = NUM_FMT
+        cell.fill = fill
+        cell.border = THIN_BORDER
+
+        # vs CMP
+        gap_vs_cmp = ((dcf_value / cmp) - 1) if cmp > 0 else 0
+        cell = ws.cell(row=r, column=7, value=gap_vs_cmp)
+        cell.number_format = PCT_FMT
+        cell.fill = fill
+        cell.border = THIN_BORDER
+        # Conditional formatting: green if positive, red if negative
+        if gap_vs_cmp > 0:
+            cell.font = Font(color='006100', bold=True)
+        else:
+            cell.font = Font(color='9C0006', bold=True)
+
+        # Beta Source
+        source = scenario_data.get('beta_source', '')
+        # Format for display
+        if scenario_key == 'damodaran_india':
+            industry = scenario_data.get('industry', '')
+            n_firms = scenario_data.get('n_firms', '')
+            if industry:
+                source = f'{industry} (India, {n_firms} firms)'
+        cell = ws.cell(row=r, column=8, value=source)
+        cell.fill = fill
+        cell.border = THIN_BORDER
+
+    # Add BASE DCF for comparison
+    r += 1
+    ws.cell(row=r, column=1, value='BASE (Current DCF)').font = Font(bold=True, color='FF0000')
+    dcf_assumptions = result.get('dcf_assumptions', {})
+    base_beta = dcf_assumptions.get('beta', 0)
+    base_wacc = dcf_assumptions.get('wacc', 0)
+    ws.cell(row=r, column=2, value=base_beta).number_format = '0.000'
+    ws.cell(row=r, column=4, value=base_wacc).number_format = PCT_FMT
+    ws.cell(row=r, column=6, value=base_dcf).number_format = NUM_FMT
+    base_gap = ((base_dcf / cmp) - 1) if cmp > 0 else 0
+    cell = ws.cell(row=r, column=7, value=base_gap)
+    cell.number_format = PCT_FMT
+    if base_gap > 0:
+        cell.font = Font(color='006100', bold=True)
+    else:
+        cell.font = Font(color='9C0006', bold=True)
+
+    # Section: Recommendation
+    r += 2
+    _style_section(ws, r, 8, 'RECOMMENDATION')
+
+    r += 1
+    # Find best scenario (closest to CMP or highest DCF if undervalued)
+    best_scenario = None
+    best_gap = -999999
+    for key, data in beta_scenarios.items():
+        dcf_val = data.get('intrinsic_value', 0)
+        gap = ((dcf_val / cmp) - 1) if cmp > 0 else -999999
+        if gap > best_gap:
+            best_gap = gap
+            best_scenario = key
+
+    if best_scenario:
+        label = scenario_labels.get(best_scenario, best_scenario)
+        best_dcf = beta_scenarios[best_scenario].get('intrinsic_value', 0)
+        improvement = ((best_dcf / base_dcf) - 1) * 100 if base_dcf > 0 else 0
+
+        ws.cell(row=r, column=1, value='Recommended Scenario:').font = BOLD_FONT
+        ws.cell(row=r, column=2, value=label).font = Font(bold=True, color='006100')
+        ws.merge_cells(f'B{r}:D{r}')
+
+        r += 1
+        ws.cell(row=r, column=1, value='Improvement over BASE:')
+        cell = ws.cell(row=r, column=2, value=improvement / 100)
+        cell.number_format = PCT_FMT
+        cell.font = Font(bold=True, color='006100' if improvement > 0 else '9C0006')
+
+        r += 1
+        ws.cell(row=r, column=1, value='Gap vs CMP:')
+        cell = ws.cell(row=r, column=2, value=best_gap)
+        cell.number_format = PCT_FMT
+        cell.font = Font(bold=True, color='006100' if best_gap > 0 else '9C0006')
+
+    # Section: Beta Methodology Explanation
+    r += 2
+    _style_section(ws, r, 8, 'BETA SCENARIO METHODOLOGY')
+
+    r += 1
+    methodology = [
+        ('Scenario A (Individual)', 'Company-specific beta from 2yr+5yr NIFTY regression. Most accurate when available.'),
+        ('Scenario B (Damodaran India)', 'India industry beta from Damodaran dataset (93 industries). Professional estimate based on NSE/BSE sample.'),
+        ('Scenario C (Subgroup Aggregate)', 'Peer average beta from valuation subgroup (35-100 companies). Broadest comparison.'),
+        ('', ''),
+        ('Recommendation', 'Use Scenario A when available and company has >2yr history. Use Scenario B for newly listed or volatile companies. Use Scenario C only as fallback.'),
+    ]
+
+    for desc, explanation in methodology:
+        ws.cell(row=r, column=1, value=desc).font = BOLD_FONT
+        ws.cell(row=r, column=2, value=explanation)
+        ws.merge_cells(f'B{r}:H{r}')
+        r += 1
+
+    # Section: WACC Breakdown (for reference)
+    r += 1
+    _style_section(ws, r, 8, 'WACC CALCULATION BREAKDOWN')
+
+    r += 1
+    ws.cell(row=r, column=1, value='Component').font = BOLD_FONT
+    ws.cell(row=r, column=2, value='Scenario A').font = BOLD_FONT
+    ws.cell(row=r, column=3, value='Scenario B').font = BOLD_FONT
+    ws.cell(row=r, column=4, value='Scenario C').font = BOLD_FONT
+    ws.cell(row=r, column=5, value='BASE').font = BOLD_FONT
+    _style_header(ws, r, 5)
+
+    # Get common parameters
+    rf = dcf_assumptions.get('risk_free_rate', 0)
+    erp = dcf_assumptions.get('erp', 0)
+    kd = dcf_assumptions.get('cost_of_debt_at', 0)
+    de_ratio = dcf_assumptions.get('debt_ratio', 0) / (1 - dcf_assumptions.get('debt_ratio', 0.2)) if dcf_assumptions.get('debt_ratio', 0) < 1 else 0.2
+    tax_rate = dcf_assumptions.get('tax_rate', 0.25)
+
+    # Build WACC breakdown rows
+    breakdown_rows = [
+        ('Risk-free Rate', rf, PCT_FMT),
+        ('Equity Risk Premium', erp, PCT_FMT),
+        ('Beta (Levered)', None, '0.000'),  # Will fill per scenario
+        ('Cost of Equity (Ke)', None, PCT_FMT),  # Will calculate
+        ('Cost of Debt (Kd)', kd, PCT_FMT),
+        ('Tax Rate', tax_rate, PCT_FMT),
+        ('D/E Ratio', de_ratio, '0.00'),
+        ('Equity Weight', 1/(1+de_ratio), PCT_FMT),
+        ('Debt Weight', de_ratio/(1+de_ratio), PCT_FMT),
+        ('WACC', None, PCT_FMT),  # Will fill per scenario
+    ]
+
+    for label, base_value, fmt in breakdown_rows:
+        r += 1
+        ws.cell(row=r, column=1, value=label)
+
+        # Fill values for each scenario
+        for col_offset, scenario_key in enumerate(['individual_weekly', 'damodaran_india', 'subgroup_aggregate'], start=0):
+            if scenario_key not in beta_scenarios:
+                continue
+
+            data = beta_scenarios[scenario_key]
+
+            if label == 'Beta (Levered)':
+                val = data.get('beta', 0)
+            elif label == 'Cost of Equity (Ke)':
+                val = data.get('cost_of_equity', 0)
+            elif label == 'WACC':
+                val = data.get('wacc', 0)
+            else:
+                val = base_value  # Common values
+
+            if val is not None:
+                ws.cell(row=r, column=2+col_offset, value=val).number_format = fmt
+
+        # BASE column
+        if label == 'Beta (Levered)':
+            val = base_beta
+        elif label == 'Cost of Equity (Ke)':
+            val = base_wacc / ((1/(1+de_ratio)) + (de_ratio/(1+de_ratio)) * kd * (1-tax_rate))  # Back-calc Ke
+        elif label == 'WACC':
+            val = base_wacc
+        else:
+            val = base_value
+
+        if val is not None:
+            ws.cell(row=r, column=5, value=val).number_format = fmt
+
+    # Section: Sensitivity Analysis
+    r += 2
+    _style_section(ws, r, 8, 'SENSITIVITY ANALYSIS')
+
+    r += 1
+    ws.cell(row=r, column=1, value='Impact of ±2% WACC change on DCF intrinsic value:')
+    ws.merge_cells(f'A{r}:H{r}')
+
+    r += 1
+    ws.cell(row=r, column=1, value='Scenario').font = BOLD_FONT
+    ws.cell(row=r, column=2, value='WACC -2%').font = BOLD_FONT
+    ws.cell(row=r, column=3, value='WACC -1%').font = BOLD_FONT
+    ws.cell(row=r, column=4, value='Base WACC').font = BOLD_FONT
+    ws.cell(row=r, column=5, value='WACC +1%').font = BOLD_FONT
+    ws.cell(row=r, column=6, value='WACC +2%').font = BOLD_FONT
+    _style_header(ws, r, 6)
+
+    for scenario_key in ['individual_weekly', 'damodaran_india', 'subgroup_aggregate']:
+        if scenario_key not in beta_scenarios:
+            continue
+
+        r += 1
+        data = beta_scenarios[scenario_key]
+        label = scenario_labels.get(scenario_key, scenario_key)
+
+        ws.cell(row=r, column=1, value=label).font = BOLD_FONT
+
+        base_wacc_scenario = data.get('wacc', 0)
+        base_dcf_scenario = data.get('intrinsic_value', 0)
+
+        # Rough sensitivity: DCF ∝ 1/WACC (simplified approximation)
+        for col_offset, wacc_delta in enumerate([-0.02, -0.01, 0, 0.01, 0.02], start=0):
+            adjusted_wacc = base_wacc_scenario + wacc_delta
+            # Simple approximation: intrinsic × (base_wacc / adjusted_wacc)
+            adjusted_dcf = base_dcf_scenario * (base_wacc_scenario / adjusted_wacc) if adjusted_wacc > 0 else 0
+            cell = ws.cell(row=r, column=2+col_offset, value=adjusted_dcf)
+            cell.number_format = NUM_FMT
+            if col_offset == 2:  # Base case
+                cell.fill = FORMULA_FILL
+                cell.font = BOLD_FONT
+
+    # Add note
+    r += 2
+    ws.cell(row=r, column=1, value='Note: Sensitivity values are approximations using WACC elasticity. For precise sensitivity, re-run full DCF model.')
+    ws.cell(row=r, column=1).font = REMARK_FONT
+    ws.merge_cells(f'A{r}:H{r}')
+
+    logger.debug(f"Built Beta Scenarios sheet with {len(beta_scenarios)} scenarios")
+
+
+# ── Sheet 4: DCF Model ─────────────────────────────────────────────────────
 
 def _build_dcf_sheet(ws, result, refs):
     ws.column_dimensions['A'].width = 28

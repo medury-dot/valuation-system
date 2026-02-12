@@ -152,13 +152,24 @@ class ValuatorAgent:
         if company_adjustment:
             dcf_input_dict = self._apply_company_adjustments(dcf_input_dict, company_adjustment)
 
+        # WEEK 1 FIX: Compute multi-scenario beta (A/B/C) for sensitivity analysis
+        valuation_group = company_config.get('valuation_group', '')
+        beta_scenarios = self.damodaran.get_all_beta_scenarios(
+            valuation_group=valuation_group,
+            valuation_subgroup=valuation_subgroup,
+            company_symbol=nse_symbol,
+            de_ratio=dcf_input_dict.get('de_ratio', 0.2),
+            tax_rate=dcf_input_dict.get('tax_rate', 0.25)
+        )
+        logger.info(f"Beta scenarios computed: {list(beta_scenarios.keys())}")
+
         # Convert to DCFInputs dataclass
         dcf_inputs = DCFInputs(**{
             k: v for k, v in dcf_input_dict.items()
             if k in DCFInputs.__dataclass_fields__
         })
 
-        # 3. Run DCF with scenarios
+        # 3. Run DCF with scenarios (Bear/Base/Bull)
         scenarios = self.scenario_builder.build_scenarios(dcf_inputs, sector_outlook)
         dcf_results = {}
         for scenario_name, scenario_inputs in scenarios.items():
@@ -167,6 +178,53 @@ class ValuatorAgent:
             except Exception as e:
                 logger.error(f"DCF {scenario_name} failed for {company_name}: {e}", exc_info=True)
                 warnings.append(f"DCF {scenario_name} calculation failed: {e}")
+
+        # WEEK 1 FIX: Compute DCF intrinsic value for each beta scenario
+        # This gives us 3 alternative valuations based on different beta estimates
+        dcf_beta_scenarios = {}
+        for beta_key, beta_data in beta_scenarios.items():
+            try:
+                # Recreate DCF inputs with this beta scenario's parameters
+                scenario_dcf_dict = dcf_input_dict.copy()
+                scenario_dcf_dict['beta'] = beta_data['levered_beta']  # DCFInputs field is 'beta', not 'levered_beta'
+
+                # Recalculate WACC with new beta
+                rf = dcf_input_dict['risk_free_rate']
+                erp = dcf_input_dict['equity_risk_premium']
+                ke = rf + beta_data['levered_beta'] * erp
+                kd = dcf_input_dict['cost_of_debt']
+                # Note: debt_ratio in DCFInputs is D/(D+E), need to convert to D/E for re-levering
+                debt_ratio_dv = dcf_input_dict.get('debt_ratio', 0.2)
+                de = debt_ratio_dv / (1 - debt_ratio_dv) if debt_ratio_dv < 1 else 0.25
+                tax = dcf_input_dict.get('tax_rate', 0.25)
+
+                # Build DCF inputs with this beta - DCF model will recalculate WACC from beta
+                scenario_inputs = DCFInputs(**{
+                    k: v for k, v in scenario_dcf_dict.items()
+                    if k in DCFInputs.__dataclass_fields__
+                })
+                beta_dcf_result = self.dcf_model.calculate_intrinsic_value(scenario_inputs)
+
+                # Store results with metadata
+                dcf_beta_scenarios[beta_key] = {
+                    'beta': beta_data['levered_beta'],
+                    'beta_unlevered': beta_data['unlevered_beta'],
+                    'beta_source': beta_data['source'],
+                    'wacc': beta_dcf_result.get('wacc', 0),
+                    'cost_of_equity': beta_dcf_result.get('cost_of_equity', 0),
+                    'intrinsic_value': round(beta_dcf_result['intrinsic_per_share'], 2),
+                    'firm_value': beta_dcf_result.get('firm_value'),
+                    'equity_value': beta_dcf_result.get('equity_value'),
+                    # Preserve metadata
+                    'industry': beta_data.get('industry'),
+                    'subgroup_mapped': beta_data.get('subgroup_mapped'),
+                    'n_firms': beta_data.get('n_firms')
+                }
+                logger.info(f"Beta Scenario {beta_key}: β={beta_data['levered_beta']:.3f}, "
+                           f"WACC={wacc:.2%}, Intrinsic=₹{beta_dcf_result['intrinsic_per_share']:.2f}")
+            except Exception as e:
+                logger.error(f"Beta scenario {beta_key} DCF failed: {e}", exc_info=True)
+                warnings.append(f"Beta scenario {beta_key} failed: {e}")
 
         if 'BASE' not in dcf_results:
             logger.error(f"DCF BASE case failed for {company_name}")
@@ -302,6 +360,9 @@ class ValuatorAgent:
             'dcf_base': dcf_base_value,
             'dcf_bear': dcf_results.get('BEAR', {}).get('intrinsic_per_share'),
             'dcf_details': dcf_results.get('BASE', {}),
+
+            # WEEK 1 FIX: Beta scenario valuations (A/B/C)
+            'dcf_beta_scenarios': dcf_beta_scenarios,
 
             # Relative
             'relative_value': relative_value,
@@ -440,20 +501,33 @@ class ValuatorAgent:
         Blend valuation methods using configured weights.
         If a method failed, redistribute its weight proportionally.
         """
+        # WEEK 1 FIX: Add detailed validation logging
+        logger.info(f"Pre-blend values: DCF=₹{dcf_value:.2f}, Relative=₹{relative_value if relative_value else 'N/A'}, "
+                   f"MC Median=₹{mc_median if mc_median else 'N/A'}")
+        logger.info(f"Target weights: DCF={self.blend_weights['dcf']:.0%}, "
+                   f"Relative={self.blend_weights['relative']:.0%}, "
+                   f"MC={self.blend_weights['monte_carlo']:.0%}")
+
         values = {}
         weights = {}
 
         if dcf_value and dcf_value > 0:
             values['dcf'] = dcf_value
             weights['dcf'] = self.blend_weights['dcf']
+        else:
+            logger.warning(f"DCF value invalid or zero: {dcf_value}")
 
         if relative_value and relative_value > 0:
             values['relative'] = relative_value
             weights['relative'] = self.blend_weights['relative']
+        else:
+            logger.warning(f"Relative value invalid or zero: {relative_value} (will redistribute weight)")
 
         if mc_median and mc_median > 0:
             values['monte_carlo'] = mc_median
             weights['monte_carlo'] = self.blend_weights['monte_carlo']
+        else:
+            logger.warning(f"Monte Carlo median invalid or zero: {mc_median} (will redistribute weight)")
 
         if not values:
             logger.error("No valid valuations to blend")
@@ -463,9 +537,20 @@ class ValuatorAgent:
         total_weight = sum(weights.values())
         normalized = {k: v / total_weight for k, v in weights.items()}
 
-        blended = sum(values[k] * normalized[k] for k in values)
+        # Calculate contributions
+        contributions = {k: values[k] * normalized[k] for k in values}
+        blended = sum(contributions.values())
 
-        logger.debug(f"Blended valuation: {values} with weights {normalized} = {blended:.2f}")
+        # WEEK 1 FIX: Detailed contribution breakdown
+        logger.info(f"Normalized weights: {', '.join(f'{k}={v:.1%}' for k, v in normalized.items())}")
+        logger.info(f"Contributions: {', '.join(f'{k}=₹{v:.2f}' for k, v in contributions.items())}")
+        logger.info(f"Blended intrinsic value: ₹{blended:.2f}")
+
+        # Validate result
+        if blended < min(values.values()) or blended > max(values.values()):
+            logger.warning(f"⚠️  Blended value (₹{blended:.2f}) outside range of input values "
+                          f"[₹{min(values.values()):.2f}, ₹{max(values.values()):.2f}]")
+
         return blended
 
     def _calculate_confidence(self, dcf_results: dict, relative_result: dict,
@@ -797,6 +882,49 @@ class ValuatorAgent:
                      f"Revenue CAGR={result.get('median_revenue_cagr', 'N/A')}")
         return result
 
+    def calculate_roe_valuation(self, roe_inputs: dict) -> dict:
+        """
+        WEEK 3 FIX: ROE-based residual income valuation for banks/financials.
+
+        Formula: Equity Value = Book Value × (ROE - g) / (Ke - g)
+
+        This method is more appropriate for banks because:
+        - Book value (equity) is the capital base
+        - ROE directly measures return on this capital
+        - No need to adjust for debt (deposits are part of business model)
+        - Avoids issues with capex/depreciation (not meaningful for banks)
+        """
+        book_value = roe_inputs['book_value']
+        terminal_roe = roe_inputs['terminal_roe']
+        terminal_growth = roe_inputs['terminal_growth']
+        cost_of_equity = roe_inputs['cost_of_equity']
+        shares = roe_inputs['shares_outstanding']
+
+        # Ensure Ke > g
+        if cost_of_equity <= terminal_growth:
+            logger.warning(f"Ke ({cost_of_equity:.2%}) <= g ({terminal_growth:.2%}), adjusting g down")
+            terminal_growth = cost_of_equity - 0.02
+
+        # ROE residual income valuation
+        equity_value = book_value * (terminal_roe - terminal_growth) / (cost_of_equity - terminal_growth)
+        intrinsic_per_share = equity_value / shares if shares > 0 else 0
+
+        logger.info(f"ROE Valuation: Book=₹{book_value:,.0f}Cr × (ROE={terminal_roe:.2%} - g={terminal_growth:.2%}) / "
+                   f"(Ke={cost_of_equity:.2%} - g={terminal_growth:.2%}) = ₹{equity_value:,.0f}Cr")
+        logger.info(f"  Intrinsic per share: ₹{intrinsic_per_share:.2f} ({shares:.2f} Cr shares)")
+
+        return {
+            'method': 'ROE_RESIDUAL_INCOME',
+            'intrinsic_per_share': intrinsic_per_share,
+            'equity_value': equity_value,
+            'book_value': book_value,
+            'terminal_roe': terminal_roe,
+            'terminal_growth': terminal_growth,
+            'cost_of_equity': cost_of_equity,
+            'shares_outstanding': shares,
+            'banking_metrics': roe_inputs.get('banking_metrics', {}),
+        }
+
     def store_valuation(self, result: dict) -> Optional[int]:
         """Store valuation result in MySQL.
         company_id = marketscrip_id from mssdb.kbapp_marketscrip."""
@@ -825,6 +953,12 @@ class ValuatorAgent:
                 'created_by': 'AGENT',
             })
 
+            # WEEK 1 FIX: Merge beta scenarios into dcf_assumptions JSON
+            dcf_assumptions = result.get('dcf_assumptions', {}).copy() if result.get('dcf_assumptions') else {}
+            if 'dcf_beta_scenarios' in result and result['dcf_beta_scenarios']:
+                dcf_assumptions['beta_scenarios'] = result['dcf_beta_scenarios']
+                logger.info(f"Beta scenarios stored: {list(result['dcf_beta_scenarios'].keys())}")
+
             # Store full snapshot
             self.mysql.store_valuation_snapshot({
                 'company_id': company_id,
@@ -838,7 +972,7 @@ class ValuatorAgent:
                 'dcf_bull': result.get('dcf_bull'),
                 'dcf_base': result.get('dcf_base'),
                 'dcf_bear': result.get('dcf_bear'),
-                'dcf_assumptions': result.get('dcf_assumptions'),
+                'dcf_assumptions': dcf_assumptions,  # Now includes beta_scenarios
                 'sector_drivers_snapshot': result.get('sector_outlook'),
                 'sector_outlook_score': result.get('sector_outlook', {}).get('outlook_score'),
                 'sector_outlook_label': result.get('sector_outlook', {}).get('outlook_label'),

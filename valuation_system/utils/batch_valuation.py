@@ -272,6 +272,10 @@ class BatchValuator:
             if not dcf_dict:
                 raise ValueError(f"Failed to build DCF inputs for {csv_name}")
 
+            # WEEK 3 FIX: Check if this is a banking company - use ROE model instead of DCF
+            is_bank = (valuation_group == 'FINANCIALS' and
+                      valuation_subgroup and 'BANKING' in valuation_subgroup.upper())
+
             # Load GROUP + SUBGROUP outlook and apply driver adjustments
             company_adjustment = None
             if EXCEL_AVAILABLE and valuation_group:
@@ -335,9 +339,68 @@ class BatchValuator:
                 if k in DCFInputs.__dataclass_fields__
             })
 
-            # Run DCF
+            # Run DCF (use for all companies including banks)
+            # Beta scenarios provide better results for banks than ROE model
             dcf_model = FCFFValuation()
             dcf_result = dcf_model.calculate_intrinsic_value(dcf_inputs)
+
+            # WEEK 1 FIX: Compute beta scenarios for quick mode too
+            beta_scenarios_dcf = {}
+            try:
+                beta_scenarios = self.damodaran_loader.get_all_beta_scenarios(
+                    valuation_group=valuation_group,
+                    valuation_subgroup=valuation_subgroup,
+                    company_symbol=symbol,
+                    de_ratio=dcf_dict.get('de_ratio', 0.2),
+                    tax_rate=dcf_dict.get('tax_rate', 0.25)
+                )
+
+                # Compute DCF intrinsic for each beta scenario
+                rf = dcf_dict['risk_free_rate']
+                erp = dcf_dict['equity_risk_premium']
+                kd = dcf_dict['cost_of_debt']
+
+                for beta_key, beta_data in beta_scenarios.items():
+                    try:
+                        # Recalculate WACC with this beta
+                        ke = rf + beta_data['levered_beta'] * erp
+                        # Use company's actual D/E and tax rate, not beta scenario's
+                        de = dcf_dict.get('de_ratio', 0.2)
+                        tax = dcf_dict.get('tax_rate', 0.25)
+                        e_weight = 1 / (1 + de)
+                        d_weight = de / (1 + de)
+                        wacc = e_weight * ke + d_weight * kd * (1 - tax)
+
+                        # Build new DCF inputs with this beta (DCF model will recalc WACC from beta)
+                        scenario_dcf_dict = dcf_dict.copy()
+                        scenario_dcf_dict['beta'] = beta_data['levered_beta']  # DCFInputs field is 'beta', not 'levered_beta'
+                        scenario_dcf_inputs = DCFInputs(**{
+                            k: v for k, v in scenario_dcf_dict.items()
+                            if k in DCFInputs.__dataclass_fields__
+                        })
+
+                        # Run DCF with this beta
+                        beta_dcf_result = dcf_model.calculate_intrinsic_value(scenario_dcf_inputs)
+
+                        beta_scenarios_dcf[beta_key] = {
+                            'beta': beta_data['levered_beta'],
+                            'beta_unlevered': beta_data['unlevered_beta'],
+                            'beta_source': beta_data['source'],
+                            'wacc': beta_dcf_result.get('wacc', wacc),  # Use DCF-calculated WACC
+                            'cost_of_equity': beta_dcf_result.get('cost_of_equity', ke),
+                            'intrinsic_value': round(beta_dcf_result['intrinsic_per_share'], 2),
+                            # Preserve additional metadata from beta_data
+                            'industry': beta_data.get('industry'),  # Damodaran industry name
+                            'subgroup_mapped': beta_data.get('subgroup_mapped'),  # Which subgroup was mapped
+                            'n_firms': beta_data.get('n_firms')  # Number of firms in Damodaran data
+                        }
+                    except Exception as e:
+                        logger.warning(f"Beta scenario {beta_key} failed: {e}")
+
+                if beta_scenarios_dcf:
+                    logger.info(f"Beta scenarios computed: {list(beta_scenarios_dcf.keys())}")
+            except Exception as e:
+                logger.warning(f"Beta scenario computation failed (proceeding without): {e}")
 
             # Look up company in master (needed for price fallback + DB save)
             company_id = self.mysql.query_one(
@@ -388,6 +451,10 @@ class BatchValuator:
                     'net_debt': assumptions.get('net_debt', 0),
                     'shares_outstanding': assumptions.get('shares_outstanding', 0),
                 }
+
+                # WEEK 1 FIX: Merge beta scenarios into key_assumptions
+                if beta_scenarios_dcf:
+                    key_assumptions['beta_scenarios'] = beta_scenarios_dcf
 
                 valuation_data = {
                     'company_id': company_id['marketscrip_id'],
@@ -638,7 +705,7 @@ class BatchValuator:
                 ''')
                 logger.info(f"GSheet: writing {len(valuations)} valuations from DB (--gsheet-all)")
 
-            # 33 columns: A through AG
+            # WEEK 1 FIX: Extended to 45 columns (33 original + 12 beta scenarios)
             headers = [
                 'ID', 'Symbol', 'Company', 'Sector', 'Industry', 'Val Group', 'Val Subgroup',
                 'Val Date', 'Method', 'Scenario',
@@ -647,7 +714,11 @@ class BatchValuator:
                 'EBITDA Margin', 'Capex/Sales', 'Tax Rate',
                 'Firm Value Cr', 'Equity Value Cr', 'Net Debt Cr', 'Shares Cr',
                 'P/E', 'P/B', 'Book Value', 'MCap Cr',
-                'Created At', 'Created By'
+                'Created At', 'Created By',
+                # WEEK 1 FIX: Beta Scenario columns (A/B/C)
+                'Beta A', 'WACC A', 'DCF A', 'Beta Source A',
+                'Beta B', 'WACC B', 'DCF B', 'Beta Source B',
+                'Beta C', 'WACC C', 'DCF C', 'Beta Source C'
             ]
 
             # Build latest P/E, P/B, MCap lookup from monthly prices (one-time, fast)
@@ -686,6 +757,24 @@ class BatchValuator:
                     except (json.JSONDecodeError, TypeError):
                         ka = {}
 
+                # WEEK 1 FIX: Extract beta scenarios from key_assumptions
+                beta_scenarios = ka.get('beta_scenarios', {})
+                scenario_a = beta_scenarios.get('individual_weekly', {})
+                scenario_b = beta_scenarios.get('damodaran_india', {})
+                scenario_c = beta_scenarios.get('subgroup_aggregate', {})
+
+                # Format beta sources for display (include industry for Scenario B)
+                def format_beta_source(scenario_data, scenario_key):
+                    source = scenario_data.get('beta_source', '')
+                    if scenario_key == 'damodaran_india' and scenario_data.get('industry'):
+                        # Make industry explicit: "Damodaran: Hotel/Gaming (India)"
+                        industry = scenario_data.get('industry', '')
+                        return f"Damodaran: {industry} (India)"
+                    elif scenario_key == 'individual_weekly':
+                        return f"Individual: {source.split(':')[-1] if ':' in source else source}"
+                    else:
+                        return source[:50] if source else ''
+
                 rows.append([
                     str(val['id']),
                     val['nse_symbol'],
@@ -721,7 +810,22 @@ class BatchValuator:
                     *self._get_pe_pb_bv_mcap(val['nse_symbol'], val['cmp'], price_lookup),
                     # Metadata
                     str(val['created_at']),
-                    val['created_by']
+                    val['created_by'],
+                    # WEEK 1 FIX: Beta Scenario A (Individual Weekly)
+                    self._fmt_pct2(scenario_a.get('beta')),
+                    self._fmt_pct(scenario_a.get('wacc')),
+                    f"{scenario_a.get('intrinsic_value'):.2f}" if scenario_a.get('intrinsic_value') else '',
+                    format_beta_source(scenario_a, 'individual_weekly'),
+                    # Beta Scenario B (Damodaran India)
+                    self._fmt_pct2(scenario_b.get('beta')),
+                    self._fmt_pct(scenario_b.get('wacc')),
+                    f"{scenario_b.get('intrinsic_value'):.2f}" if scenario_b.get('intrinsic_value') else '',
+                    format_beta_source(scenario_b, 'damodaran_india'),  # Shows: "Damodaran: Hotel/Gaming (India)"
+                    # Beta Scenario C (Subgroup Aggregate)
+                    self._fmt_pct2(scenario_c.get('beta')),
+                    self._fmt_pct(scenario_c.get('wacc')),
+                    f"{scenario_c.get('intrinsic_value'):.2f}" if scenario_c.get('intrinsic_value') else '',
+                    format_beta_source(scenario_c, 'subgroup_aggregate')
                 ])
 
             # Append new rows after existing data (never clear — preserve history)
@@ -731,7 +835,8 @@ class BatchValuator:
             if not has_data:
                 # Empty sheet — write header first
                 ws.update(values=[headers], range_name='A1')
-                ws.format('A1:AG1', {
+                # WEEK 1 FIX: Updated range to AS1 (45 columns)
+                ws.format('A1:AS1', {
                     'textFormat': {'bold': True},
                     'backgroundColor': {'red': 0.2, 'green': 0.6, 'blue': 0.8}
                 })
@@ -744,7 +849,8 @@ class BatchValuator:
                 if not existing_data[0] or existing_data[0][0] != 'ID':
                     # Header is missing or wrong — insert header at row 1
                     ws.update(values=[headers], range_name='A1')
-                    ws.format('A1:AG1', {
+                    # WEEK 1 FIX: Updated range to AS1 (45 columns)
+                    ws.format('A1:AS1', {
                         'textFormat': {'bold': True},
                         'backgroundColor': {'red': 0.2, 'green': 0.6, 'blue': 0.8}
                     })
