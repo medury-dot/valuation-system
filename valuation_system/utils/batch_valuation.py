@@ -435,6 +435,8 @@ class BatchValuator:
             price_data = self.price_loader.get_latest_data(symbol, bse_code=bse_code, company_name=csv_name)
             cmp = (price_data.get('cmp') or 0) if price_data else 0
             cmp = float(cmp) if cmp else 0
+            price_date = price_data.get('date', 'N/A') if price_data else 'N/A'
+            price_date_str = str(price_date)[:10] if price_date != 'N/A' else 'N/A'
 
             intrinsic = float(dcf_result.get('intrinsic_per_share') or 0)
             upside = ((intrinsic / cmp) - 1) * 100 if cmp > 0 else 0
@@ -442,7 +444,7 @@ class BatchValuator:
             upside = max(-9999.0, min(9999.0, upside))
 
             logger.info(f"  Intrinsic: ₹{intrinsic:,.2f}")
-            logger.info(f"  CMP: ₹{cmp:,.2f}" if cmp > 0 else "  CMP: N/A (no price data)")
+            logger.info(f"  CMP: ₹{cmp:,.2f} ({price_date_str})" if cmp > 0 else "  CMP: N/A (no price data)")
             logger.info(f"  Upside: {upside:+.1f}%")
 
             if company_id:
@@ -761,11 +763,11 @@ class BatchValuator:
             headers = [
                 'ID', 'Symbol', 'Company', 'Sector', 'Industry', 'Val Group', 'Val Subgroup',
                 'Val Date', 'Method', 'Scenario',
-                'Intrinsic', 'CMP', 'Upside %',
+                'Intrinsic', f'CMP ({price_date_str})', 'Upside %',
                 'WACC', 'Beta', 'Ke', 'Terminal g', 'Terminal ROCE', 'Terminal Reinvest', 'TV%',
                 'EBITDA Margin', 'Capex/Sales', 'Tax Rate',
                 'Firm Value Cr', 'Equity Value Cr', 'Net Debt Cr', 'Shares Cr',
-                'P/E', 'P/B', 'Book Value', 'MCap Cr',
+                'P/E', 'P/B', 'Book Value', f'MCap Cr ({price_date_str})',
                 'Created At', 'Created By',
                 # WEEK 1 FIX: Beta Scenario columns (A/B/C)
                 'Beta A', 'WACC A', 'DCF A', 'Beta Source A',
@@ -778,6 +780,11 @@ class BatchValuator:
             # Build latest P/E, P/B, MCap lookup from monthly prices (one-time, fast)
             price_df = self.price_loader.df
             price_latest = price_df.sort_values('daily_date', ascending=False).drop_duplicates(subset='nse_symbol', keep='first')
+
+            # Get latest price date for CMP header
+            latest_price_date = price_latest['daily_date'].iloc[0] if not price_latest.empty else None
+            price_date_str = str(latest_price_date)[:10] if latest_price_date else 'N/A'
+
             price_lookup = {}
             for _, prow in price_latest.iterrows():
                 sym = prow.get('nse_symbol')
