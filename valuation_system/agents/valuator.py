@@ -717,6 +717,44 @@ class ValuatorAgent:
         tight_candidates.sort(key=lambda x: x['similarity_score'], reverse=True)
         tight_peers = tight_candidates[:10]
 
+        # WEEK 5 FIX: Special rule for large banks (cross-category comparison)
+        # SBI (PSU) and HDFC/ICICI (Private) should be compared despite different subgroups
+        if sector == 'FINANCIALS' and industry and 'BANK' in industry.upper():
+            if target_mcap > 50000:  # Large bank (>50,000 Cr MCap)
+                # Add all other large banks as tight peers regardless of PSU/Private split
+                large_banks = self.mysql.query('''
+                    SELECT m.marketscrip_id as id, m.symbol as nse_symbol, m.name as company_name
+                    FROM mssdb.kbapp_marketscrip m
+                    JOIN vs_active_companies a ON m.marketscrip_id = a.company_id
+                    WHERE a.valuation_group = 'FINANCIALS'
+                      AND a.valuation_subgroup LIKE '%BANKING%'
+                      AND m.mcap_cr > 50000
+                      AND m.symbol != %s
+                ''', (nse_symbol,))
+
+                # Get MCaps and add to tight peers if not already there
+                large_bank_symbols = [b['nse_symbol'] for b in large_banks]
+                large_mcaps = self.prices.get_mcap_for_symbols(large_bank_symbols) if large_bank_symbols else {}
+
+                existing_symbols = {p['peer_symbol'] for p in tight_peers}
+                for bank in large_banks:
+                    sym = bank['nse_symbol']
+                    if sym not in existing_symbols:
+                        peer_mcap = large_mcaps.get(sym, 0)
+                        if peer_mcap > 0:
+                            mcap_ratio = peer_mcap / target_mcap if target_mcap > 0 else 1.0
+                            sim = self._compute_similarity(sym, target_mcap, target_roe, target_de, peer_mcap)
+                            tight_peers.append({
+                                'peer_company_id': bank['id'],
+                                'peer_symbol': sym,
+                                'peer_name': bank['company_name'],
+                                'tier': 'tight',
+                                'similarity_score': round(sim, 4),
+                                'mcap_ratio': round(mcap_ratio, 4),
+                                'valid_until': (date.today() + timedelta(days=30)).isoformat(),
+                            })
+                            logger.info(f"  Added large bank cross-category peer: {sym} (MCap ₹{peer_mcap:,.0f}Cr)")
+
         # 4. Broad peers: same sector, different industry, mcap 0.3x-3x
         broad_candidates = []
         if sector:

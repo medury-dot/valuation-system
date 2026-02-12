@@ -263,9 +263,29 @@ class FCFFValuation:
         )
         pv_terminal = tv_result['terminal_value'] / ((1 + wacc) ** len(projections))
 
+        # WEEK 4 FIX: Validate projection period FCFF
+        if pv_fcff < 0:
+            logger.error(f"⚠️  Projection period PV(FCFF) is NEGATIVE (₹{pv_fcff:,.0f} Cr). "
+                        f"This indicates projection assumptions are too aggressive:")
+            logger.error(f"   - Check if capex is too high relative to revenue")
+            logger.error(f"   - Check if NWC growth is excessive")
+            logger.error(f"   - Check if margins are declining too much")
+            logger.error(f"   Terminal value will dominate firm value (unreliable valuation)")
+
         # Firm and equity value
         firm_value = pv_fcff + pv_terminal
         equity_value = firm_value - inputs.net_debt + inputs.cash_and_equivalents
+
+        # WEEK 4 FIX: Validate terminal value percentage
+        tv_pct = (pv_terminal / firm_value * 100) if firm_value > 0 else 0
+        if tv_pct > 150:
+            logger.warning(f"⚠️  Terminal Value = {tv_pct:.0f}% of firm value (>150% threshold)")
+            logger.warning(f"   This suggests projection period FCFF is too low or negative")
+            logger.warning(f"   PV(Projection FCFF) = ₹{pv_fcff:,.0f} Cr")
+            logger.warning(f"   PV(Terminal Value) = ₹{pv_terminal:,.0f} Cr")
+        elif tv_pct < 20:
+            logger.warning(f"⚠️  Terminal Value = {tv_pct:.0f}% of firm value (<20% threshold)")
+            logger.warning(f"   This is unusually low - check if terminal ROCE or growth is too conservative")
 
         # Per share
         intrinsic_per_share = equity_value / inputs.shares_outstanding if inputs.shares_outstanding > 0 else 0

@@ -310,11 +310,13 @@ class RegressionTestRunner:
         result = dcf.calculate_intrinsic_value(inputs)
         assert result['intrinsic_per_share'] > 0, "Intrinsic value should be positive"
         assert result['firm_value'] > 0
-        assert 0 < result['terminal_value_pct'] < 95, "TV% should be reasonable"
+        # WEEK 4 FIX: Tightened TV% bounds from 0-95% to 20-90%
+        assert 20 < result['terminal_value_pct'] < 90, \
+            f"TV% = {result['terminal_value_pct']:.1f}% outside normal range (20-90%)"
         assert result['wacc'] > 0
 
     def test_dcf_sanity_checks(self):
-        """TV should not be more than 90% of total value for reasonable inputs."""
+        """TV should be between 20-90% of total value for reasonable inputs."""
         from valuation_system.models.dcf_model import DCFInputs, FCFFValuation
         inputs = DCFInputs(
             base_revenue=1000, revenue_growth_rates=[0.15, 0.13, 0.11, 0.10, 0.08],
@@ -328,8 +330,9 @@ class RegressionTestRunner:
         )
         dcf = FCFFValuation()
         result = dcf.calculate_intrinsic_value(inputs)
-        assert result['terminal_value_pct'] < 90, \
-            f"TV% = {result['terminal_value_pct']}% is too high, check assumptions"
+        # WEEK 4 FIX: Tightened from <90% to 20-90% range
+        assert 20 < result['terminal_value_pct'] < 90, \
+            f"TV% = {result['terminal_value_pct']}% outside normal range (20-90%)"
 
     def test_scenario_builder(self):
         from valuation_system.models.dcf_model import DCFInputs, ScenarioBuilder
