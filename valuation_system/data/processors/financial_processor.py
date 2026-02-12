@@ -1481,7 +1481,19 @@ class FinancialProcessor:
         """
         Estimate shares outstanding.
         ACTUAL_COLUMN (paid-up shares) → DERIVED_MCAP (MCap/CMP) → DEFAULT fallback.
+
+        Includes bonus/split anomaly detection:
+        - Cross-validates ACTUAL_COLUMN against MCap/CMP
+        - If they diverge >30%, falls back to MCap/CMP (more current)
+        - Also checks YoY jump in shares_outstanding (>50% change = likely bonus/split)
         """
+        # Compute MCap/CMP reference first (used for cross-validation)
+        derived_shares_cr = None
+        mcap = price_data.get('mcap_cr') if price_data else None
+        cmp = price_data.get('cmp') if price_data else None
+        if mcap and cmp and cmp > 0:
+            derived_shares_cr = mcap / cmp
+
         # Method 0 [ACTUAL_COLUMN]: Use actual shares_outstanding from balance sheet
         shares_yearly = financials.get('shares_outstanding_yearly', {})
         if shares_yearly:
@@ -1489,28 +1501,58 @@ class FinancialProcessor:
             if latest_shares and latest_shares > 0:
                 # shares_outstanding is in absolute numbers, convert to crores
                 # BS_Number of Equity Shares Paid Up is in actual count
-                # If value > 100, it's likely in lakhs or actual count
                 if latest_shares > 1e6:
-                    # Actual count → convert to crores (1 Cr = 1e7)
-                    shares_cr = latest_shares / 1e7
+                    shares_cr = latest_shares / 1e7  # Actual count → crores
                 elif latest_shares > 100:
-                    # Likely in lakhs → convert to crores (1 Cr = 100 lakhs)
-                    shares_cr = latest_shares / 100
+                    shares_cr = latest_shares / 100   # Lakhs → crores
                 else:
-                    # Already in crores
-                    shares_cr = latest_shares
+                    shares_cr = latest_shares          # Already in crores
+
+                # --- ANOMALY CHECK 1: YoY jump detection (bonus/split) ---
+                sorted_years = sorted(shares_yearly.keys())
+                if len(sorted_years) >= 2:
+                    prev_year = sorted_years[-2]
+                    prev_shares = shares_yearly.get(prev_year, 0)
+                    if prev_shares and prev_shares > 0:
+                        # Apply same unit conversion to prior year
+                        if prev_shares > 1e6:
+                            prev_cr = prev_shares / 1e7
+                        elif prev_shares > 100:
+                            prev_cr = prev_shares / 100
+                        else:
+                            prev_cr = prev_shares
+                        yoy_change = abs(shares_cr - prev_cr) / prev_cr
+                        if yoy_change > 0.50:
+                            logger.warning(f"  Shares YoY jump detected: {prev_cr:.4f} → {shares_cr:.4f} Cr "
+                                           f"({yoy_change:.0%} change) — likely bonus/split")
+                            # If MCap/CMP reference available, prefer it (more current)
+                            if derived_shares_cr and derived_shares_cr > 0:
+                                logger.warning(f"  Falling back to MCap/CMP: {derived_shares_cr:.4f} Cr "
+                                               f"(vs ACTUAL {shares_cr:.4f} Cr)")
+                                self._data_sources['shares'] = 'DERIVED_MCAP'
+                                return round(derived_shares_cr, 4)
+
+                # --- ANOMALY CHECK 2: Cross-validate against MCap/CMP ---
+                if derived_shares_cr and derived_shares_cr > 0 and shares_cr > 0:
+                    divergence = abs(shares_cr - derived_shares_cr) / derived_shares_cr
+                    if divergence > 0.30:
+                        logger.warning(f"  Shares divergence: ACTUAL={shares_cr:.4f} Cr vs "
+                                       f"MCap/CMP={derived_shares_cr:.4f} Cr ({divergence:.0%} off). "
+                                       f"Using MCap/CMP (more current — ACTUAL may be pre-bonus/split)")
+                        self._data_sources['shares'] = 'DERIVED_MCAP'
+                        return round(derived_shares_cr, 4)
+                    else:
+                        logger.debug(f"  Shares cross-check OK: ACTUAL={shares_cr:.4f} vs "
+                                     f"MCap/CMP={derived_shares_cr:.4f} ({divergence:.0%} divergence)")
+
                 self._data_sources['shares'] = 'ACTUAL_COLUMN'
                 logger.info(f"  Shares outstanding: {shares_cr:.4f} Cr [ACTUAL_COLUMN: paid-up shares = {latest_shares:,.0f}]")
                 return round(shares_cr, 4)
 
         # Method 1 [DERIVED_MCAP]: MCap / CMP
-        mcap = price_data.get('mcap_cr')
-        cmp = price_data.get('cmp')
-
-        if mcap and cmp and cmp > 0:
-            shares_in_crores = mcap / cmp
+        if derived_shares_cr and derived_shares_cr > 0:
             self._data_sources.setdefault('shares', 'DERIVED_MCAP')
-            return round(shares_in_crores, 4)
+            return round(derived_shares_cr, 4)
 
         # Fallback: use latest market cap from quarterly data
         mcap_quarterly = financials.get('market_cap_quarterly',
@@ -1535,27 +1577,51 @@ class FinancialProcessor:
         capital_employed_yearly = financials.get('capital_employed_yearly', {})
         op_profit_yearly = financials.get('op_profit_yearly', {})
         if capital_employed_yearly and op_profit_yearly:
-            tax_rate = self._estimate_effective_tax_rate(financials)
-            roce_from_ce = []
-            for year in sorted(capital_employed_yearly.keys(), reverse=True)[:5]:
+            # --- SANITY CHECK: Cross-validate CE against NW+Debt proxy ---
+            # If CE diverges >50% from (NW+Debt) for the same year, CE data is suspect
+            debt_series = financials.get('debt', {})
+            nw_series = financials.get('networth', {})
+            ce_validated = {}
+            for year in capital_employed_yearly:
                 ce = capital_employed_yearly[year]
-                ebit = op_profit_yearly.get(year)
-                if ce and ce > 0 and ebit and ebit > 0:
-                    nopat = ebit * (1 - tax_rate)
-                    roce = nopat / ce
-                    roce_from_ce.append(roce)
-                    logger.debug(f"  ROCE {year}: NOPAT={nopat:.1f} / CE={ce:.1f} = {roce:.4f} [ACTUAL_CE]")
-            if roce_from_ce:
-                avg_roce = np.mean(roce_from_ce)
-                convergence = terminal_assumptions.get('roce_convergence', 0.15)
-                terminal = avg_roce * 0.6 + convergence * 0.4
-                result = round(max(0.08, min(terminal, 0.30)), 4)
-                self._data_sources['roce'] = 'ACTUAL_CE'
-                logger.info(f"  Terminal ROCE: {result:.4f} [ACTUAL_CE: avg {len(roce_from_ce)}yr NOPAT/CapitalEmployed "
-                            f"blended 60/40 with convergence={convergence:.2%}]")
-                # Cross-check with fullstats 5Y avg ROE if available
-                self._crosscheck_terminal_roce_with_roe(financials, result)
-                return result
+                if not ce or ce <= 0:
+                    continue
+                nw = nw_series.get(year)
+                debt = debt_series.get(year, 0) or 0
+                if nw and nw > 0:
+                    nw_debt_proxy = nw + debt
+                    divergence = abs(ce - nw_debt_proxy) / nw_debt_proxy if nw_debt_proxy > 0 else 0
+                    if divergence > 0.50:
+                        logger.warning(f"  CE sanity check {year}: CE={ce:.1f} vs NW+Debt={nw_debt_proxy:.1f} "
+                                       f"({divergence:.0%} divergence > 50%% threshold). Skipping year.")
+                        continue
+                ce_validated[year] = ce
+
+            if not ce_validated:
+                logger.warning(f"  All CE values failed sanity check vs NW+Debt. "
+                               f"Falling back to DERIVED_NWDEBT method.")
+            else:
+                tax_rate = self._estimate_effective_tax_rate(financials)
+                roce_from_ce = []
+                for year in sorted(ce_validated.keys(), reverse=True)[:5]:
+                    ce = ce_validated[year]
+                    ebit = op_profit_yearly.get(year)
+                    if ce and ce > 0 and ebit and ebit > 0:
+                        nopat = ebit * (1 - tax_rate)
+                        roce = nopat / ce
+                        roce_from_ce.append(roce)
+                        logger.debug(f"  ROCE {year}: NOPAT={nopat:.1f} / CE={ce:.1f} = {roce:.4f} [ACTUAL_CE]")
+                if roce_from_ce:
+                    avg_roce = np.mean(roce_from_ce)
+                    convergence = terminal_assumptions.get('roce_convergence', 0.15)
+                    terminal = avg_roce * 0.6 + convergence * 0.4
+                    result = round(max(0.08, min(terminal, 0.30)), 4)
+                    self._data_sources['roce'] = 'ACTUAL_CE'
+                    logger.info(f"  Terminal ROCE: {result:.4f} [ACTUAL_CE: avg {len(roce_from_ce)}yr NOPAT/CapitalEmployed "
+                                f"blended 60/40 with convergence={convergence:.2%}]")
+                    # Cross-check with fullstats 5Y avg ROE if available
+                    self._crosscheck_terminal_roce_with_roe(financials, result)
+                    return result
 
         # Method 1 [DERIVED_NWDEBT]: Use roce from CSV (based on NW+Debt proxy)
         roce_series = financials.get('roce', {})
