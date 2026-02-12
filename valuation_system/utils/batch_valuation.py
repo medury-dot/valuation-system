@@ -901,24 +901,26 @@ class BatchValuator:
                 logger.info("  Sheet was empty — wrote header row")
             else:
                 append_start = len(existing_data) + 1
-                # Check if header needs update (wrong or missing columns)
-                header_needs_update = False
-                if not existing_data[0] or existing_data[0][0] != 'ID':
-                    header_needs_update = True  # Header missing or wrong
-                elif len(existing_data[0]) < len(headers):
-                    header_needs_update = True  # Header has fewer columns than expected
-                    logger.info(f"  Header has {len(existing_data[0])} columns, expected {len(headers)} — updating")
+                # ALWAYS check and update header if column count changed
+                current_header_cols = len(existing_data[0]) if existing_data and existing_data[0] else 0
+                expected_cols = len(headers)
 
-                if header_needs_update:
-                    # Update header row
+                if current_header_cols != expected_cols:
+                    logger.info(f"  Updating header: {current_header_cols} → {expected_cols} columns")
                     ws.update(values=[headers], range_name='A1')
-                    # Updated range to AX1 (50 columns: 45 + 5 quality/S13.3)
                     ws.format('A1:AX1', {
                         'textFormat': {'bold': True},
                         'backgroundColor': {'red': 0.2, 'green': 0.6, 'blue': 0.8}
                     })
-                    logger.info(f"  Updated header row to {len(headers)} columns")
-                    append_start = len(existing_data) + 1
+                    logger.info(f"  ✓ Header updated to {expected_cols} columns")
+                elif not existing_data[0] or existing_data[0][0] != 'ID':
+                    # Header row is completely wrong, rewrite it
+                    logger.info(f"  Header row invalid, rewriting")
+                    ws.update(values=[headers], range_name='A1')
+                    ws.format('A1:AX1', {
+                        'textFormat': {'bold': True},
+                        'backgroundColor': {'red': 0.2, 'green': 0.6, 'blue': 0.8}
+                    })
 
             # Deduplicate: skip valuation IDs already in the sheet
             existing_ids = set()
