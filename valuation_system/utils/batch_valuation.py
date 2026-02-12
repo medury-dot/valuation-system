@@ -1002,6 +1002,8 @@ def main():
                         help='Limit number of companies to process')
     parser.add_argument('--sort-by', choices=['priority', 'mcap', 'symbol'], default='priority',
                         help='Sort order: priority (default), mcap (largest first), symbol (alphabetical)')
+    parser.add_argument('--gsheet-batch-size', type=int, default=20,
+                        help='Update GSheet every N companies during valuation (default: 20, 0=disable streaming)')
     parser.add_argument('--resume', action='store_true',
                         help='Skip companies already valued today (resume interrupted batch)')
     parser.add_argument('--gsheet-all', action='store_true',
@@ -1072,8 +1074,10 @@ def main():
     if args.resume:
         batch.load_already_valued_today()
 
-    # Run valuations
+    # Run valuations with streaming GSheet updates
     start_time = time.time()
+    gsheet_batch_size = args.gsheet_batch_size
+    last_gsheet_update = 0
 
     for i, company in enumerate(companies, 1):
         symbol = company.get('symbol')
@@ -1094,8 +1098,20 @@ def main():
             else:
                 batch.run_quick_valuation(company)
 
+            # Streaming GSheet update: Update every N successful valuations
+            if gsheet_batch_size > 0:
+                successful_count = len(batch.results['success'])
+                if successful_count > 0 and (successful_count - last_gsheet_update) >= gsheet_batch_size:
+                    logger.info(f"\n📊 Streaming GSheet update ({successful_count} successful valuations)...")
+                    batch.update_gsheet_results(only_current_run=not args.gsheet_all)
+                    last_gsheet_update = successful_count
+
         except KeyboardInterrupt:
             logger.warning("\nBatch interrupted by user")
+            # Do final GSheet update before exiting
+            if gsheet_batch_size > 0 and len(batch.results['success']) > last_gsheet_update:
+                logger.info("\n📊 Final GSheet update before exit...")
+                batch.update_gsheet_results(only_current_run=not args.gsheet_all)
             break
         except Exception as e:
             tb = traceback.format_exc()
@@ -1108,9 +1124,12 @@ def main():
 
     elapsed = time.time() - start_time
 
-    # Update Google Sheets
-    logger.info("\nUpdating Google Sheets...")
-    batch.update_gsheet_results(only_current_run=not args.gsheet_all)
+    # Final Google Sheets update (for any remaining valuations not yet synced)
+    if len(batch.results['success']) > last_gsheet_update:
+        logger.info("\n📊 Final GSheet update...")
+        batch.update_gsheet_results(only_current_run=not args.gsheet_all)
+    else:
+        logger.info("\nGSheet already up-to-date (no new valuations since last update)")
 
     # Write issues CSV
     issues_csv = batch.write_issues_csv()
