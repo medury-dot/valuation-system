@@ -233,7 +233,10 @@ class CoreDataLoader:
 
     @property
     def fullstats_df(self) -> Optional[pd.DataFrame]:
-        """Lazy load fullstats CSV — only the columns we need (not all 8,607)."""
+        """
+        Load fullstats CSV as primary source - loads ALL columns (8,883).
+        Since fullstats is now primary, we load everything to maximize data availability.
+        """
         if self._fullstats_df is not None:
             return self._fullstats_df
 
@@ -244,31 +247,8 @@ class CoreDataLoader:
             return None
 
         try:
-            # Read just the header to discover available columns
-            header_df = pd.read_csv(self._fullstats_path, nrows=0)
-            all_cols = list(header_df.columns)
-
-            # Select only columns we need: identifiers + target stems
-            cols_to_load = ['company_name']
-            # Add optional identifier columns if present
-            for id_col in ['nse_symbol', 'bse_code', 'isin']:
-                if id_col in all_cols:
-                    cols_to_load.append(id_col)
-
-            # Add columns matching our target stems (stem_NNN pattern)
-            for stem in self.FULLSTATS_STEMS:
-                for col in all_cols:
-                    if col.startswith(f'{stem}_'):
-                        suffix = col[len(stem) + 1:]
-                        if suffix.isdigit():
-                            cols_to_load.append(col)
-
-            logger.info(f"Loading fullstats supplement: {len(cols_to_load)} columns "
-                        f"(of {len(all_cols)} total) from {os.path.basename(self._fullstats_path)}")
-
-            self._fullstats_df = pd.read_csv(
-                self._fullstats_path, usecols=cols_to_load, low_memory=False
-            )
+            logger.info(f"Loading fullstats (primary source): {os.path.basename(self._fullstats_path)}")
+            self._fullstats_df = pd.read_csv(self._fullstats_path, low_memory=False)
             logger.info(f"Fullstats loaded: {len(self._fullstats_df)} companies, "
                         f"{len(self._fullstats_df.columns)} columns")
             return self._fullstats_df
@@ -399,11 +379,46 @@ class CoreDataLoader:
 
     @property
     def df(self) -> pd.DataFrame:
-        """Lazy load the CSV."""
-        if self._df is None:
+        """
+        Load primary dataframe: Fullstats first (more columns), core CSV fallback.
+
+        Strategy:
+        - Fullstats: 6,973 companies, 8,883 columns (97.9% overlap with core + 2,937 unique)
+        - Core CSV: 18,100 companies, 6,073 columns
+        - Result: Fullstats companies + core-only companies = ~18,100 total with best column coverage
+        """
+        if self._df is not None:
+            return self._df
+
+        # Load fullstats as primary
+        fullstats = self.fullstats_df
+        if fullstats is not None and not fullstats.empty:
+            logger.info(f"Primary source: Fullstats ({len(fullstats)} companies, {len(fullstats.columns)} columns)")
+
+            # Load core CSV for companies NOT in fullstats
+            logger.info(f"Loading core CSV for additional companies: {self.csv_path}")
+            core_df = pd.read_csv(self.csv_path, low_memory=False)
+
+            # Normalize company names for matching
+            fullstats_companies = set(fullstats['company_name'].str.lower().str.strip())
+            core_only_mask = ~core_df['Company Name'].str.lower().str.strip().isin(fullstats_companies)
+            core_only = core_df[core_only_mask].copy()
+
+            logger.info(f"Core CSV adds {len(core_only)} companies not in fullstats")
+
+            # Align column names before merging
+            fullstats_renamed = fullstats.rename(columns={'company_name': 'Company Name'})
+
+            # Merge
+            self._df = pd.concat([fullstats_renamed, core_only], ignore_index=True, sort=False)
+            logger.info(f"Combined: {len(self._df)} companies, {len(self._df.columns)} columns (fullstats primary)")
+        else:
+            # Fallback: fullstats unavailable, use core CSV
+            logger.warning("Fullstats unavailable, using core CSV only")
             logger.info(f"Loading core CSV: {self.csv_path}")
             self._df = pd.read_csv(self.csv_path, low_memory=False)
             logger.info(f"Loaded {len(self._df)} companies, {len(self._df.columns)} columns")
+
         return self._df
 
     def _find_max_index(self, prefix: str) -> Optional[int]:

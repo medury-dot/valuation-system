@@ -44,7 +44,8 @@ def get_active_sectors(sectors_config: dict = None) -> dict:
     }
 
 
-def get_active_companies(companies_config: dict = None, mysql_client=None, use_yaml_fallback: bool = True) -> dict:
+def get_active_companies(companies_config: dict = None, mysql_client=None, use_yaml_fallback: bool = True,
+                         sort_by: str = 'priority') -> dict:
     """
     Get active companies from database or YAML fallback.
 
@@ -52,6 +53,7 @@ def get_active_companies(companies_config: dict = None, mysql_client=None, use_y
         companies_config: Legacy YAML config (deprecated, for backward compatibility)
         mysql_client: ValuationMySQLClient instance (if None, uses YAML fallback)
         use_yaml_fallback: If True, fall back to YAML when DB fails or is None
+        sort_by: Sort order - 'priority' (default), 'mcap' (market cap desc), 'symbol' (alphabetical)
 
     Returns:
         dict: Companies keyed by nse_symbol with configuration data
@@ -59,7 +61,15 @@ def get_active_companies(companies_config: dict = None, mysql_client=None, use_y
     # Try database first if client provided
     if mysql_client is not None:
         try:
-            companies = mysql_client.query("""
+            # Determine ORDER BY clause based on sort_by
+            if sort_by == 'mcap':
+                order_by = "m.mcap DESC, ac.nse_symbol"
+            elif sort_by == 'symbol':
+                order_by = "ac.nse_symbol ASC"
+            else:  # priority (default)
+                order_by = "ac.priority ASC, ac.valuation_group, ac.nse_symbol"
+
+            companies = mysql_client.query(f"""
                 SELECT
                     ac.id, ac.company_id, ac.nse_symbol, ac.company_name,
                     ac.csv_name, ac.bse_code, ac.accord_code,
@@ -67,10 +77,12 @@ def get_active_companies(companies_config: dict = None, mysql_client=None, use_y
                     ac.cd_sector, ac.cd_industry,
                     ac.sector, ac.industry,
                     ac.valuation_frequency, ac.priority, ac.alpha_config_id,
-                    ac.is_active, ac.added_date, ac.notes
+                    ac.is_active, ac.added_date, ac.notes,
+                    m.mcap
                 FROM vs_active_companies ac
+                LEFT JOIN mssdb.kbapp_marketscrip m ON ac.company_id = m.marketscrip_id
                 WHERE ac.is_active = 1
-                ORDER BY ac.priority ASC, ac.valuation_group, ac.nse_symbol
+                ORDER BY {order_by}
             """)
 
             if not companies:

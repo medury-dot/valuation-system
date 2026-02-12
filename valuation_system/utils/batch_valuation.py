@@ -109,9 +109,18 @@ class BatchValuator:
     def __init__(self, mode='quick'):
         self.mode = mode  # 'quick' or 'full'
         self.mysql = ValuationMySQLClient.get_instance()
+
+        # Force early loading of data files (not lazy) - loads once for all companies
+        logger.info("Loading data files...")
         self.core_loader = CoreDataLoader()
+        _ = self.core_loader.df  # Force core CSV load
+        _ = self.core_loader.fullstats_df  # Force fullstats load
+
         self.price_loader = PriceLoader()
+        _ = self.price_loader.df  # Force prices CSV load
+
         self.damodaran_loader = DamodaranLoader()
+        logger.info("Data files loaded successfully")
 
         # Track results
         self.already_done = set()  # symbols already valued today (for --resume)
@@ -223,9 +232,9 @@ class BatchValuator:
 
         return companies
 
-    def get_companies_from_database(self):
+    def get_companies_from_database(self, sort_by='priority'):
         """Load companies from MySQL database."""
-        companies_dict = get_active_companies(mysql_client=self.mysql)
+        companies_dict = get_active_companies(mysql_client=self.mysql, sort_by=sort_by)
 
         companies = []
         for symbol, company in companies_dict.items():
@@ -234,8 +243,21 @@ class BatchValuator:
                 'name': company.get('company_name', company.get('csv_name')),
                 'valuation_group': company.get('valuation_group', ''),
                 'valuation_subgroup': company.get('valuation_subgroup', ''),
-                'csv_name': company.get('csv_name')
+                'csv_name': company.get('csv_name'),
+                'mcap': company.get('mcap', 0)  # For mcap sorting
             })
+
+        # If sorting by mcap, re-sort using prices CSV (kbapp_marketscrip.mcap is outdated)
+        if sort_by == 'mcap':
+            symbols = [c['symbol'] for c in companies]
+            mcap_from_prices = self.price_loader.get_mcap_for_symbols(symbols)
+
+            # Update mcap from prices and sort
+            for comp in companies:
+                comp['mcap'] = mcap_from_prices.get(comp['symbol'], 0)
+
+            companies.sort(key=lambda x: x['mcap'], reverse=True)
+            logger.info(f"Sorted {len(companies)} companies by market cap (using prices CSV)")
 
         return companies
 
@@ -879,15 +901,23 @@ class BatchValuator:
                 logger.info("  Sheet was empty — wrote header row")
             else:
                 append_start = len(existing_data) + 1
-                # Ensure header row exists and matches (check col A)
+                # Check if header needs update (wrong or missing columns)
+                header_needs_update = False
                 if not existing_data[0] or existing_data[0][0] != 'ID':
-                    # Header is missing or wrong — insert header at row 1
+                    header_needs_update = True  # Header missing or wrong
+                elif len(existing_data[0]) < len(headers):
+                    header_needs_update = True  # Header has fewer columns than expected
+                    logger.info(f"  Header has {len(existing_data[0])} columns, expected {len(headers)} — updating")
+
+                if header_needs_update:
+                    # Update header row
                     ws.update(values=[headers], range_name='A1')
                     # Updated range to AX1 (50 columns: 45 + 5 quality/S13.3)
                     ws.format('A1:AX1', {
                         'textFormat': {'bold': True},
                         'backgroundColor': {'red': 0.2, 'green': 0.6, 'blue': 0.8}
                     })
+                    logger.info(f"  Updated header row to {len(headers)} columns")
                     append_start = len(existing_data) + 1
 
             # Deduplicate: skip valuation IDs already in the sheet
@@ -968,6 +998,8 @@ def main():
                         help='Comma-separated list of symbols (overrides source)')
     parser.add_argument('--limit', type=int,
                         help='Limit number of companies to process')
+    parser.add_argument('--sort-by', choices=['priority', 'mcap', 'symbol'], default='priority',
+                        help='Sort order: priority (default), mcap (largest first), symbol (alphabetical)')
     parser.add_argument('--resume', action='store_true',
                         help='Skip companies already valued today (resume interrupted batch)')
     parser.add_argument('--gsheet-all', action='store_true',
@@ -987,7 +1019,7 @@ def main():
     if args.symbols:
         # Parse symbols from command line
         symbols = [s.strip() for s in args.symbols.split(',')]
-        companies_dict = get_active_companies(mysql_client=batch.mysql)
+        companies_dict = get_active_companies(mysql_client=batch.mysql, sort_by=args.sort_by)
         companies = []
         for symbol in symbols:
             if symbol in companies_dict:
@@ -1024,12 +1056,13 @@ def main():
         logger.info("Loading companies from Google Sheets...")
         companies = batch.get_companies_from_gsheet()
     else:
-        logger.info("Loading companies from database...")
-        companies = batch.get_companies_from_database()
+        logger.info(f"Loading companies from database (sorted by {args.sort_by})...")
+        companies = batch.get_companies_from_database(sort_by=args.sort_by)
 
     # Apply limit
     if args.limit:
         companies = companies[:args.limit]
+        logger.info(f"Limited to first {args.limit} companies")
 
     logger.info(f"Found {len(companies)} companies to value")
 
