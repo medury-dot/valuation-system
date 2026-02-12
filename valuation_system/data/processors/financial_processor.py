@@ -1482,10 +1482,8 @@ class FinancialProcessor:
         Estimate shares outstanding.
         ACTUAL_COLUMN (paid-up shares) → DERIVED_MCAP (MCap/CMP) → DEFAULT fallback.
 
-        Includes bonus/split anomaly detection:
-        - Cross-validates ACTUAL_COLUMN against MCap/CMP
-        - If they diverge >30%, falls back to MCap/CMP (more current)
-        - Also checks YoY jump in shares_outstanding (>50% change = likely bonus/split)
+        Cross-validates ACTUAL against MCap/CMP. If material divergence (>20%),
+        uses MCap/CMP — which reflects post-bonus/split reality from market price.
         """
         # Compute MCap/CMP reference first (used for cross-validation)
         derived_shares_cr = None
@@ -1508,37 +1506,14 @@ class FinancialProcessor:
                 else:
                     shares_cr = latest_shares          # Already in crores
 
-                # --- ANOMALY CHECK 1: YoY jump detection (bonus/split) ---
-                sorted_years = sorted(shares_yearly.keys())
-                if len(sorted_years) >= 2:
-                    prev_year = sorted_years[-2]
-                    prev_shares = shares_yearly.get(prev_year, 0)
-                    if prev_shares and prev_shares > 0:
-                        # Apply same unit conversion to prior year
-                        if prev_shares > 1e6:
-                            prev_cr = prev_shares / 1e7
-                        elif prev_shares > 100:
-                            prev_cr = prev_shares / 100
-                        else:
-                            prev_cr = prev_shares
-                        yoy_change = abs(shares_cr - prev_cr) / prev_cr
-                        if yoy_change > 0.50:
-                            logger.warning(f"  Shares YoY jump detected: {prev_cr:.4f} → {shares_cr:.4f} Cr "
-                                           f"({yoy_change:.0%} change) — likely bonus/split")
-                            # If MCap/CMP reference available, prefer it (more current)
-                            if derived_shares_cr and derived_shares_cr > 0:
-                                logger.warning(f"  Falling back to MCap/CMP: {derived_shares_cr:.4f} Cr "
-                                               f"(vs ACTUAL {shares_cr:.4f} Cr)")
-                                self._data_sources['shares'] = 'DERIVED_MCAP'
-                                return round(derived_shares_cr, 4)
-
-                # --- ANOMALY CHECK 2: Cross-validate against MCap/CMP ---
+                # Cross-validate against MCap/CMP — the market price already
+                # reflects any bonus/split, so MCap/CMP is the ground truth
                 if derived_shares_cr and derived_shares_cr > 0 and shares_cr > 0:
                     divergence = abs(shares_cr - derived_shares_cr) / derived_shares_cr
-                    if divergence > 0.30:
+                    if divergence > 0.20:
                         logger.warning(f"  Shares divergence: ACTUAL={shares_cr:.4f} Cr vs "
                                        f"MCap/CMP={derived_shares_cr:.4f} Cr ({divergence:.0%} off). "
-                                       f"Using MCap/CMP (more current — ACTUAL may be pre-bonus/split)")
+                                       f"Using MCap/CMP (market price reflects bonus/split reality)")
                         self._data_sources['shares'] = 'DERIVED_MCAP'
                         return round(derived_shares_cr, 4)
                     else:
@@ -1593,9 +1568,12 @@ class FinancialProcessor:
                     divergence = abs(ce - nw_debt_proxy) / nw_debt_proxy if nw_debt_proxy > 0 else 0
                     if divergence > 0.50:
                         logger.warning(f"  CE sanity check {year}: CE={ce:.1f} vs NW+Debt={nw_debt_proxy:.1f} "
-                                       f"({divergence:.0%} divergence > 50%% threshold). Skipping year.")
-                        continue
-                ce_validated[year] = ce
+                                       f"({divergence:.0%} divergence > 50% threshold). Using NW+Debt as substitute.")
+                        ce_validated[year] = nw_debt_proxy
+                    else:
+                        ce_validated[year] = ce
+                else:
+                    ce_validated[year] = ce
 
             if not ce_validated:
                 logger.warning(f"  All CE values failed sanity check vs NW+Debt. "
