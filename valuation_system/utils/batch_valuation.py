@@ -480,6 +480,25 @@ class BatchValuator:
                 if beta_scenarios_dcf:
                     key_assumptions['beta_scenarios'] = beta_scenarios_dcf
 
+                # Add S13.3 score from fullstats
+                try:
+                    financials = self.core_loader.get_financials_by_symbol(symbol)
+                    if financials:
+                        s13_q = financials.get('s13_3_score_quarterly', {})
+                        if s13_q:
+                            latest_s13 = self.core_loader.get_latest_value(s13_q)
+                            if latest_s13:
+                                key_assumptions['s13_3_score'] = round(latest_s13, 2)
+                                logger.info(f"  S13.3 Score: {latest_s13:.2f}")
+                            else:
+                                logger.debug(f"  S13.3: No latest value for {symbol}")
+                        else:
+                            logger.debug(f"  S13.3: No quarterly data for {symbol}")
+                    else:
+                        logger.debug(f"  S13.3: No financials found for {symbol}")
+                except Exception as e:
+                    logger.warning(f"Could not load S13.3 for {symbol}: {e}")
+
                 valuation_data = {
                     'company_id': company_id['marketscrip_id'],
                     'valuation_date': datetime.now().date(),
@@ -650,31 +669,21 @@ class BatchValuator:
 
     def _get_quality_scores_and_s13(self, symbol, key_assumptions):
         """
-        Extract quality scores and S13.3 from core CSV/fullstats.
+        Extract quality scores and S13.3 from key_assumptions.
         Returns tuple: (roce_premium, growth_premium, governance_score, balance_sheet_score, s13_3_score)
         """
-        # Get quality adjustments from key_assumptions if available
-        # (These come from relative valuation's calculate_quality_adjustments)
+        # Extract from key_assumptions (saved during valuation)
+        s13_3_score = ''
+        s13_val = key_assumptions.get('s13_3_score')
+        if s13_val:
+            s13_3_score = f'{s13_val:.2f}'
+
+        # Quality scores (from relative valuation - only in full mode)
+        # For now, leave blank - these require relative valuation which runs in full mode
         roce_premium = ''
         growth_premium = ''
         governance_score = ''
         balance_sheet_score = ''
-        s13_3_score = ''
-
-        # Try to get from core loader for this symbol
-        try:
-            financials = self.core_loader.get_financials_by_symbol(symbol)
-            if financials:
-                # S13.3 Score (latest from quarterly series)
-                s13_q = financials.get('s13_3_score_quarterly', {})
-                if s13_q:
-                    latest_s13 = self.core_loader.get_latest_value(s13_q)
-                    s13_3_score = f'{latest_s13:.2f}' if latest_s13 else ''
-
-                # Quality scores would need to be computed from financials
-                # For now, leave blank (can be populated from relative_details if stored)
-        except Exception as e:
-            logger.debug(f"Could not load quality scores for {symbol}: {e}")
 
         return (roce_premium, growth_premium, governance_score, balance_sheet_score, s13_3_score)
 
