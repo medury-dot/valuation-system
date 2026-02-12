@@ -166,7 +166,7 @@ class CoreDataLoader:
 
     # Fullstats column stems we extract (not all 8,607 columns!)
     FULLSTATS_STEMS = ['debt_equity', 'pledgebypromoter', '5yr_avg_roe', '3yr_roe',
-                        'number_employees']
+                        'number_employees', 'S13.3']
 
     def __init__(self, csv_path: str = None):
         self.csv_path = csv_path or self._resolve_csv_path()
@@ -695,6 +695,12 @@ class CoreDataLoader:
             if emp_q:
                 result['number_employees_quarterly'] = emp_q
                 logger.debug(f"  Fullstats: number_employees_quarterly loaded ({len(emp_q)} quarters)")
+
+            # S13.3 Score (Screener.in composite quality score, quarterly)
+            s13_q = self._extract_fullstats_quarterly(fs_row, 'S13.3', num_quarters=12)
+            if s13_q:
+                result['s13_3_score_quarterly'] = s13_q
+                logger.debug(f"  Fullstats: S13.3 score loaded ({len(s13_q)} quarters)")
 
             # === TIER 1 YEARLY COLUMNS FROM FULLSTATS (YYYY_metric format) ===
             # These replace core CSV fallbacks when available

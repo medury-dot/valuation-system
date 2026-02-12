@@ -624,6 +624,36 @@ class BatchValuator:
                 mcap_str = f"{mcap_val:,.0f}"
         return (pe_str, pb_str, bv_str, mcap_str)
 
+    def _get_quality_scores_and_s13(self, symbol, key_assumptions):
+        """
+        Extract quality scores and S13.3 from core CSV/fullstats.
+        Returns tuple: (roce_premium, growth_premium, governance_score, balance_sheet_score, s13_3_score)
+        """
+        # Get quality adjustments from key_assumptions if available
+        # (These come from relative valuation's calculate_quality_adjustments)
+        roce_premium = ''
+        growth_premium = ''
+        governance_score = ''
+        balance_sheet_score = ''
+        s13_3_score = ''
+
+        # Try to get from core loader for this symbol
+        try:
+            financials = self.core_loader.get_financials_by_symbol(symbol)
+            if financials:
+                # S13.3 Score (latest from quarterly series)
+                s13_q = financials.get('s13_3_score_quarterly', {})
+                if s13_q:
+                    latest_s13 = self.core_loader.get_latest_value(s13_q)
+                    s13_3_score = f'{latest_s13:.2f}' if latest_s13 else ''
+
+                # Quality scores would need to be computed from financials
+                # For now, leave blank (can be populated from relative_details if stored)
+        except Exception as e:
+            logger.debug(f"Could not load quality scores for {symbol}: {e}")
+
+        return (roce_premium, growth_premium, governance_score, balance_sheet_score, s13_3_score)
+
     def update_gsheet_results(self, only_current_run=True):
         """Update Google Sheets with batch results including enriched DCF assumptions.
 
@@ -705,7 +735,7 @@ class BatchValuator:
                 ''')
                 logger.info(f"GSheet: writing {len(valuations)} valuations from DB (--gsheet-all)")
 
-            # WEEK 1 FIX: Extended to 45 columns (33 original + 12 beta scenarios)
+            # Extended to 50 columns (33 original + 12 beta scenarios + 5 quality/S13.3)
             headers = [
                 'ID', 'Symbol', 'Company', 'Sector', 'Industry', 'Val Group', 'Val Subgroup',
                 'Val Date', 'Method', 'Scenario',
@@ -718,7 +748,9 @@ class BatchValuator:
                 # WEEK 1 FIX: Beta Scenario columns (A/B/C)
                 'Beta A', 'WACC A', 'DCF A', 'Beta Source A',
                 'Beta B', 'WACC B', 'DCF B', 'Beta Source B',
-                'Beta C', 'WACC C', 'DCF C', 'Beta Source C'
+                'Beta C', 'WACC C', 'DCF C', 'Beta Source C',
+                # Quality Scores & S13.3
+                'ROCE Premium', 'Growth Premium', 'Governance Score', 'Balance Sheet Score', 'S13.3 Score'
             ]
 
             # Build latest P/E, P/B, MCap lookup from monthly prices (one-time, fast)
@@ -825,7 +857,9 @@ class BatchValuator:
                     self._fmt_pct2(scenario_c.get('beta')),
                     self._fmt_pct(scenario_c.get('wacc')),
                     f"{scenario_c.get('intrinsic_value'):.2f}" if scenario_c.get('intrinsic_value') else '',
-                    format_beta_source(scenario_c, 'subgroup_aggregate')
+                    format_beta_source(scenario_c, 'subgroup_aggregate'),
+                    # Quality Scores & S13.3
+                    *self._get_quality_scores_and_s13(val['nse_symbol'], ka)
                 ])
 
             # Append new rows after existing data (never clear — preserve history)
@@ -835,8 +869,8 @@ class BatchValuator:
             if not has_data:
                 # Empty sheet — write header first
                 ws.update(values=[headers], range_name='A1')
-                # WEEK 1 FIX: Updated range to AS1 (45 columns)
-                ws.format('A1:AS1', {
+                # Updated range to AX1 (50 columns: 45 + 5 quality/S13.3)
+                ws.format('A1:AX1', {
                     'textFormat': {'bold': True},
                     'backgroundColor': {'red': 0.2, 'green': 0.6, 'blue': 0.8}
                 })
@@ -849,8 +883,8 @@ class BatchValuator:
                 if not existing_data[0] or existing_data[0][0] != 'ID':
                     # Header is missing or wrong — insert header at row 1
                     ws.update(values=[headers], range_name='A1')
-                    # WEEK 1 FIX: Updated range to AS1 (45 columns)
-                    ws.format('A1:AS1', {
+                    # Updated range to AX1 (50 columns: 45 + 5 quality/S13.3)
+                    ws.format('A1:AX1', {
                         'textFormat': {'bold': True},
                         'backgroundColor': {'red': 0.2, 'green': 0.6, 'blue': 0.8}
                     })
