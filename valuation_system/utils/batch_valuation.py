@@ -438,7 +438,100 @@ class BatchValuator:
             price_date = price_data.get('date', 'N/A') if price_data else 'N/A'
             price_date_str = str(price_date)[:10] if price_date != 'N/A' else 'N/A'
 
-            intrinsic = float(dcf_result.get('intrinsic_per_share') or 0)
+            # Add relative valuation + quality scores to quick mode
+            relative_value = None
+            quality_adjustments = {}
+            try:
+                # Build relative inputs
+                relative_inputs = processor.build_relative_inputs(csv_name)
+
+                # Get sector/industry for peer selection
+                company_row = self.mysql.query_one(
+                    "SELECT sector, industry FROM mssdb.kbapp_marketscrip WHERE symbol = %s",
+                    (symbol,)
+                )
+                sector = company_row.get('sector', '') if company_row else ''
+                industry = company_row.get('industry', '') if company_row else ''
+
+                # Build peer group (simplified for quick mode - use prices CSV only)
+                peer_symbols_query = self.mysql.query('''
+                    SELECT DISTINCT m.symbol
+                    FROM mssdb.kbapp_marketscrip m
+                    WHERE m.sector = %s AND m.symbol != %s
+                      AND m.scrip_type IN ('', 'EQS')
+                    LIMIT 20
+                ''', (sector, symbol))
+                peer_symbols = [p['symbol'] for p in peer_symbols_query]
+
+                if peer_symbols:
+                    # Get peer multiples from prices CSV
+                    peer_multiples = self.price_loader.get_peer_multiples_by_symbols(peer_symbols)
+
+                    if peer_multiples:
+                        # Calculate peer averages for quality adjustments
+                        peer_averages = {}
+                        # Get peer financials from core loader
+                        for peer_sym in peer_symbols[:10]:  # Limit to 10 for speed
+                            try:
+                                peer_fin = self.core_loader.get_financials_by_symbol(peer_sym)
+                                if peer_fin:
+                                    # Add to peer averages calculation
+                                    if 'roce' not in peer_averages:
+                                        peer_averages['roce_list'] = []
+                                        peer_averages['growth_list'] = []
+
+                                    roce_series = peer_fin.get('roce', {})
+                                    if roce_series:
+                                        latest_roce = self.core_loader.get_latest_value(roce_series)
+                                        if latest_roce and latest_roce > 0:
+                                            peer_averages['roce_list'].append(latest_roce / 100 if latest_roce > 1 else latest_roce)
+
+                                    sales_series = peer_fin.get('sales_annual', {})
+                                    if sales_series:
+                                        cagr = self.core_loader.calculate_cagr(sales_series, years=5)
+                                        if cagr:
+                                            peer_averages['growth_list'].append(cagr)
+                            except:
+                                pass
+
+                        # Calculate medians
+                        if peer_averages.get('roce_list'):
+                            import numpy as np
+                            peer_averages['median_roce'] = np.median(peer_averages['roce_list'])
+                        if peer_averages.get('growth_list'):
+                            import numpy as np
+                            peer_averages['median_revenue_cagr'] = np.median(peer_averages['growth_list'])
+
+                        # Create relative valuation model
+                        from valuation_system.models.relative_valuation import RelativeValuation
+                        rel_model = RelativeValuation(self.price_loader)
+
+                        quality_adjustments = rel_model.calculate_quality_adjustments(
+                            relative_inputs, peer_averages
+                        )
+
+                        rel_result = rel_model.calculate_relative_value(
+                            relative_inputs, peer_multiples, sector, quality_adjustments
+                        )
+                        relative_value = rel_result.get('relative_value_per_share')
+
+                        if quality_adjustments:
+                            logger.info(f"  Quality adjustments: {quality_adjustments}")
+                        logger.info(f"  Relative value: ₹{relative_value:,.2f}" if relative_value else "  Relative value: N/A")
+            except Exception as e:
+                logger.debug(f"Relative valuation failed (proceeding with DCF only): {e}")
+
+            # Blend DCF + Relative (skip Monte Carlo in quick mode for speed)
+            dcf_base = float(dcf_result.get('intrinsic_per_share') or 0)
+            if relative_value and relative_value > 0:
+                # 70% DCF + 30% Relative (no MC in quick mode)
+                blended = dcf_base * 0.70 + relative_value * 0.30
+                logger.info(f"  Blended: ₹{blended:,.2f} (70% DCF + 30% Relative)")
+            else:
+                # DCF only
+                blended = dcf_base
+
+            intrinsic = blended
             upside = ((intrinsic / cmp) - 1) * 100 if cmp > 0 else 0
             # Cap upside to ±9999% to avoid MySQL DECIMAL overflow
             upside = max(-9999.0, min(9999.0, upside))
@@ -479,6 +572,15 @@ class BatchValuator:
                 # WEEK 1 FIX: Merge beta scenarios into key_assumptions
                 if beta_scenarios_dcf:
                     key_assumptions['beta_scenarios'] = beta_scenarios_dcf
+
+                # Save DCF base value (before blending) for transparency
+                key_assumptions['dcf_base_value'] = dcf_base
+
+                # Add relative valuation and quality adjustments
+                if relative_value:
+                    key_assumptions['relative_value'] = relative_value
+                if quality_adjustments:
+                    key_assumptions['quality_adjustments'] = quality_adjustments
 
                 # Add S13.3 score from fullstats
                 try:
@@ -678,12 +780,18 @@ class BatchValuator:
         if s13_val:
             s13_3_score = f'{s13_val:.2f}'
 
-        # Quality scores (from relative valuation - only in full mode)
-        # For now, leave blank - these require relative valuation which runs in full mode
-        roce_premium = ''
-        growth_premium = ''
-        governance_score = ''
-        balance_sheet_score = ''
+        # Quality scores (from relative valuation - now in quick mode too)
+        quality_adj = key_assumptions.get('quality_adjustments', {})
+        roce_premium = self._fmt_pct(quality_adj.get('roce_premium', 0)) if quality_adj.get('roce_premium') else ''
+        growth_premium = self._fmt_pct(quality_adj.get('growth_premium', 0)) if quality_adj.get('growth_premium') else ''
+
+        # Governance and balance sheet come as either premium or discount
+        gov_discount = quality_adj.get('governance_discount', 0)
+        governance_score = self._fmt_pct(gov_discount) if gov_discount else ''
+
+        bs_premium = quality_adj.get('balance_sheet_premium', 0)
+        bs_discount = quality_adj.get('balance_sheet_discount', 0)
+        balance_sheet_score = self._fmt_pct(bs_premium or bs_discount) if (bs_premium or bs_discount) else ''
 
         return (roce_premium, growth_premium, governance_score, balance_sheet_score, s13_3_score)
 
@@ -772,11 +880,12 @@ class BatchValuator:
                 ''')
                 logger.info(f"GSheet: writing {len(valuations)} valuations from DB (--gsheet-all)")
 
-            # Extended to 50 columns (33 original + 12 beta scenarios + 5 quality/S13.3)
+            # Extended to 52 columns (33 + 12 beta + 5 quality + 2 valuation breakdown)
             headers = [
                 'ID', 'Symbol', 'Company', 'Sector', 'Industry', 'Val Group', 'Val Subgroup',
                 'Val Date', 'Method', 'Scenario',
-                'Intrinsic', f'CMP ({price_date_str})', 'Upside %',
+                'Intrinsic (Blended)', f'CMP ({price_date_str})', 'Upside %',
+                'DCF Value', 'Relative Val',  # Breakdown of blended intrinsic
                 'WACC', 'Beta', 'Ke', 'Terminal g', 'Terminal ROCE', 'Terminal Reinvest', 'TV%',
                 'EBITDA Margin', 'Capex/Sales', 'Tax Rate',
                 'Firm Value Cr', 'Equity Value Cr', 'Net Debt Cr', 'Shares Cr',
@@ -849,6 +958,10 @@ class BatchValuator:
                     else:
                         return source[:50] if source else ''
 
+                # Extract DCF and Relative values from key_assumptions
+                dcf_base_val = ka.get('dcf_base_value', val['intrinsic_value'])  # Fallback to intrinsic if not split
+                relative_val = ka.get('relative_value', '')
+
                 rows.append([
                     str(val['id']),
                     val['nse_symbol'],
@@ -860,9 +973,11 @@ class BatchValuator:
                     str(val['valuation_date']),
                     val['method'],
                     val['scenario'] or 'BASE',
-                    f"{val['intrinsic_value']:.2f}" if val['intrinsic_value'] else '',
+                    f"{val['intrinsic_value']:.2f}" if val['intrinsic_value'] else '',  # Blended
                     f"{val['cmp']:.2f}" if val['cmp'] else '',
                     f"{val['upside_pct']:.1f}%" if val['upside_pct'] else '',
+                    f"{dcf_base_val:.2f}" if dcf_base_val else '',  # DCF component
+                    f"{relative_val:.2f}" if relative_val else '',  # Relative component
                     # WACC components
                     self._fmt_pct(ka.get('wacc')),
                     self._fmt_pct2(ka.get('beta')),
@@ -912,8 +1027,8 @@ class BatchValuator:
             if not has_data:
                 # Empty sheet — write header first
                 ws.update(values=[headers], range_name='A1')
-                # Updated range to AX1 (50 columns: 45 + 5 quality/S13.3)
-                ws.format('A1:AX1', {
+                # Updated range to AZ1 (52 columns)
+                ws.format('A1:AZ1', {
                     'textFormat': {'bold': True},
                     'backgroundColor': {'red': 0.2, 'green': 0.6, 'blue': 0.8}
                 })
@@ -929,7 +1044,7 @@ class BatchValuator:
                 if current_header_cols != expected_cols:
                     logger.info(f"  Updating header: {current_header_cols} → {expected_cols} columns")
                     ws.update(values=[headers], range_name='A1')
-                    ws.format('A1:AX1', {
+                    ws.format('A1:AZ1', {
                         'textFormat': {'bold': True},
                         'backgroundColor': {'red': 0.2, 'green': 0.6, 'blue': 0.8}
                     })
@@ -938,7 +1053,7 @@ class BatchValuator:
                     # Header row is completely wrong, rewrite it
                     logger.info(f"  Header row invalid, rewriting")
                     ws.update(values=[headers], range_name='A1')
-                    ws.format('A1:AX1', {
+                    ws.format('A1:AZ1', {
                         'textFormat': {'bold': True},
                         'backgroundColor': {'red': 0.2, 'green': 0.6, 'blue': 0.8}
                     })
