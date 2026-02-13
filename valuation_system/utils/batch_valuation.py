@@ -726,6 +726,8 @@ class BatchValuator:
                         v.id,
                         m.symbol as nse_symbol,
                         m.name as company_name,
+                        m.sector,
+                        m.industry,
                         v.valuation_date,
                         v.method,
                         v.scenario,
@@ -751,6 +753,8 @@ class BatchValuator:
                         v.id,
                         m.symbol as nse_symbol,
                         m.name as company_name,
+                        m.sector,
+                        m.industry,
                         v.valuation_date,
                         v.method,
                         v.scenario,
@@ -849,9 +853,10 @@ class BatchValuator:
                     str(val['id']),
                     val['nse_symbol'],
                     val['company_name'],
-                    *self._get_sector_industry(val['nse_symbol'], sector_lookup),
-                    val.get('valuation_group') or '',
-                    val.get('valuation_subgroup') or '',
+                    val.get('sector') or '',  # From kbapp_marketscrip
+                    val.get('industry') or '',  # From kbapp_marketscrip
+                    val.get('valuation_group') or '',  # From vs_active_companies
+                    val.get('valuation_subgroup') or '',  # From vs_active_companies
                     str(val['valuation_date']),
                     val['method'],
                     val['scenario'] or 'BASE',
