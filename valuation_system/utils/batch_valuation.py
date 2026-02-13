@@ -582,24 +582,28 @@ class BatchValuator:
                 if quality_adjustments:
                     key_assumptions['quality_adjustments'] = quality_adjustments
 
-                # Add S13.3 score from fullstats
+                # Add S13 scores (graded and ungraded) from fullstats
                 try:
-                    financials = self.core_loader.get_financials_by_symbol(symbol)
+                    # Use csv_name (Company Name) to match fullstats, not symbol
+                    financials = self.core_loader.get_company_financials(csv_name)
                     if financials:
-                        s13_q = financials.get('s13_3_score_quarterly', {})
-                        if s13_q:
-                            latest_s13 = self.core_loader.get_latest_value(s13_q)
-                            if latest_s13:
-                                key_assumptions['s13_3_score'] = round(latest_s13, 2)
-                                logger.info(f"  S13.3 Score: {latest_s13:.2f}")
-                            else:
-                                logger.debug(f"  S13.3: No latest value for {symbol}")
-                        else:
-                            logger.debug(f"  S13.3: No quarterly data for {symbol}")
-                    else:
-                        logger.debug(f"  S13.3: No financials found for {symbol}")
+                        # Graded score (current quarter)
+                        graded_q = financials.get('s13_graded_quarterly', {})
+                        if graded_q:
+                            latest_graded = self.core_loader.get_latest_value(graded_q)
+                            if latest_graded is not None:
+                                key_assumptions['s13_graded'] = round(latest_graded, 2)
+                                logger.info(f"  S13 Graded: {latest_graded:.2f}")
+
+                        # Ungraded score (previous quarter)
+                        ungraded_q = financials.get('s13_ungraded_quarterly', {})
+                        if ungraded_q:
+                            latest_ungraded = self.core_loader.get_latest_value(ungraded_q)
+                            if latest_ungraded is not None:
+                                key_assumptions['s13_ungraded'] = round(latest_ungraded, 2)
+                                logger.info(f"  S13 Ungraded: {latest_ungraded:.2f}")
                 except Exception as e:
-                    logger.warning(f"Could not load S13.3 for {symbol}: {e}")
+                    logger.warning(f"Could not load S13 scores for {symbol}: {e}")
 
                 valuation_data = {
                     'company_id': company_id['marketscrip_id'],
@@ -771,14 +775,19 @@ class BatchValuator:
 
     def _get_quality_scores_and_s13(self, symbol, key_assumptions):
         """
-        Extract quality scores and S13.3 from key_assumptions.
-        Returns tuple: (roce_premium, growth_premium, governance_score, balance_sheet_score, s13_3_score)
+        Extract quality scores and S13 scores from key_assumptions.
+        Returns tuple: (s13_graded, s13_ungraded, roce_premium, growth_premium, governance_score, balance_sheet_score)
         """
-        # Extract from key_assumptions (saved during valuation)
-        s13_3_score = ''
-        s13_val = key_assumptions.get('s13_3_score')
-        if s13_val:
-            s13_3_score = f'{s13_val:.2f}'
+        # Extract S13 scores (both from current quarter, e.g., graded_151 and ungraded_151)
+        s13_graded = ''
+        graded_val = key_assumptions.get('s13_graded')
+        if graded_val is not None:
+            s13_graded = f'{graded_val:.2f}'
+
+        s13_ungraded = ''
+        ungraded_val = key_assumptions.get('s13_ungraded')
+        if ungraded_val is not None:
+            s13_ungraded = f'{ungraded_val:.2f}'
 
         # Quality scores (from relative valuation - now in quick mode too)
         quality_adj = key_assumptions.get('quality_adjustments', {})
@@ -793,7 +802,7 @@ class BatchValuator:
         bs_discount = quality_adj.get('balance_sheet_discount', 0)
         balance_sheet_score = self._fmt_pct(bs_premium or bs_discount) if (bs_premium or bs_discount) else ''
 
-        return (roce_premium, growth_premium, governance_score, balance_sheet_score, s13_3_score)
+        return (s13_graded, s13_ungraded, roce_premium, growth_premium, governance_score, balance_sheet_score)
 
     def update_gsheet_results(self, only_current_run=True):
         """Update Google Sheets with batch results including enriched DCF assumptions.
@@ -886,13 +895,14 @@ class BatchValuator:
             latest_price_date = price_latest['daily_date'].iloc[0] if not price_latest.empty else None
             price_date_str = str(latest_price_date)[:10] if latest_price_date else 'N/A'
 
-            # Reorganized 52 columns: S13.3 → CMP → Intrinsic → Beta Scenarios → Quality → Details
+            # Reorganized 53 columns: S13 scores → CMP → Intrinsic → Beta Scenarios → Quality → Details
             headers = [
                 # Core identification
                 'ID', 'Symbol', 'Company', 'Sector', 'Industry', 'Val Group', 'Val Subgroup',
                 'Val Date', 'Method', 'Scenario',
                 # Key metrics (user-requested order)
-                'S13.3 Score',
+                'S13 Graded',
+                'S13 Ungraded',
                 f'CMP ({price_date_str})',
                 'Intrinsic (Blended)',
                 'Upside %',
@@ -973,13 +983,14 @@ class BatchValuator:
                 dcf_base_val = ka.get('dcf_base_value', val['intrinsic_value'])  # Fallback to intrinsic if not split
                 relative_val = ka.get('relative_value', '')
 
-                # Extract quality scores and S13.3
+                # Extract quality scores and S13 scores
                 quality_scores = self._get_quality_scores_and_s13(val['nse_symbol'], ka)
-                s13_3_score = quality_scores[4]  # S13.3 is last in tuple
-                roce_prem = quality_scores[0]
-                growth_prem = quality_scores[1]
-                gov_score = quality_scores[2]
-                bs_score = quality_scores[3]
+                s13_graded = quality_scores[0]  # S13 Graded (current quarter)
+                s13_ungraded = quality_scores[1]  # S13 Ungraded (current quarter)
+                roce_prem = quality_scores[2]
+                growth_prem = quality_scores[3]
+                gov_score = quality_scores[4]
+                bs_score = quality_scores[5]
 
                 # REORGANIZED ROW DATA (user-requested order)
                 rows.append([
@@ -995,7 +1006,8 @@ class BatchValuator:
                     val['method'],
                     val['scenario'] or 'BASE',
                     # Key metrics (user-requested order)
-                    s13_3_score,  # S13.3 Score
+                    s13_graded,  # S13 Graded (current quarter)
+                    s13_ungraded,  # S13 Ungraded (current quarter)
                     f"{val['cmp']:.2f}" if val['cmp'] else '',  # CMP
                     f"{val['intrinsic_value']:.2f}" if val['intrinsic_value'] else '',  # Intrinsic (Blended)
                     f"{val['upside_pct']:.1f}%" if val['upside_pct'] else '',  # Upside %
@@ -1050,8 +1062,8 @@ class BatchValuator:
             if not has_data:
                 # Empty sheet — write header first
                 ws.update(values=[headers], range_name='A1')
-                # Updated range to AZ1 (52 columns)
-                ws.format('A1:AZ1', {
+                # Updated range to BA1 (53 columns)
+                ws.format('A1:BA1', {
                     'textFormat': {'bold': True},
                     'backgroundColor': {'red': 0.2, 'green': 0.6, 'blue': 0.8}
                 })
@@ -1067,7 +1079,7 @@ class BatchValuator:
                 if current_header_cols != expected_cols:
                     logger.info(f"  Updating header: {current_header_cols} → {expected_cols} columns")
                     ws.update(values=[headers], range_name='A1')
-                    ws.format('A1:AZ1', {
+                    ws.format('A1:BA1', {
                         'textFormat': {'bold': True},
                         'backgroundColor': {'red': 0.2, 'green': 0.6, 'blue': 0.8}
                     })
@@ -1076,7 +1088,7 @@ class BatchValuator:
                     # Header row is completely wrong, rewrite it
                     logger.info(f"  Header row invalid, rewriting")
                     ws.update(values=[headers], range_name='A1')
-                    ws.format('A1:AZ1', {
+                    ws.format('A1:BA1', {
                         'textFormat': {'bold': True},
                         'backgroundColor': {'red': 0.2, 'green': 0.6, 'blue': 0.8}
                     })
