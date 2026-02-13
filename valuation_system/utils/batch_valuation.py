@@ -880,23 +880,35 @@ class BatchValuator:
                 ''')
                 logger.info(f"GSheet: writing {len(valuations)} valuations from DB (--gsheet-all)")
 
-            # Extended to 52 columns (33 + 12 beta + 5 quality + 2 valuation breakdown)
+            # Reorganized 52 columns: S13.3 → CMP → Intrinsic → Beta Scenarios → Quality → Details
             headers = [
+                # Core identification
                 'ID', 'Symbol', 'Company', 'Sector', 'Industry', 'Val Group', 'Val Subgroup',
                 'Val Date', 'Method', 'Scenario',
-                'Intrinsic (Blended)', f'CMP ({price_date_str})', 'Upside %',
-                'DCF Value', 'Relative Val',  # Breakdown of blended intrinsic
+                # Key metrics (user-requested order)
+                'S13.3 Score',
+                f'CMP ({price_date_str})',
+                'Intrinsic (Blended)',
+                'Upside %',
+                # Beta Scenario A
+                'Beta A', 'WACC A', 'DCF A', 'Beta Source A',
+                # Beta Scenario B
+                'Beta B', 'WACC B', 'DCF B', 'Beta Source B',
+                # Beta Scenario C
+                'Beta C', 'WACC C', 'DCF C', 'Beta Source C',
+                # Quality Scores
+                'ROCE Premium', 'Growth Premium', 'Governance Score', 'Balance Sheet Score',
+                # Valuation breakdown
+                'DCF Value', 'Relative Val',
+                # DCF assumptions
                 'WACC', 'Beta', 'Ke', 'Terminal g', 'Terminal ROCE', 'Terminal Reinvest', 'TV%',
                 'EBITDA Margin', 'Capex/Sales', 'Tax Rate',
+                # Value components
                 'Firm Value Cr', 'Equity Value Cr', 'Net Debt Cr', 'Shares Cr',
+                # Market multiples
                 'P/E', 'P/B', 'Book Value', f'MCap Cr ({price_date_str})',
-                'Created At', 'Created By',
-                # WEEK 1 FIX: Beta Scenario columns (A/B/C)
-                'Beta A', 'WACC A', 'DCF A', 'Beta Source A',
-                'Beta B', 'WACC B', 'DCF B', 'Beta Source B',
-                'Beta C', 'WACC C', 'DCF C', 'Beta Source C',
-                # Quality Scores & S13.3
-                'ROCE Premium', 'Growth Premium', 'Governance Score', 'Balance Sheet Score', 'S13.3 Score'
+                # Metadata
+                'Created At', 'Created By'
             ]
 
             # Build latest P/E, P/B, MCap lookup from monthly prices (one-time, fast)
@@ -946,13 +958,13 @@ class BatchValuator:
                 scenario_b = beta_scenarios.get('damodaran_india', {})
                 scenario_c = beta_scenarios.get('subgroup_aggregate', {})
 
-                # Format beta sources for display (include industry for Scenario B)
+                # Format beta sources for display
                 def format_beta_source(scenario_data, scenario_key):
                     source = scenario_data.get('beta_source', '')
                     if scenario_key == 'damodaran_india' and scenario_data.get('industry'):
-                        # Make industry explicit: "Damodaran: Hotel/Gaming (India)"
+                        # Simplified: just show industry name (user requested no "Damodaran:" or "(India)")
                         industry = scenario_data.get('industry', '')
-                        return f"Damodaran: {industry} (India)"
+                        return industry  # e.g., "Hotel/Gaming" not "Damodaran: Hotel/Gaming (India)"
                     elif scenario_key == 'individual_weekly':
                         return f"Individual: {source.split(':')[-1] if ':' in source else source}"
                     else:
@@ -962,46 +974,33 @@ class BatchValuator:
                 dcf_base_val = ka.get('dcf_base_value', val['intrinsic_value'])  # Fallback to intrinsic if not split
                 relative_val = ka.get('relative_value', '')
 
+                # Extract quality scores and S13.3
+                quality_scores = self._get_quality_scores_and_s13(val['nse_symbol'], ka)
+                s13_3_score = quality_scores[4]  # S13.3 is last in tuple
+                roce_prem = quality_scores[0]
+                growth_prem = quality_scores[1]
+                gov_score = quality_scores[2]
+                bs_score = quality_scores[3]
+
+                # REORGANIZED ROW DATA (user-requested order)
                 rows.append([
+                    # Core identification
                     str(val['id']),
                     val['nse_symbol'],
                     val['company_name'],
-                    val.get('sector') or '',  # From kbapp_marketscrip
-                    val.get('industry') or '',  # From kbapp_marketscrip
-                    val.get('valuation_group') or '',  # From vs_active_companies
-                    val.get('valuation_subgroup') or '',  # From vs_active_companies
+                    val.get('sector') or '',
+                    val.get('industry') or '',
+                    val.get('valuation_group') or '',
+                    val.get('valuation_subgroup') or '',
                     str(val['valuation_date']),
                     val['method'],
                     val['scenario'] or 'BASE',
-                    f"{val['intrinsic_value']:.2f}" if val['intrinsic_value'] else '',  # Blended
-                    f"{val['cmp']:.2f}" if val['cmp'] else '',
-                    f"{val['upside_pct']:.1f}%" if val['upside_pct'] else '',
-                    f"{dcf_base_val:.2f}" if dcf_base_val else '',  # DCF component
-                    f"{relative_val:.2f}" if relative_val else '',  # Relative component
-                    # WACC components
-                    self._fmt_pct(ka.get('wacc')),
-                    self._fmt_pct2(ka.get('beta')),
-                    self._fmt_pct(ka.get('cost_of_equity')),
-                    # Terminal assumptions
-                    self._fmt_pct(ka.get('terminal_growth')),
-                    self._fmt_pct(ka.get('terminal_roce')),
-                    self._fmt_pct(ka.get('terminal_reinvestment')),
-                    self._fmt_pct(ka.get('terminal_value_pct')),
-                    # Operating ratios
-                    self._fmt_pct(ka.get('ebitda_margin')),
-                    self._fmt_pct(ka.get('capex_to_sales')),
-                    self._fmt_pct(ka.get('tax_rate')),
-                    # Value breakdown (Cr)
-                    self._fmt_cr(ka.get('firm_value')),
-                    self._fmt_cr(ka.get('equity_value')),
-                    self._fmt_cr(ka.get('net_debt')),
-                    self._fmt_pct2(ka.get('shares_outstanding')),
-                    # Market multiples from monthly prices
-                    *self._get_pe_pb_bv_mcap(val['nse_symbol'], val['cmp'], price_lookup),
-                    # Metadata
-                    str(val['created_at']),
-                    val['created_by'],
-                    # WEEK 1 FIX: Beta Scenario A (Individual Weekly)
+                    # Key metrics (user-requested order)
+                    s13_3_score,  # S13.3 Score
+                    f"{val['cmp']:.2f}" if val['cmp'] else '',  # CMP
+                    f"{val['intrinsic_value']:.2f}" if val['intrinsic_value'] else '',  # Intrinsic (Blended)
+                    f"{val['upside_pct']:.1f}%" if val['upside_pct'] else '',  # Upside %
+                    # Beta Scenario A (Individual)
                     self._fmt_pct2(scenario_a.get('beta')),
                     self._fmt_pct(scenario_a.get('wacc')),
                     f"{scenario_a.get('intrinsic_value'):.2f}" if scenario_a.get('intrinsic_value') else '',
@@ -1010,14 +1009,39 @@ class BatchValuator:
                     self._fmt_pct2(scenario_b.get('beta')),
                     self._fmt_pct(scenario_b.get('wacc')),
                     f"{scenario_b.get('intrinsic_value'):.2f}" if scenario_b.get('intrinsic_value') else '',
-                    format_beta_source(scenario_b, 'damodaran_india'),  # Shows: "Damodaran: Hotel/Gaming (India)"
+                    format_beta_source(scenario_b, 'damodaran_india'),  # Now just industry name
                     # Beta Scenario C (Subgroup Aggregate)
                     self._fmt_pct2(scenario_c.get('beta')),
                     self._fmt_pct(scenario_c.get('wacc')),
                     f"{scenario_c.get('intrinsic_value'):.2f}" if scenario_c.get('intrinsic_value') else '',
                     format_beta_source(scenario_c, 'subgroup_aggregate'),
-                    # Quality Scores & S13.3
-                    *self._get_quality_scores_and_s13(val['nse_symbol'], ka)
+                    # Quality Scores
+                    roce_prem, growth_prem, gov_score, bs_score,
+                    # Valuation breakdown
+                    f"{dcf_base_val:.2f}" if dcf_base_val else '',  # DCF Value
+                    f"{relative_val:.2f}" if relative_val else '',  # Relative Val
+                    # DCF assumptions
+                    self._fmt_pct(ka.get('wacc')),
+                    self._fmt_pct2(ka.get('beta')),
+                    self._fmt_pct(ka.get('cost_of_equity')),
+                    self._fmt_pct(ka.get('terminal_growth')),
+                    self._fmt_pct(ka.get('terminal_roce')),
+                    self._fmt_pct(ka.get('terminal_reinvestment')),
+                    self._fmt_pct(ka.get('terminal_value_pct')),
+                    # Operating ratios
+                    self._fmt_pct(ka.get('ebitda_margin')),
+                    self._fmt_pct(ka.get('capex_to_sales')),
+                    self._fmt_pct(ka.get('tax_rate')),
+                    # Value components
+                    self._fmt_cr(ka.get('firm_value')),
+                    self._fmt_cr(ka.get('equity_value')),
+                    self._fmt_cr(ka.get('net_debt')),
+                    self._fmt_pct2(ka.get('shares_outstanding')),
+                    # Market multiples
+                    *self._get_pe_pb_bv_mcap(val['nse_symbol'], val['cmp'], price_lookup),
+                    # Metadata
+                    str(val['created_at']),
+                    val['created_by']
                 ])
 
             # Append new rows after existing data (never clear — preserve history)
