@@ -880,6 +880,12 @@ class BatchValuator:
                 ''')
                 logger.info(f"GSheet: writing {len(valuations)} valuations from DB (--gsheet-all)")
 
+            # Get latest price date BEFORE building headers (needed for CMP column name)
+            price_df = self.price_loader.df
+            price_latest = price_df.sort_values('daily_date', ascending=False).drop_duplicates(subset='nse_symbol', keep='first')
+            latest_price_date = price_latest['daily_date'].iloc[0] if not price_latest.empty else None
+            price_date_str = str(latest_price_date)[:10] if latest_price_date else 'N/A'
+
             # Reorganized 52 columns: S13.3 → CMP → Intrinsic → Beta Scenarios → Quality → Details
             headers = [
                 # Core identification
@@ -911,14 +917,7 @@ class BatchValuator:
                 'Created At', 'Created By'
             ]
 
-            # Build latest P/E, P/B, MCap lookup from monthly prices (one-time, fast)
-            price_df = self.price_loader.df
-            price_latest = price_df.sort_values('daily_date', ascending=False).drop_duplicates(subset='nse_symbol', keep='first')
-
-            # Get latest price date for CMP header
-            latest_price_date = price_latest['daily_date'].iloc[0] if not price_latest.empty else None
-            price_date_str = str(latest_price_date)[:10] if latest_price_date else 'N/A'
-
+            # Build latest P/E, P/B, MCap lookup from monthly prices (already loaded above)
             price_lookup = {}
             for _, prow in price_latest.iterrows():
                 sym = prow.get('nse_symbol')
