@@ -895,7 +895,7 @@ class BatchValuator:
             latest_price_date = price_latest['daily_date'].iloc[0] if not price_latest.empty else None
             price_date_str = str(latest_price_date)[:10] if latest_price_date else 'N/A'
 
-            # Reorganized 53 columns: S13 scores → CMP → Intrinsic → Beta Scenarios → Quality → Details
+            # Reorganized 54 columns: S13 scores → CMP → Intrinsic → Beta Scenarios → Quality → Details
             headers = [
                 # Core identification
                 'ID', 'Symbol', 'Company', 'Sector', 'Industry', 'Val Group', 'Val Subgroup',
@@ -903,7 +903,8 @@ class BatchValuator:
                 # Key metrics (user-requested order)
                 'S13 Graded',
                 'S13 Ungraded',
-                f'CMP ({price_date_str})',
+                'CMP',
+                'CMP Date',
                 'Intrinsic (Blended)',
                 'Upside %',
                 # Beta Scenario A
@@ -922,7 +923,7 @@ class BatchValuator:
                 # Value components
                 'Firm Value Cr', 'Equity Value Cr', 'Net Debt Cr', 'Shares Cr',
                 # Market multiples
-                'P/E', 'P/B', 'Book Value', f'MCap Cr ({price_date_str})',
+                'P/E', 'P/B', 'Book Value', 'MCap Cr',
                 # Metadata
                 'Created At', 'Created By'
             ]
@@ -1009,6 +1010,7 @@ class BatchValuator:
                     s13_graded,  # S13 Graded (current quarter)
                     s13_ungraded,  # S13 Ungraded (current quarter)
                     f"{val['cmp']:.2f}" if val['cmp'] else '',  # CMP
+                    price_date_str,  # CMP Date (same for all rows in this batch)
                     f"{val['intrinsic_value']:.2f}" if val['intrinsic_value'] else '',  # Intrinsic (Blended)
                     f"{val['upside_pct']:.1f}%" if val['upside_pct'] else '',  # Upside %
                     # Beta Scenario A (Individual)
@@ -1062,8 +1064,8 @@ class BatchValuator:
             if not has_data:
                 # Empty sheet — write header first
                 ws.update(values=[headers], range_name='A1')
-                # Updated range to BA1 (53 columns)
-                ws.format('A1:BA1', {
+                # Updated range to BB1 (54 columns)
+                ws.format('A1:BB1', {
                     'textFormat': {'bold': True},
                     'backgroundColor': {'red': 0.2, 'green': 0.6, 'blue': 0.8}
                 })
@@ -1079,7 +1081,7 @@ class BatchValuator:
                 if current_header_cols != expected_cols:
                     logger.info(f"  Updating header: {current_header_cols} → {expected_cols} columns")
                     ws.update(values=[headers], range_name='A1')
-                    ws.format('A1:BA1', {
+                    ws.format('A1:BB1', {
                         'textFormat': {'bold': True},
                         'backgroundColor': {'red': 0.2, 'green': 0.6, 'blue': 0.8}
                     })
@@ -1088,7 +1090,7 @@ class BatchValuator:
                     # Header row is completely wrong, rewrite it
                     logger.info(f"  Header row invalid, rewriting")
                     ws.update(values=[headers], range_name='A1')
-                    ws.format('A1:BA1', {
+                    ws.format('A1:BB1', {
                         'textFormat': {'bold': True},
                         'backgroundColor': {'red': 0.2, 'green': 0.6, 'blue': 0.8}
                     })
