@@ -182,6 +182,28 @@ class BatchValuator:
         self.already_done = {r['symbol'] for r in rows if r.get('symbol')}
         logger.info(f"Resume mode: {len(self.already_done)} companies already valued today, will skip them")
 
+    def _trigger_async_cache_refresh(self, valuation_subgroup):
+        """
+        Trigger async background job to refresh peer stats for this subgroup.
+        Uses threading to not block valuation pipeline.
+
+        Args:
+            valuation_subgroup: The subgroup to refresh (e.g., 'BANKING_PRIVATE')
+        """
+        import threading
+
+        def refresh_task():
+            try:
+                from valuation_system.utils.populate_peer_stats import refresh_single_subgroup
+                refresh_single_subgroup(valuation_subgroup)
+            except Exception as e:
+                logger.debug(f"Background peer stats refresh failed for {valuation_subgroup}: {e}")
+
+        # Launch in background thread (daemon=True means it won't block exit)
+        thread = threading.Thread(target=refresh_task, daemon=True)
+        thread.start()
+        logger.debug(f"Triggered async peer stats refresh for {valuation_subgroup}")
+
     def get_companies_from_gsheet(self):
         """Load companies from Google Sheets 'Active Companies' tab."""
         auth_path = os.getenv('GSHEET_AUTH_PATH')
@@ -468,47 +490,65 @@ class BatchValuator:
                     peer_multiples = self.price_loader.get_peer_multiples_by_symbols(peer_symbols)
 
                     if peer_multiples:
-                        # Calculate peer averages for quality adjustments
+                        # Get peer stats from cache (fast, reliable)
                         peer_averages = {}
-                        # Get peer financials from core loader
-                        for peer_sym in peer_symbols[:10]:  # Limit to 10 for speed
-                            try:
-                                peer_fin = self.core_loader.get_financials_by_symbol(peer_sym)
-                                if peer_fin:
-                                    # Add to peer averages calculation
-                                    if 'roce' not in peer_averages:
-                                        peer_averages['roce_list'] = []
-                                        peer_averages['growth_list'] = []
+                        try:
+                            peer_stats = self.mysql.query_one('''
+                                SELECT median_roce, median_revenue_cagr, median_de_ratio, median_promoter_pledge
+                                FROM vs_subgroup_peer_stats
+                                WHERE valuation_subgroup = %s
+                            ''', (valuation_subgroup,))
 
-                                    roce_series = peer_fin.get('roce', {})
-                                    if roce_series:
-                                        latest_roce = self.core_loader.get_latest_value(roce_series)
-                                        if latest_roce and latest_roce > 0:
-                                            peer_averages['roce_list'].append(latest_roce / 100 if latest_roce > 1 else latest_roce)
-
-                                    sales_series = peer_fin.get('sales_annual', {})
-                                    if sales_series:
-                                        cagr = self.core_loader.calculate_cagr(sales_series, years=5)
-                                        if cagr:
-                                            peer_averages['growth_list'].append(cagr)
-                            except:
-                                pass
-
-                        # Calculate medians
-                        if peer_averages.get('roce_list'):
-                            import numpy as np
-                            peer_averages['median_roce'] = np.median(peer_averages['roce_list'])
-                        if peer_averages.get('growth_list'):
-                            import numpy as np
-                            peer_averages['median_revenue_cagr'] = np.median(peer_averages['growth_list'])
+                            if peer_stats and peer_stats.get('median_roce'):
+                                peer_averages = {
+                                    'median_roce': float(peer_stats['median_roce']),
+                                    'median_revenue_cagr': float(peer_stats['median_revenue_cagr']) if peer_stats.get('median_revenue_cagr') else None,
+                                }
+                                logger.info(f"  Peer stats (cached): ROCE={peer_averages['median_roce']:.2%}, "
+                                          f"Growth={peer_averages.get('median_revenue_cagr', 0):.2%}")
+                            else:
+                                logger.debug(f"No cached peer stats for {valuation_subgroup}, quality scores limited")
+                        except Exception as e:
+                            logger.debug(f"Failed to load peer stats: {e}")
 
                         # Create relative valuation model
                         from valuation_system.models.relative_valuation import RelativeValuation
                         rel_model = RelativeValuation(self.price_loader)
 
+                        # Calculate quality adjustments using cached peer data
                         quality_adjustments = rel_model.calculate_quality_adjustments(
                             relative_inputs, peer_averages
-                        )
+                        ) if peer_averages else {}
+
+                        # Add company-specific quality scores (governance, balance sheet)
+                        # These don't require peer comparison
+                        try:
+                            financials = self.core_loader.get_company_financials(csv_name)
+                            if financials:
+                                # Governance score (promoter pledge)
+                                pledge_series = financials.get('pledgebypromoter_quarterly', {})
+                                if pledge_series:
+                                    latest_pledge = self.core_loader.get_latest_value(pledge_series)
+                                    if latest_pledge and latest_pledge > 5:
+                                        governance_discount = -min(latest_pledge / 100, 0.10)
+                                        quality_adjustments['governance_discount'] = governance_discount
+                                        logger.info(f"  Governance: {governance_discount:.1%} (pledge={latest_pledge:.1f}%)")
+
+                                # Balance sheet score (D/E ratio)
+                                debt_series = financials.get('debt', {})
+                                nw_series = financials.get('networth', {})
+                                debt = self.core_loader.get_latest_value(debt_series) or 0
+                                nw = self.core_loader.get_latest_value(nw_series) or 1
+                                de_ratio = debt / nw if nw > 0 else 0
+
+                                if de_ratio < 0.3:
+                                    quality_adjustments['balance_sheet_premium'] = 0.03
+                                    logger.info(f"  Balance Sheet: +3.0% (D/E={de_ratio:.2f} < 0.3)")
+                                elif de_ratio > 1.5:
+                                    quality_adjustments['balance_sheet_discount'] = -0.05
+                                    logger.info(f"  Balance Sheet: -5.0% (D/E={de_ratio:.2f} > 1.5)")
+                        except Exception as e:
+                            logger.debug(f"Company-specific quality scores failed: {e}")
 
                         rel_result = rel_model.calculate_relative_value(
                             relative_inputs, peer_multiples, sector, quality_adjustments
@@ -620,6 +660,10 @@ class BatchValuator:
                 self.mysql.insert('vs_valuations', valuation_data)
                 logger.info(f"✓ Saved to database")
 
+                # Trigger async peer stats refresh for this subgroup (non-blocking)
+                if valuation_subgroup:
+                    self._trigger_async_cache_refresh(valuation_subgroup)
+
             self.results['success'].append({
                 'symbol': symbol,
                 'intrinsic': intrinsic,
@@ -728,6 +772,16 @@ class BatchValuator:
             return ''
 
     @staticmethod
+    def _num(val):
+        """Return numeric value for Google Sheets (as number, not string). Returns '' if missing/None."""
+        if val is None or val == '':
+            return ''
+        try:
+            return float(val) if val != 0 else 0
+        except (TypeError, ValueError):
+            return ''
+
+    @staticmethod
     def _fmt_pct2(val):
         """Format percentage with 2 decimal places (for beta-like precision)."""
         if val is None or val == 0 or val == '':
@@ -754,53 +808,54 @@ class BatchValuator:
         return ('', '')
 
     def _get_pe_pb_bv_mcap(self, symbol, cmp, price_lookup):
-        """Return (P/E, P/B, Book Value, MCap Cr) formatted strings for GSheet row."""
-        pe_str, pb_str, bv_str, mcap_str = '', '', '', ''
+        """Return (P/E, P/B, Book Value, MCap Cr) as numeric values for GSheet row."""
+        pe_val, pb_val, bv_val, mcap_val = '', '', '', ''
         if symbol and symbol in price_lookup:
-            pe_val, pb_val, mcap_val = price_lookup[symbol]
-            if pe_val is not None and pe_val > 0:
-                pe_str = f"{pe_val:.1f}"
-            if pb_val is not None and pb_val > 0:
-                pb_str = f"{pb_val:.2f}"
+            pe, pb, mcap = price_lookup[symbol]
+            if pe is not None and pe > 0:
+                pe_val = pe  # Return as number, not formatted string
+            if pb is not None and pb > 0:
+                pb_val = pb  # Return as number, not formatted string
                 # Book value per share = CMP / P/B
                 try:
                     cmp_f = float(cmp) if cmp else 0
                     if cmp_f > 0:
-                        bv_str = f"{cmp_f / pb_val:.2f}"
+                        bv_val = cmp_f / pb  # Return as number, not formatted string
                 except (TypeError, ValueError):
                     pass
-            if mcap_val is not None and mcap_val > 0:
-                mcap_str = f"{mcap_val:,.0f}"
-        return (pe_str, pb_str, bv_str, mcap_str)
+            if mcap is not None and mcap > 0:
+                mcap_val = mcap  # Return as number, not formatted string
+        return (pe_val, pb_val, bv_val, mcap_val)
 
     def _get_quality_scores_and_s13(self, symbol, key_assumptions):
         """
         Extract quality scores and S13 scores from key_assumptions.
         Returns tuple: (s13_graded, s13_ungraded, roce_premium, growth_premium, governance_score, balance_sheet_score)
+        All values returned as numbers, not formatted strings.
         """
         # Extract S13 scores (both from current quarter, e.g., graded_151 and ungraded_151)
         s13_graded = ''
         graded_val = key_assumptions.get('s13_graded')
         if graded_val is not None:
-            s13_graded = f'{graded_val:.2f}'
+            s13_graded = float(graded_val)  # Return as number, not formatted string
 
         s13_ungraded = ''
         ungraded_val = key_assumptions.get('s13_ungraded')
         if ungraded_val is not None:
-            s13_ungraded = f'{ungraded_val:.2f}'
+            s13_ungraded = float(ungraded_val)  # Return as number, not formatted string
 
         # Quality scores (from relative valuation - now in quick mode too)
         quality_adj = key_assumptions.get('quality_adjustments', {})
-        roce_premium = self._fmt_pct(quality_adj.get('roce_premium', 0)) if quality_adj.get('roce_premium') else ''
-        growth_premium = self._fmt_pct(quality_adj.get('growth_premium', 0)) if quality_adj.get('growth_premium') else ''
+        roce_premium = quality_adj.get('roce_premium', 0) if quality_adj.get('roce_premium') else ''
+        growth_premium = quality_adj.get('growth_premium', 0) if quality_adj.get('growth_premium') else ''
 
         # Governance and balance sheet come as either premium or discount
         gov_discount = quality_adj.get('governance_discount', 0)
-        governance_score = self._fmt_pct(gov_discount) if gov_discount else ''
+        governance_score = gov_discount if gov_discount else ''
 
         bs_premium = quality_adj.get('balance_sheet_premium', 0)
         bs_discount = quality_adj.get('balance_sheet_discount', 0)
-        balance_sheet_score = self._fmt_pct(bs_premium or bs_discount) if (bs_premium or bs_discount) else ''
+        balance_sheet_score = (bs_premium or bs_discount) if (bs_premium or bs_discount) else ''
 
         return (s13_graded, s13_ungraded, roce_premium, growth_premium, governance_score, balance_sheet_score)
 
@@ -976,7 +1031,11 @@ class BatchValuator:
                         industry = scenario_data.get('industry', '')
                         return industry  # e.g., "Hotel/Gaming" not "Damodaran: Hotel/Gaming (India)"
                     elif scenario_key == 'individual_weekly':
-                        return f"Individual: {source.split(':')[-1] if ':' in source else source}"
+                        # Remove "Individual: " prefix - just show what's after the colon
+                        return source.split(':')[-1] if ':' in source else source
+                    elif scenario_key == 'subgroup_aggregate':
+                        # Remove prefix (indian_subgroup:, subgroup_aggregate:, etc.) - show only subgroup name
+                        return source.split(':')[-1] if ':' in source else source
                     else:
                         return source[:50] if source else ''
 
@@ -1007,49 +1066,49 @@ class BatchValuator:
                     val['method'],
                     val['scenario'] or 'BASE',
                     # Key metrics (user-requested order)
-                    s13_graded,  # S13 Graded (current quarter)
-                    s13_ungraded,  # S13 Ungraded (current quarter)
-                    f"{val['cmp']:.2f}" if val['cmp'] else '',  # CMP
+                    self._num(s13_graded),  # S13 Graded (current quarter) - as number
+                    self._num(s13_ungraded),  # S13 Ungraded (current quarter) - as number
+                    self._num(val['cmp']),  # CMP - as number
                     price_date_str,  # CMP Date (same for all rows in this batch)
-                    f"{val['intrinsic_value']:.2f}" if val['intrinsic_value'] else '',  # Intrinsic (Blended)
-                    f"{val['upside_pct']:.1f}%" if val['upside_pct'] else '',  # Upside %
+                    self._num(val['intrinsic_value']),  # Intrinsic (Blended) - as number
+                    self._num(val['upside_pct']) / 100 if val['upside_pct'] else '',  # Upside % - as decimal
                     # Beta Scenario A (Individual)
-                    self._fmt_pct2(scenario_a.get('beta')),
-                    self._fmt_pct(scenario_a.get('wacc')),
-                    f"{scenario_a.get('intrinsic_value'):.2f}" if scenario_a.get('intrinsic_value') else '',
+                    self._num(scenario_a.get('beta')),  # Beta A - as number
+                    self._num(scenario_a.get('wacc')),  # WACC A - as decimal
+                    self._num(scenario_a.get('intrinsic_value')),  # DCF A - as number
                     format_beta_source(scenario_a, 'individual_weekly'),
                     # Beta Scenario B (Damodaran India)
-                    self._fmt_pct2(scenario_b.get('beta')),
-                    self._fmt_pct(scenario_b.get('wacc')),
-                    f"{scenario_b.get('intrinsic_value'):.2f}" if scenario_b.get('intrinsic_value') else '',
+                    self._num(scenario_b.get('beta')),  # Beta B - as number
+                    self._num(scenario_b.get('wacc')),  # WACC B - as decimal
+                    self._num(scenario_b.get('intrinsic_value')),  # DCF B - as number
                     format_beta_source(scenario_b, 'damodaran_india'),  # Now just industry name
                     # Beta Scenario C (Subgroup Aggregate)
-                    self._fmt_pct2(scenario_c.get('beta')),
-                    self._fmt_pct(scenario_c.get('wacc')),
-                    f"{scenario_c.get('intrinsic_value'):.2f}" if scenario_c.get('intrinsic_value') else '',
+                    self._num(scenario_c.get('beta')),  # Beta C - as number
+                    self._num(scenario_c.get('wacc')),  # WACC C - as decimal
+                    self._num(scenario_c.get('intrinsic_value')),  # DCF C - as number
                     format_beta_source(scenario_c, 'subgroup_aggregate'),
-                    # Quality Scores
-                    roce_prem, growth_prem, gov_score, bs_score,
+                    # Quality Scores - as numbers
+                    self._num(roce_prem), self._num(growth_prem), self._num(gov_score), self._num(bs_score),
                     # Valuation breakdown
-                    f"{dcf_base_val:.2f}" if dcf_base_val else '',  # DCF Value
-                    f"{relative_val:.2f}" if relative_val else '',  # Relative Val
-                    # DCF assumptions
-                    self._fmt_pct(ka.get('wacc')),
-                    self._fmt_pct2(ka.get('beta')),
-                    self._fmt_pct(ka.get('cost_of_equity')),
-                    self._fmt_pct(ka.get('terminal_growth')),
-                    self._fmt_pct(ka.get('terminal_roce')),
-                    self._fmt_pct(ka.get('terminal_reinvestment')),
-                    self._fmt_pct(ka.get('terminal_value_pct')),
-                    # Operating ratios
-                    self._fmt_pct(ka.get('ebitda_margin')),
-                    self._fmt_pct(ka.get('capex_to_sales')),
-                    self._fmt_pct(ka.get('tax_rate')),
-                    # Value components
-                    self._fmt_cr(ka.get('firm_value')),
-                    self._fmt_cr(ka.get('equity_value')),
-                    self._fmt_cr(ka.get('net_debt')),
-                    self._fmt_pct2(ka.get('shares_outstanding')),
+                    self._num(dcf_base_val),  # DCF Value - as number
+                    self._num(relative_val),  # Relative Val - as number
+                    # DCF assumptions - as decimals
+                    self._num(ka.get('wacc')),
+                    self._num(ka.get('beta')),
+                    self._num(ka.get('cost_of_equity')),
+                    self._num(ka.get('terminal_growth')),
+                    self._num(ka.get('terminal_roce')),
+                    self._num(ka.get('terminal_reinvestment')),
+                    self._num(ka.get('terminal_value_pct')),
+                    # Operating ratios - as decimals
+                    self._num(ka.get('ebitda_margin')),
+                    self._num(ka.get('capex_to_sales')),
+                    self._num(ka.get('tax_rate')),
+                    # Value components - as numbers (in crores)
+                    self._num(ka.get('firm_value')),
+                    self._num(ka.get('equity_value')),
+                    self._num(ka.get('net_debt')),
+                    self._num(ka.get('shares_outstanding')),
                     # Market multiples
                     *self._get_pe_pb_bv_mcap(val['nse_symbol'], val['cmp'], price_lookup),
                     # Metadata
