@@ -831,6 +831,62 @@ Return as JSON."""
 
         return None
 
+    def _extract_company_from_headline(self, headline: str) -> int:
+        """
+        Extract company_id from headline by matching company names/symbols.
+        Used as fallback when scope=COMPANY but affected_companies is empty.
+
+        Returns:
+            company_id (int) if found, None otherwise
+        """
+        if not headline:
+            return None
+
+        try:
+            # Get all companies from marketscrip (active companies only)
+            companies = self.mysql.query("""
+                SELECT marketscrip_id, symbol, name
+                FROM mssdb.kbapp_marketscrip
+                WHERE scrip_type IN ('', 'EQS')
+                  AND symbol IS NOT NULL
+                  AND symbol != ''
+                  AND name IS NOT NULL
+                ORDER BY LENGTH(name) DESC
+                LIMIT 1000
+            """)
+
+            headline_upper = headline.upper()
+
+            # Try exact symbol match first (faster)
+            for company in companies:
+                symbol = company.get('symbol', '')
+                if symbol and symbol.upper() in headline_upper:
+                    # Verify it's a word boundary (not part of another word)
+                    import re
+                    pattern = r'\b' + re.escape(symbol.upper()) + r'\b'
+                    if re.search(pattern, headline_upper):
+                        logger.debug(f"Matched company by symbol: {symbol} -> {company['marketscrip_id']}")
+                        return company['marketscrip_id']
+
+            # Try company name match (partial match, at least 60% of name)
+            for company in companies:
+                name = company.get('name', '')
+                if not name or len(name) < 5:
+                    continue
+
+                # Extract main company name (before "Limited", "Ltd", etc.)
+                name_parts = name.replace(' Limited', '').replace(' Ltd', '').replace(' Pvt', '')
+                name_clean = name_parts.split()[0] if name_parts else name
+
+                if len(name_clean) >= 5 and name_clean.upper() in headline_upper:
+                    logger.debug(f"Matched company by name: {name_clean} -> {company['marketscrip_id']}")
+                    return company['marketscrip_id']
+
+        except Exception as e:
+            logger.debug(f"Failed to extract company from headline: {e}")
+
+        return None
+
     def _store_event(self, classified: dict):
         """Store a classified news event in MySQL with LLM metadata and semantic grouping."""
         try:
@@ -844,6 +900,14 @@ Return as JSON."""
 
             # Normalize LLM outputs to valid ENUM values
             scope = self._normalize_scope(classified.get('scope', ''))
+
+            # FALLBACK: If scope=COMPANY but no company_id, try to extract from headline
+            if scope == 'COMPANY' and not company_id:
+                company_id = self._extract_company_from_headline(classified.get('headline', ''))
+                if company_id:
+                    logger.info(f"Extracted company_id={company_id} from headline (fallback)")
+                else:
+                    logger.warning(f"scope=COMPANY but couldn't find company_id for: {classified.get('headline', '')[:80]}")
             severity = self._normalize_severity(classified.get('severity', ''))
             sectors = classified.get('affected_sectors', [])
             sector = sectors[0] if isinstance(sectors, list) and len(sectors) > 0 else ''
