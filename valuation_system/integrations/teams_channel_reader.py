@@ -41,9 +41,9 @@ if os.path.exists(_rootswings_env):
 
 GRAPH_API_BASE = 'https://graph.microsoft.com/v1.0'
 
-# State file to track last processed message timestamp (avoids refetching same messages)
-STATE_FILE = os.path.join(
-    os.path.dirname(__file__), '..', 'data', 'state', 'teams_last_scan.json'
+# State directory for Teams channel state files (one file per channel)
+STATE_DIR = os.path.join(
+    os.path.dirname(__file__), '..', 'data', 'state'
 )
 
 
@@ -88,14 +88,27 @@ class TeamsChannelReader:
             logger.warning(f"Teams availability check failed: {e}")
             return False
 
+    def _get_state_file_path(self) -> str:
+        """
+        Get channel-specific state file path.
+        Uses last 8 chars of channel_id for filename uniqueness.
+        """
+        # Extract last 8 chars of channel ID for readability
+        channel_suffix = self.channel_id[-8:] if len(self.channel_id) >= 8 else self.channel_id
+        filename = f"teams_last_scan_{channel_suffix}.json"
+        return os.path.join(STATE_DIR, filename)
+
     def _get_last_scan_time(self) -> datetime:
-        """Get the last successful scan timestamp from state file."""
-        if not os.path.exists(STATE_FILE):
+        """Get the last successful scan timestamp from channel-specific state file."""
+        state_file = self._get_state_file_path()
+
+        if not os.path.exists(state_file):
             # First run: default to 24 hours ago
+            logger.debug(f"No state file for this channel yet: {state_file}")
             return datetime.now(timezone.utc) - timedelta(hours=24)
 
         try:
-            with open(STATE_FILE, 'r') as f:
+            with open(state_file, 'r') as f:
                 state = json.load(f)
                 last_scan_str = state.get('last_scan_timestamp')
                 if last_scan_str:
@@ -107,16 +120,20 @@ class TeamsChannelReader:
         return datetime.now(timezone.utc) - timedelta(hours=24)
 
     def _save_last_scan_time(self, timestamp: datetime):
-        """Save the last successful scan timestamp to state file."""
+        """Save the last successful scan timestamp to channel-specific state file."""
+        state_file = self._get_state_file_path()
+
         try:
-            os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
+            os.makedirs(os.path.dirname(state_file), exist_ok=True)
             state = {
                 'last_scan_timestamp': timestamp.isoformat(),
                 'last_scan_date_human': timestamp.strftime('%Y-%m-%d %H:%M:%S %Z'),
+                'channel_id': self.channel_id,
+                'team_id': self.team_id,
             }
-            with open(STATE_FILE, 'w') as f:
+            with open(state_file, 'w') as f:
                 json.dump(state, f, indent=2)
-            logger.debug(f"Saved Teams last scan time: {timestamp.isoformat()}")
+            logger.debug(f"Saved Teams last scan time for channel {self.channel_id[-8:]}: {timestamp.isoformat()}")
         except OSError as e:
             logger.warning(f"Failed to save Teams state file: {e}")
 

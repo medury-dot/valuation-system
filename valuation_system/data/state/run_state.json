@@ -1,7 +1,7 @@
 {
   "hourly_cycle": {
-    "last_status": "SUCCESS",
-    "started_at": "2026-02-15T11:32:29.094794",
+    "last_status": "RUNNING",
+    "started_at": "2026-02-15T12:00:03.053080",
     "last_success": "2026-02-15T11:49:12.157483",
     "consecutive_failures": 0,
     "last_details": {
