@@ -1,5 +1,13 @@
 # Valuation System - Project Instructions
 
+## xyOps Job Format
+- **XYPDF Format Example**: `/Users/ram/code/scheduler/xyops_format_example.xypdf.json`
+- **Satellite ID**: `smlktdoy6yyvkcd5`
+- **Category ID**: `camlkuw2u3ret5dl` (valuation jobs)
+- All xyOps job imports must use XYPDF (xyOps Portable Data Object) format with proper structure
+- Job IDs must be unique 16-character alphanumeric strings
+- Scripts must use full Python paths: `/Users/ram/.pyenv/versions/3.10.12/bin/python3`
+
 ## Data Guidelines
 - **Trailing 12 Months (TTM)**: When recent half-yearly data for balancesheet items (such a debt) or cashflows ia  is available, use it to compute TTM figures rather than relying solely on older annual data. For example for cashflows, h2_2025 + h1_2026 gives a more current TTM (Oct 2024 - Sep 2025) than the yearly FY2025 figure (Apr 2024 - Mar 2025). For quarterly items, use latest last four quarters for TTM such as sales, pbidt, pat.
 
@@ -47,6 +55,13 @@
 - All settings in `.env` file — no hardcoding
 - MySQL: root@localhost:3306/rag
 - ChromaDB: localhost:8001
+
+## News Pipeline
+- **Watchlist Control**: `vs_news_watchlist` table controls which companies to scan for news
+- **Django Admin**: Manage watchlist at http://localhost:8000/admin/ under "MSSDB > News Watchlist"
+- **Bulk Actions**: Enable/disable companies, set priority (HIGH/MEDIUM/LOW) via admin actions
+- **Testing**: Start with 10 companies, expand as pipeline stabilizes
+- **Priority Order**: HIGH scanned first, then MEDIUM, then LOW
 
 ❯ for sales figure use the sales_* columns (dont see <year>_sales column); use them to calculate TTM sales. same for pbidt, pat also.
 

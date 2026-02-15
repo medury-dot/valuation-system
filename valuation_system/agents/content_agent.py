@@ -1,8 +1,10 @@
 """
 Content Agent
-Generates daily social media posts from key insights.
-Posts are queued in Google Sheet ('storm posting' / 'posts') for PM approval.
-The existing post_tweets_from_gsheet.py script publishes approved posts.
+Generates daily social media posts (Twitter + LinkedIn) from key insights.
+Posts are queued in Google Sheet ('Social Posts' tab on main drivers GSheet)
+for PM approval. The social_poster.py module publishes approved posts.
+
+Voice: Ram Kalyan Medury's personal style loaded from config/prompts/ text files.
 
 Post Types:
 - Sector insights (data-driven observations)
@@ -26,22 +28,33 @@ logger = logging.getLogger(__name__)
 
 load_dotenv(os.path.join(os.path.dirname(__file__), '..', 'config', '.env'))
 
+# Prompt file paths
+PROMPT_DIR = os.path.join(os.path.dirname(__file__), '..', 'config', 'prompts')
+TWITTER_PROMPT_FILE = os.path.join(PROMPT_DIR, 'twitter_news_prompt.txt')
+LINKEDIN_PROMPT_FILE = os.path.join(PROMPT_DIR, 'linkedin_news_prompt.txt')
+
+
+def _load_prompt_file(filepath: str) -> str:
+    """Load prompt text from file. Raises if file missing."""
+    if not os.path.exists(filepath):
+        logger.error(f"Prompt file not found: {filepath}")
+        raise FileNotFoundError(f"Prompt file not found: {filepath}")
+    with open(filepath, 'r') as f:
+        return f.read().strip()
+
 
 class ContentAgent:
     """
     Generate and publish social media content from valuation insights.
 
-    Uses Grok to craft posts that are:
-    - Data-driven and specific
-    - Thought-provoking, occasionally contrarian
+    Uses Grok to craft posts in Ram Kalyan Medury's voice:
+    - Data-driven and specific (at least one number per post)
+    - Contrarian, pithy, India-first
     - NO stock recommendations or price targets
-    - Professional equity researcher tone
+    - Prompts loaded from editable text files in config/prompts/
     """
 
-    GENERATION_PROMPT = """You are a professional equity researcher creating Twitter/X posts.
-Your goal is to share insights that build thought leadership.
-
-Today's data points:
+    GENERATION_PROMPT = """Today's data points for social media content:
 
 TOP EVENTS (last 24h):
 {events}
@@ -55,24 +68,22 @@ VALUATION ALERTS:
 SECTOR OUTLOOKS:
 {sector_outlooks}
 
-STYLE GUIDELINES:
-{style_guidelines}
+Generate {num_posts} social media posts from the above data.
 
-EXAMPLE POSTS (for tone reference):
-{examples}
+For EACH post, generate TWO versions:
+1. TWITTER: A tweet under 280 characters. Pithy, one insight, one data point.
+2. LINKEDIN: A 150-500 word flowing paragraph post. Personal anecdote -> data -> analysis -> closing.
 
-Generate {num_posts} tweet-length posts (max 280 chars each).
+Also classify each post into a category: sector_insight | company_highlight | driver_change | macro_linkage | contrarian_view
 
 Rules:
 - Lead with the insight, not the data
 - Use specific numbers when possible
-- End with a question or perspective
 - NO stock recommendations or price targets
 - Be thought-provoking, contrarian when appropriate
-- Include 2-3 relevant hashtags
 - Each post should be self-contained
 
-Return as JSON: {{"posts": [{{"text": "...", "category": "sector_insight|company_highlight|driver_change|macro_linkage|contrarian_view"}}]}}"""
+Return as JSON: {{"posts": [{{"twitter": "...", "linkedin": "...", "category": "...", "headline": "short description of what this post is about"}}]}}"""
 
     def __init__(self, mysql_client, gsheet_client: GSheetClient = None,
                  llm_client: LLMClient = None):
@@ -86,10 +97,24 @@ Return as JSON: {{"posts": [{{"text": "...", "category": "sector_insight|company
         self.twitter_config = self.social_config.get('platforms', {}).get('twitter', {})
         self.max_posts = self.twitter_config.get('max_posts_per_day', 3)
 
+        # Load voice prompts from files
+        self._twitter_voice = self._load_voice_prompt(TWITTER_PROMPT_FILE, 'twitter')
+        self._linkedin_voice = self._load_voice_prompt(LINKEDIN_PROMPT_FILE, 'linkedin')
+
+    def _load_voice_prompt(self, filepath: str, platform: str) -> str:
+        """Load voice prompt from file, with fallback to empty string."""
+        try:
+            prompt = _load_prompt_file(filepath)
+            logger.info(f"Loaded {platform} voice prompt from {filepath} ({len(prompt)} chars)")
+            return prompt
+        except FileNotFoundError:
+            logger.warning(f"No {platform} voice prompt file found at {filepath}, using minimal prompt")
+            return f"You are a financial analyst writing {platform} posts about Indian equity markets."
+
     def generate_daily_posts(self) -> list:
         """
         Generate posts from last 24h data.
-        Returns list of post dicts with 'text' and 'category'.
+        Returns list of post dicts with 'twitter', 'linkedin', 'category', 'headline'.
         """
         if not self.twitter_config.get('enabled', False):
             logger.info("Twitter posting disabled in config")
@@ -101,55 +126,73 @@ Return as JSON: {{"posts": [{{"text": "...", "category": "sector_insight|company
         alerts = self._get_recent_alerts()
         sector_outlooks = self._get_sector_outlooks()
 
-        # Get style guidelines and examples from config
-        guidelines = '\n'.join(self.twitter_config.get('style_guidelines', []))
-        examples = '\n'.join(self.twitter_config.get('example_templates', []))
+        # Build the combined prompt: voice guidelines + data
+        system_prompt = (
+            f"TWITTER VOICE GUIDELINES:\n{self._twitter_voice}\n\n"
+            f"LINKEDIN VOICE GUIDELINES:\n{self._linkedin_voice}"
+        )
 
-        prompt = self.GENERATION_PROMPT.format(
+        user_prompt = self.GENERATION_PROMPT.format(
             events=self._format_events(events),
             driver_changes=self._format_driver_changes(driver_changes),
             alerts=self._format_alerts(alerts),
             sector_outlooks=sector_outlooks,
-            style_guidelines=guidelines,
-            examples=examples,
             num_posts=self.max_posts,
         )
 
-        result = self.llm.analyze_json(prompt)
-        posts = result.get('posts', [])
+        # Use LLM with system + user prompts
+        full_prompt = f"{system_prompt}\n\n{user_prompt}"
+        result = self.llm.analyze_json(full_prompt)
 
-        # Validate posts
+        # Handle different response formats from LLM
+        posts = []
+        if isinstance(result, dict):
+            posts = result.get('posts', [])
+        elif isinstance(result, list):
+            posts = result
+
+        # Validate and normalize posts
         validated = []
         for post in posts[:self.max_posts]:
-            text = post.get('text', '')
-            if len(text) > 280:
-                text = text[:277] + '...'
-            if text:
+            twitter_text = post.get('twitter', post.get('text', ''))
+            linkedin_text = post.get('linkedin', '')
+            category = post.get('category', 'sector_insight')
+            headline = post.get('headline', '')
+
+            # Truncate twitter if needed
+            if len(twitter_text) > 280:
+                twitter_text = twitter_text[:277] + '...'
+
+            if twitter_text:
                 validated.append({
-                    'text': text,
-                    'category': post.get('category', 'sector_insight'),
+                    'twitter': twitter_text,
+                    'linkedin': linkedin_text,
+                    'category': category,
+                    'headline': headline,
                 })
 
-        logger.info(f"Generated {len(validated)} posts for today")
+        logger.info(f"Generated {len(validated)} dual-platform posts for today")
         return validated
 
     def publish_posts(self, posts: list) -> list:
         """
-        Queue posts in Google Sheet ('storm posting' / 'posts') for PM approval.
-        The existing post_tweets_from_gsheet.py script will publish approved posts.
+        Queue posts in Google Sheet ('Social Posts' tab on main drivers GSheet)
+        for PM approval. social_poster.py publishes approved posts.
         Returns list of queued post results.
         """
         if not self.twitter_config.get('enabled', False):
             logger.info("Social posting disabled in config")
-            return posts  # Return for logging only
+            return posts
 
         queued = []
         for post in posts:
             try:
-                # Queue in GSheet for PM approval
+                # Queue in GSheet for PM approval (both platforms)
                 success = self.gsheet.queue_social_post(
-                    post_text=post['text'],
+                    twitter_text=post.get('twitter', ''),
+                    linkedin_text=post.get('linkedin', ''),
                     category=post.get('category', 'sector_insight'),
+                    headline=post.get('headline', ''),
                 )
                 post['queued'] = success
                 post['status'] = 'queued' if success else 'queue_failed'
@@ -172,13 +215,23 @@ Return as JSON: {{"posts": [{{"text": "...", "category": "sector_insight|company
         """Log post to MySQL for tracking."""
         try:
             self.mysql.insert('vs_social_posts', {
-                'platform': 'twitter',
-                'content': post['text'],
+                'platform': 'both',
+                'content': post.get('twitter', ''),
+                'linkedin_content': post.get('linkedin', ''),
                 'category': post.get('category', ''),
                 'status': post.get('status', 'queued'),
             })
         except Exception as e:
-            logger.error(f"Failed to log post to DB: {e}", exc_info=True)
+            # Table may not have linkedin_content column yet - fallback
+            try:
+                self.mysql.insert('vs_social_posts', {
+                    'platform': 'both',
+                    'content': post.get('twitter', ''),
+                    'category': post.get('category', ''),
+                    'status': post.get('status', 'queued'),
+                })
+            except Exception as e2:
+                logger.error(f"Failed to log post to DB: {e2}", exc_info=True)
 
     def _get_recent_events(self) -> list:
         """Get significant events from last 24h."""
@@ -203,7 +256,6 @@ Return as JSON: {{"posts": [{{"text": "...", "category": "sector_insight|company
 
     def _get_sector_outlooks(self) -> str:
         """Get current sector outlooks as text."""
-        # This will be populated by orchestrator before calling
         return "Sector outlooks not available"
 
     def _format_events(self, events: list) -> str:
@@ -220,7 +272,7 @@ Return as JSON: {{"posts": [{{"text": "...", "category": "sector_insight|company
         lines = []
         for c in changes[:5]:
             lines.append(
-                f"- {c.get('driver_name', '')}: {c.get('old_value', '')} → {c.get('new_value', '')} "
+                f"- {c.get('driver_name', '')}: {c.get('old_value', '')} -> {c.get('new_value', '')} "
                 f"({c.get('change_reason', '')})"
             )
         return '\n'.join(lines)

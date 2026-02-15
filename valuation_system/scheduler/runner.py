@@ -10,8 +10,12 @@ Usage:
   # Daily valuation refresh (run after market close ~20:00 IST)
   python -m valuation_system.scheduler.runner daily
 
-  # Daily social media posts (run pre-market ~08:00 IST)
+  # Generate social media post drafts (run pre-market ~08:00 IST)
   python -m valuation_system.scheduler.runner social
+
+  # Post approved social media posts (dry-run by default for safety)
+  python -m valuation_system.scheduler.runner post_social
+  python -m valuation_system.scheduler.runner post_social --no-dry-run
 
   # Weekly summary (run Sunday ~10:00 IST)
   python -m valuation_system.scheduler.runner weekly
@@ -133,23 +137,56 @@ def run_social():
         return {'error': str(e)}
 
 
+def run_post_social(dry_run: bool = True):
+    """Post approved social media posts from GSheet to Twitter and LinkedIn."""
+    from valuation_system.agents.social_poster import SocialPoster
+    from valuation_system.storage.gsheet_client import GSheetClient
+
+    try:
+        gsheet = GSheetClient()
+        poster = SocialPoster(gsheet_client=gsheet, dry_run=dry_run)
+        result = poster.post_approved_posts()
+
+        # Print summary
+        print(f"\n{'='*60}")
+        print(f"  SOCIAL POSTING {'(DRY RUN)' if dry_run else '(LIVE)'}")
+        print(f"{'='*60}")
+        print(f"  Approved posts:    {result['total_approved']}")
+        print(f"  Twitter posted:    {result['twitter_posted']}")
+        print(f"  Twitter failed:    {result['twitter_failed']}")
+        print(f"  LinkedIn posted:   {result['linkedin_posted']}")
+        print(f"  LinkedIn failed:   {result['linkedin_failed']}")
+        print(f"{'='*60}")
+
+        for detail in result.get('details', []):
+            print(f"  {detail.get('headline', 'untitled')}: "
+                  f"X={detail.get('twitter_status')}, "
+                  f"LI={detail.get('linkedin_status')}")
+
+        logger.info(f"Post social result: {result}")
+        return result
+    except Exception as e:
+        logger.error(f"Post social failed: {e}", exc_info=True)
+        return {'error': str(e)}
+
+
 def run_weekly():
-    """Weekly summary report."""
-    from valuation_system.agents.orchestrator import OrchestratorAgent
+    """Weekly summary report via xyops weekly_review pipeline."""
+    from valuation_system.pipelines.xyops_config import run_pipeline
     from valuation_system.notifications.email_sender import EmailSender
 
-    orch = OrchestratorAgent()
-
-    # Run daily first
-    daily_result = run_daily()
+    # Run the weekly_review xyops pipeline (includes peer stats refresh, GSheet sync, trend detection)
+    logger.info("Running weekly_review pipeline via xyops...")
+    pipeline_result = run_pipeline('weekly_review')
 
     # Generate weekly summary
     summary = {
         'period': f"Week ending {datetime.now().strftime('%Y-%m-%d')}",
         'highlights': [
-            f"Processed daily valuations for {len(daily_result.get('valuations', {}))} companies",
-            f"Generated {daily_result.get('alerts', 0)} alerts this week",
+            f"Pipeline status: {pipeline_result['status']}",
+            f"Steps completed: {len([s for s in pipeline_result['steps'].values() if s['status'] == 'SUCCESS'])}",
         ],
+        'pipeline_result': pipeline_result,
     }
 
     try:
@@ -336,7 +373,7 @@ def run_init():
 def main():
     parser = argparse.ArgumentParser(description='Agentic Valuation System Runner')
     parser.add_argument('command', choices=[
-        'hourly', 'daily', 'social', 'weekly',
+        'hourly', 'daily', 'social', 'post_social', 'weekly',
         'valuation', 'portfolio', 'catchup',
         'status', 'test', 'init', 'nse_fetch'
     ], help='Command to run')
@@ -346,6 +383,10 @@ def main():
                         help='NSE fetch mode: daily (event-driven), sweep (full), seed (register + sweep)')
     parser.add_argument('--min-mcap', type=float, default=2500.0,
                         help='Minimum market cap in crores for NSE seed mode (default: 2500)')
+    parser.add_argument('--dry-run', action='store_true', default=True,
+                        help='Dry run mode for post_social (default: True for safety)')
+    parser.add_argument('--no-dry-run', action='store_false', dest='dry_run',
+                        help='Disable dry run for post_social (LIVE posting)')
 
     args = parser.parse_args()
 
@@ -359,6 +400,8 @@ def main():
             result = run_daily()
         elif args.command == 'social':
             result = run_social()
+        elif args.command == 'post_social':
+            result = run_post_social(dry_run=args.dry_run)
         elif args.command == 'weekly':
             result = run_weekly()
         elif args.command == 'valuation':

@@ -29,6 +29,7 @@ from valuation_system.utils.resilience import (
     RunStateManager, GracefulDegradation,
     retry_with_backoff, check_internet, safe_task_run
 )
+from valuation_system.utils.structured_logger import StructuredLogger
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +98,37 @@ class NewsScannerAgent:
             'type': 'rss',
             'priority': 2,
         },
+        # === NEW FREE RSS SOURCES ===
+        {
+            'name': 'mint_companies',
+            'base_url': 'https://www.livemint.com/rss/companies',
+            'type': 'rss',
+            'priority': 1,
+        },
+        {
+            'name': 'mint_markets',
+            'base_url': 'https://www.livemint.com/rss/markets',
+            'type': 'rss',
+            'priority': 1,
+        },
+        {
+            'name': 'financial_express',
+            'base_url': 'https://www.financialexpress.com/market/stock-market/feed/',
+            'type': 'rss',
+            'priority': 1,
+        },
+        {
+            'name': 'sebi_press_releases',
+            'base_url': 'https://www.sebi.gov.in/sebiweb/other/OtherAction.do?doRssFeeds=yes&type=PRESS_RELEASE',
+            'type': 'rss',
+            'priority': 2,
+        },
+        {
+            'name': 'reddit_indiainvestments',
+            'base_url': 'https://www.reddit.com/r/IndiaInvestments/.rss',
+            'type': 'rss',
+            'priority': 3,
+        },
         {
             'name': 'teams_channel',
             'base_url': '',  # Configured via env vars
@@ -124,8 +156,8 @@ Classify with:
 5. scope: MACRO (affects all), SECTOR (affects sector), COMPANY (affects specific company)
 6. valuation_impact_pct: Estimated impact on intrinsic value (-10 to +10)
 7. drivers_affected: Array of objects with driver details:
-   [{"driver": "revenue_growth", "level": "GROUP", "impact_pct": -3.0},
-    {"driver": "cost_of_capital", "level": "MACRO", "impact_pct": +1.5}]
+   [{{"driver": "revenue_growth", "level": "GROUP", "impact_pct": -3.0}},
+    {{"driver": "cost_of_capital", "level": "MACRO", "impact_pct": +1.5}}]
    level = MACRO/GROUP/SUBGROUP/COMPANY. impact_pct = estimated % impact on that driver.
 8. summary: 2-sentence summary for quick reference
 9. key_data_points: Any specific numbers mentioned (revenue, %, dates)
@@ -138,6 +170,7 @@ Return as JSON."""
         self.llm = llm_client or LLMClient()
         self.state = state_manager or RunStateManager()
         self.degradation = GracefulDegradation()
+        self.slog = StructuredLogger('NewsScannerAgent', logger, mysql_client)
 
         # Load watchlist
         self._watched_companies = self._load_watchlist()
@@ -169,20 +202,42 @@ Return as JSON."""
             return set()
 
     def _load_watchlist(self) -> list:
-        """Load watched companies from MySQL."""
+        """Load watched companies from vs_news_watchlist table."""
         try:
-            companies = self.mysql.get_active_companies()
-            return [c['nse_symbol'] for c in companies if c.get('nse_symbol')]
+            # Query companies enabled for news scanning
+            rows = self.mysql.query("""
+                SELECT m.symbol as nse_symbol, m.name
+                FROM vs_news_watchlist w
+                JOIN mssdb.kbapp_marketscrip m ON w.company_id = m.marketscrip_id
+                WHERE w.is_enabled = TRUE
+                ORDER BY
+                    CASE w.priority
+                        WHEN 'HIGH' THEN 1
+                        WHEN 'MEDIUM' THEN 2
+                        WHEN 'LOW' THEN 3
+                    END,
+                    m.symbol
+            """)
+            symbols = [r['nse_symbol'] for r in rows if r.get('nse_symbol')]
+            logger.info(f"Loaded {len(symbols)} companies from news watchlist")
+            return symbols if symbols else ['AETHER', 'EICHERMOT']  # Fallback
         except Exception as e:
-            logger.warning(f"Failed to load watchlist from DB: {e}")
+            logger.warning(f"Failed to load watchlist from DB: {e}", exc_info=True)
             return ['AETHER', 'EICHERMOT']
 
     def _load_sectors(self) -> list:
-        """Load watched sectors."""
+        """Load watched sectors from news watchlist companies."""
         try:
-            companies = self.mysql.get_active_companies()
-            return list(set(c['sector'] for c in companies if c.get('sector')))
-        except Exception:
+            rows = self.mysql.query("""
+                SELECT DISTINCT m.sector
+                FROM vs_news_watchlist w
+                JOIN mssdb.kbapp_marketscrip m ON w.company_id = m.marketscrip_id
+                WHERE w.is_enabled = TRUE AND m.sector IS NOT NULL AND m.sector != ''
+            """)
+            sectors = [r['sector'] for r in rows if r.get('sector')]
+            return sectors if sectors else ['Chemicals', 'Automobile & Ancillaries']
+        except Exception as e:
+            logger.warning(f"Failed to load sectors from watchlist: {e}")
             return ['Chemicals', 'Automobile & Ancillaries']
 
     def scan_all_sources(self, catchup_hours: int = None) -> list:
@@ -195,6 +250,10 @@ Return as JSON."""
         Args:
             catchup_hours: If set, scan for news from last N hours (for catchup)
         """
+        import time
+        cycle_start = time.time()
+        self.slog.log_cycle_start('news_scan')
+
         if not check_internet():
             logger.warning("No internet available, skipping news scan")
             self.degradation.queue_operation({
@@ -202,23 +261,50 @@ Return as JSON."""
                 'scheduled_at': datetime.now().isoformat(),
                 'reason': 'no_internet',
             })
+            self.slog.log_error('no_internet', 'Internet unavailable, scan skipped')
             return []
 
         all_articles = []
         search_terms = self._build_search_terms()
 
         for source in self.NEWS_SOURCES:
+            source_start = time.time()
             try:
                 articles = self._scan_source(source, search_terms, catchup_hours)
                 all_articles.extend(articles)
-                logger.info(f"Scanned {source['name']}: {len(articles)} articles")
+                source_elapsed = (time.time() - source_start) * 1000
+
+                # Structured log per-source metrics
+                self.slog.log_source_scan(
+                    source=source['name'],
+                    articles_found=len(articles),
+                    significant_events=sum(1 for a in articles if a.get('severity') in ('CRITICAL', 'HIGH')),
+                    elapsed_ms=source_elapsed
+                )
+
+                logger.info(f"Scanned {source['name']}: {len(articles)} articles in {source_elapsed:.0f}ms")
             except Exception as e:
                 logger.error(f"Failed to scan {source['name']}: {e}", exc_info=True)
+                self.slog.log_error('source_scan_failed', str(e), source=source['name'])
                 continue
 
         # Deduplicate
         unique = self._deduplicate(all_articles)
+        cycle_elapsed = (time.time() - cycle_start) * 1000
+
         logger.info(f"News scan complete: {len(all_articles)} raw → {len(unique)} unique")
+
+        # Structured log cycle summary
+        self.slog.log_cycle_complete(
+            cycle_type='news_scan',
+            elapsed_ms=cycle_elapsed,
+            metrics={
+                'sources_scanned': len(self.NEWS_SOURCES),
+                'articles_raw': len(all_articles),
+                'articles_unique': len(unique),
+                'dedup_rate_pct': round((1 - len(unique) / len(all_articles)) * 100, 1) if all_articles else 0
+            }
+        )
 
         return unique
 
@@ -238,6 +324,7 @@ Return as JSON."""
                 # Merge original article data with classification
                 classified['source'] = article.get('source', '')
                 classified['source_url'] = article.get('url', '')
+                classified['search_query'] = article.get('search_query')  # Track which query captured this
                 classified['headline'] = article.get('headline', '')
                 classified['raw_content'] = article.get('content', '')[:2000]
                 classified['scanned_at'] = datetime.now().isoformat()
@@ -392,13 +479,29 @@ Return as JSON."""
                     'url': url if url.startswith('http') else source['base_url'] + url,
                     'content': headline,  # Will be enriched later if needed
                     'published': datetime.now().isoformat(),
+                    'search_query': None,  # Direct scrape, no search query
                 })
 
         return articles
 
     @retry_with_backoff(max_retries=2, base_delay=3.0, exceptions=(requests.RequestException,))
     def _scan_rss(self, source: dict, search_terms: list) -> list:
-        """Scan Google News RSS for specific search terms."""
+        """
+        Scan RSS feeds for news articles.
+        Handles both search-based (Google News) and direct feed sources (Mint, FE, etc.).
+        """
+        articles = []
+        source_name = source.get('name', '')
+
+        # Google News uses search terms
+        if 'google_news' in source_name:
+            return self._scan_google_news_rss(source, search_terms)
+
+        # Direct RSS feeds (Mint, FE, SEBI, Reddit) - fetch entire feed
+        return self._scan_direct_rss(source)
+
+    def _scan_google_news_rss(self, source: dict, search_terms: list) -> list:
+        """Scan Google News RSS with company/sector search terms."""
         articles = []
 
         for term in search_terms[:10]:  # Limit to avoid rate limits
@@ -428,10 +531,73 @@ Return as JSON."""
                             'url': link.get_text(strip=True) if link else '',
                             'content': title.get_text(strip=True),
                             'published': pub_dt.strftime('%Y-%m-%d %H:%M:%S') if pub_dt else None,
+                            'search_query': term,  # Track which search term captured this
                         })
             except Exception as e:
                 logger.warning(f"RSS scan failed for term '{term}': {e}")
                 continue
+
+        return articles
+
+    def _scan_direct_rss(self, source: dict) -> list:
+        """
+        Scan direct RSS feeds (Mint, FE, SEBI, Reddit).
+        These are not search-based - we get the entire feed and filter locally.
+        """
+        articles = []
+
+        try:
+            response = requests.get(source['base_url'], timeout=15, headers={
+                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
+            })
+            response.raise_for_status()
+
+            # Parse RSS/Atom feed
+            soup = BeautifulSoup(response.text, 'xml')
+
+            # Handle both RSS and Atom formats
+            items = soup.find_all('item') or soup.find_all('entry')
+
+            for item in items[:30]:  # Get up to 30 recent articles
+                # Try RSS format first
+                title = item.find('title')
+                link = item.find('link')
+                pub_date = item.find('pubDate') or item.find('published')
+                desc = item.find('description') or item.find('summary')
+
+                if title:
+                    headline = title.get_text(strip=True)
+
+                    # Get link text or href attribute
+                    if link:
+                        url = link.get_text(strip=True) or link.get('href', source['base_url'])
+                    else:
+                        url = source['base_url']
+
+                    # Get content
+                    content = headline
+                    if desc:
+                        content = desc.get_text(strip=True)[:500]  # First 500 chars
+
+                    # Filter by relevance to watched companies/sectors
+                    if self._is_relevant(headline):
+                        pub_dt = None
+                        if pub_date:
+                            try:
+                                pub_dt = parsedate_to_datetime(pub_date.get_text(strip=True))
+                            except Exception:
+                                pub_dt = None
+
+                        articles.append({
+                            'headline': headline,
+                            'url': url,
+                            'content': content,
+                            'published': pub_dt.strftime('%Y-%m-%d %H:%M:%S') if pub_dt else None,
+                            'search_query': None,  # Direct RSS feed, no search query
+                        })
+
+        except Exception as e:
+            logger.warning(f"Direct RSS fetch failed for {source['name']}: {e}")
 
         return articles
 
@@ -499,8 +665,8 @@ Return as JSON."""
     def _deduplicate(self, articles: list) -> list:
         """Deduplicate articles by headline hash + semantic similarity.
         Pass 1: Exact MD5 dedup (existing persistent check).
-        Pass 2: Jaccard similarity within this batch to avoid sending
-        near-duplicate headlines to the LLM (saves tokens)."""
+        Pass 2: Semantic dedup within 24h window (not just current batch).
+        Pass 3: Company-aware dedup (same company + similar headline = likely duplicate)."""
         # Pass 1: Exact MD5 dedup
         md5_unique = []
         for article in articles:
@@ -510,12 +676,18 @@ Return as JSON."""
                 self._seen_headlines.add(headline_hash)
                 md5_unique.append(article)
 
-        # Pass 2: Semantic dedup within this batch (Jaccard on headline words)
-        threshold = float(os.getenv('NEWS_SEMANTIC_DEDUP_THRESHOLD', '0.4'))
+        # Pass 2: Semantic dedup against last 24h of headlines (stricter threshold)
+        threshold = float(os.getenv('NEWS_SEMANTIC_DEDUP_THRESHOLD', '0.25'))  # Lowered from 0.4
+
+        # Load recent headlines from DB (last 24h) for cross-batch dedup
+        recent_headlines = self._load_recent_headlines_24h()
+
         kept = []
         for article in md5_unique:
             words = _headline_words(article.get('headline', ''))
             is_dup = False
+
+            # Check against current batch (fast, in-memory)
             for existing in kept:
                 existing_words = _headline_words(existing.get('headline', ''))
                 if _jaccard(words, existing_words) > threshold:
@@ -525,6 +697,11 @@ Return as JSON."""
                         kept.remove(existing)
                         kept.append(article)
                     break
+
+            # Pass 3: Check against last 24h in DB (company-aware dedup)
+            if not is_dup:
+                is_dup = self._is_duplicate_in_recent(article, words, recent_headlines, threshold)
+
             if not is_dup:
                 kept.append(article)
 
@@ -532,6 +709,61 @@ Return as JSON."""
             logger.info(f"Semantic dedup: {len(md5_unique)} → {len(kept)} "
                         f"(removed {len(md5_unique) - len(kept)} similar)")
         return kept
+
+    def _load_recent_headlines_24h(self) -> list:
+        """Load headlines from last 24h for cross-batch semantic dedup."""
+        try:
+            rows = self.mysql.query("""
+                SELECT headline, search_query, company_id
+                FROM vs_event_timeline
+                WHERE event_timestamp >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
+                ORDER BY event_timestamp DESC
+            """)
+            return rows if rows else []
+        except Exception as e:
+            logger.debug(f"Failed to load recent headlines for dedup: {e}")
+            return []
+
+    def _is_duplicate_in_recent(self, article: dict, article_words: set,
+                                recent_headlines: list, threshold: float) -> bool:
+        """
+        Check if article is duplicate of any recent headline.
+        Company-aware: if same company mentioned, use stricter threshold (0.20).
+        """
+        article_hl = article.get('headline', '').lower()
+
+        # Extract company symbols from article headline
+        article_companies = set()
+        for sym in self._watched_symbols_lower:
+            if sym in article_hl.split():
+                article_companies.add(sym)
+
+        for recent in recent_headlines:
+            recent_words = _headline_words(recent.get('headline', ''))
+            if not recent_words:
+                continue
+
+            # Company-specific dedup: stricter threshold if same company
+            recent_hl = (recent.get('headline') or '').lower()
+            recent_companies = set()
+            for sym in self._watched_symbols_lower:
+                if sym in recent_hl.split():
+                    recent_companies.add(sym)
+
+            # Same company + similar headline = likely duplicate
+            if article_companies & recent_companies:  # Intersection
+                company_threshold = 0.20  # Stricter for same company
+                if _jaccard(article_words, recent_words) > company_threshold:
+                    logger.debug(f"Company-specific dedup: '{article_hl[:60]}...' similar to "
+                                f"'{recent_hl[:60]}...' (companies: {article_companies & recent_companies})")
+                    return True
+
+            # General semantic dedup
+            if _jaccard(article_words, recent_words) > threshold:
+                logger.debug(f"General semantic dedup: '{article_hl[:60]}...' similar to '{recent_hl[:60]}...'")
+                return True
+
+        return False
 
     # Valid ENUM values for vs_event_timeline
     _VALID_SCOPES = {'MACRO', 'GROUP', 'SUBGROUP', 'COMPANY'}
@@ -613,7 +845,8 @@ Return as JSON."""
             # Normalize LLM outputs to valid ENUM values
             scope = self._normalize_scope(classified.get('scope', ''))
             severity = self._normalize_severity(classified.get('severity', ''))
-            sector = classified.get('affected_sectors', [''])[0] if isinstance(classified.get('affected_sectors'), list) else ''
+            sectors = classified.get('affected_sectors', [])
+            sector = sectors[0] if isinstance(sectors, list) and len(sectors) > 0 else ''
             event_date = datetime.now().date().isoformat()
 
             # Clamp valuation_impact_pct to valid range
@@ -637,6 +870,7 @@ Return as JSON."""
                 'valuation_impact_pct': impact,
                 'source': classified.get('source', ''),
                 'source_url': classified.get('source_url', ''),
+                'search_query': classified.get('search_query'),  # Track which query captured this
                 'grok_synopsis': classified.get('summary', ''),
                 'published_at': classified.get('published_at'),
                 'llm_model': self.llm.last_call_metadata.get('model', ''),

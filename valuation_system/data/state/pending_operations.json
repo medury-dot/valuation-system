@@ -626,5 +626,73 @@
       "scanned_at": "2026-02-09T12:48:56.674805"
     },
     "queued_at": "2026-02-09T12:48:56.679351"
+  },
+  {
+    "type": "store_event",
+    "data": {
+      "category": "EARNINGS",
+      "severity": "MEDIUM",
+      "affected_companies": [],
+      "affected_sectors": [],
+      "scope": "COMPANY",
+      "valuation_impact_pct": -1.5,
+      "drivers_affected": [
+        {
+          "driver": "revenue_growth",
+          "level": "COMPANY",
+          "impact_pct": -1.0
+        },
+        {
+          "driver": "operating_margin",
+          "level": "COMPANY",
+          "impact_pct": -2.0
+        }
+      ],
+      "summary": "The news highlights that Eicher Motors' emphasis on growth is likely to maintain pressure on its margins, potentially impacting profitability. This could result in a moderate negative effect on the company's valuation due to higher costs associated with expansion.",
+      "key_data_points": [],
+      "source": "business_standard",
+      "source_url": "https://www.business-standard.com/markets/news/growth-focus-may-keep-margins-under-pressure-for-eicher-motors-126021101629_1.html",
+      "headline": "Growth focus likely to keep margins under pressure for Eicher Motors",
+      "raw_content": "Growth focus likely to keep margins under pressure for Eicher Motors",
+      "scanned_at": "2026-02-14T18:00:49.820854",
+      "published_at": "2026-02-14T17:57:48.232869"
+    },
+    "queued_at": "2026-02-14T18:00:49.821275"
+  },
+  {
+    "type": "store_event",
+    "data": {
+      "category": "EARNINGS",
+      "severity": "MEDIUM",
+      "affected_companies": [],
+      "affected_sectors": [],
+      "scope": "COMPANY",
+      "valuation_impact_pct": 2.5,
+      "drivers_affected": [
+        {
+          "driver": "revenue_growth",
+          "level": "COMPANY",
+          "impact_pct": 17.6
+        },
+        {
+          "driver": "profit_growth",
+          "level": "COMPANY",
+          "impact_pct": 26.0
+        }
+      ],
+      "summary": "Torrent Pharma's Q3 results showed a 26% year-over-year profit increase to \u20b9635 crore, driven by a 17.6% rise in revenue to \u20b93,303 crore. The company also declared a dividend of \u20b929, indicating strong financial performance.",
+      "key_data_points": [
+        "Profit: 26% YoY to \u20b9635 crore",
+        "Revenue: 17.6% YoY to \u20b93,303 crore",
+        "Dividend: \u20b929"
+      ],
+      "source": "mint_markets",
+      "source_url": "https://www.livemint.com/market/stock-market-news/torrent-pharma-q3-results-profit-jumps-26-yoy-declares-dividend-of-29-11770983472082.html",
+      "headline": "Torrent Pharma Q3 results: Profit jumps 26% YoY; declares dividend of  \u20b929",
+      "raw_content": "Torrent Pharma Q3 results: Profit jumped 26% YoY to  \u20b9635 crore. Total revenue from operations for the December quarter stood at  \u20b93,303 crore, rising 17.6% YoY from  \u20b92,809 crore in Q3FY25.",
+      "scanned_at": "2026-02-14T19:54:03.050533",
+      "published_at": "2026-02-13 17:27:57"
+    },
+    "queued_at": "2026-02-14T19:54:03.051596"
   }
 ]

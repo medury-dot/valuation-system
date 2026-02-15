@@ -27,13 +27,20 @@ class LLMClient:
 
     def __init__(self):
         self.provider = os.getenv('LLM_PROVIDER', 'grok')
-        self.model = os.getenv('LLM_MODEL', 'grok-2-1212')
+        self.model = os.getenv('LLM_MODEL', 'grok-3-mini-fast')
         self.fallback_chain = os.getenv('LLM_FALLBACK_CHAIN', 'grok,ollama,openai').split(',')
         self.last_call_metadata = {}
+
+        # Daily budget tracking ($5/day cap)
+        self.daily_budget_usd = float(os.getenv('LLM_DAILY_BUDGET_USD', '5.0'))
+        self._load_daily_usage()
 
         # Initialize clients for each provider
         self._clients = {}
         self._init_clients()
+
+        # Auto-detect available providers and filter fallback chain
+        self._detect_available_providers()
 
     def _init_clients(self):
         """Initialize OpenAI SDK clients for each available provider."""
@@ -45,7 +52,7 @@ class LLMClient:
                     api_key=grok_key,
                     base_url='https://api.x.ai/v1',
                 ),
-                'model': os.getenv('LLM_MODEL', 'grok-2-1212'),
+                'model': os.getenv('LLM_MODEL', 'grok-3-mini-fast'),
             }
 
         # Ollama (local, no API key needed)
@@ -65,6 +72,53 @@ class LLMClient:
                 'client': OpenAI(api_key=openai_key),
                 'model': 'gpt-4o',
             }
+
+    def _detect_available_providers(self):
+        """
+        Auto-detect which providers are actually available and remove unavailable ones
+        from the fallback chain. Prevents wasted timeouts and error log clutter.
+        """
+        available = []
+
+        for provider in self.fallback_chain:
+            provider = provider.strip()
+
+            # Skip if no client configured
+            if provider not in self._clients:
+                logger.debug(f"Provider '{provider}' not configured, skipping")
+                continue
+
+            # For Ollama, check if it's actually running
+            if provider == 'ollama':
+                try:
+                    import requests
+                    response = requests.get(
+                        'http://localhost:11434/api/tags',
+                        timeout=1
+                    )
+                    if response.status_code == 200:
+                        available.append(provider)
+                        logger.info("✓ Ollama detected and available (local inference enabled)")
+                    else:
+                        logger.info("✗ Ollama server responded but returned error, skipping")
+                except Exception as e:
+                    logger.info(f"✗ Ollama not running (will use cloud LLMs only): {e}")
+            else:
+                # Cloud providers (Grok, OpenAI) - assume available if configured
+                available.append(provider)
+
+        # Update fallback chain with only available providers
+        original_count = len(self.fallback_chain)
+        self.fallback_chain = available
+
+        if len(available) < original_count:
+            logger.info(f"LLM fallback chain: {' → '.join(available)} "
+                       f"({original_count - len(available)} provider(s) unavailable)")
+        else:
+            logger.info(f"LLM fallback chain: {' → '.join(available)}")
+
+        if not available:
+            logger.error("No LLM providers available! All calls will fail.")
 
     def analyze(self, prompt: str, system_prompt: str = None,
                 temperature: float = 0.3, max_tokens: int = 2000,
@@ -170,7 +224,118 @@ class LLMClient:
             return None
 
         logger.debug(f"LLM response from {provider}: {content[:200]}...")
+
+        # Track cost and enforce daily budget
+        self._track_usage_cost(provider)
+
         return content
+
+    def batch_analyze(self, items: list[str], system_prompt: str = None,
+                      instruction: str = "Analyze each of the following:",
+                      temperature: float = 0.3) -> list[str]:
+        """
+        Batch analyze multiple items (e.g., news articles) in a single LLM call.
+        More cost-efficient than individual calls.
+
+        Args:
+            items: List of texts to analyze (5-10 recommended)
+            system_prompt: System-level instruction
+            instruction: How to process each item
+            temperature: LLM temperature
+
+        Returns:
+            List of analysis results (one per item)
+        """
+        if not items:
+            return []
+
+        # Build batch prompt
+        numbered_items = []
+        for i, item in enumerate(items, 1):
+            numbered_items.append(f"[{i}] {item}")
+
+        batch_prompt = f"""{instruction}
+
+{chr(10).join(numbered_items)}
+
+Respond with a JSON array containing {len(items)} analysis results, one for each numbered item above.
+Each result should be a complete analysis object."""
+
+        try:
+            result = self.analyze_json(batch_prompt, system_prompt, temperature)
+
+            # Handle different response formats
+            if isinstance(result, list):
+                return result
+            elif isinstance(result, dict) and 'results' in result:
+                return result['results']
+            else:
+                logger.warning(f"Unexpected batch response format: {type(result)}")
+                return [result] * len(items)  # Fallback: same result for all
+
+        except Exception as e:
+            logger.error(f"Batch analysis failed: {e}")
+            # Fallback: return empty results
+            return [{}] * len(items)
+
+    def _load_daily_usage(self):
+        """Load today's usage from tracking file."""
+        import datetime
+        from pathlib import Path
+
+        usage_file = Path(os.getenv('LOG_DIR', '/tmp')) / 'llm_daily_usage.json'
+        today = datetime.date.today().isoformat()
+
+        self._usage_file = usage_file
+        self._today = today
+        self._daily_spend_usd = 0.0
+
+        if usage_file.exists():
+            try:
+                with open(usage_file, 'r') as f:
+                    data = json.load(f)
+                    if data.get('date') == today:
+                        self._daily_spend_usd = data.get('spend_usd', 0.0)
+                        logger.info(f"Daily LLM spend so far: ${self._daily_spend_usd:.3f}")
+            except Exception as e:
+                logger.warning(f"Could not load usage tracking: {e}")
+
+    def _track_usage_cost(self, provider: str):
+        """Track cost of last call and enforce daily budget."""
+        import datetime
+        from pathlib import Path
+
+        # Estimate cost based on tokens (approximate pricing)
+        tokens = self.last_call_metadata.get('total_tokens', 0)
+
+        # Cost per 1M tokens (approximate - adjust based on actual pricing)
+        COST_PER_1M_TOKENS = {
+            'grok': 2.0,       # grok-3-mini-fast estimate
+            'openai': 5.0,     # gpt-4o estimate
+            'ollama': 0.0,     # local, free
+        }
+
+        cost_usd = (tokens / 1_000_000) * COST_PER_1M_TOKENS.get(provider, 0.0)
+        self._daily_spend_usd += cost_usd
+
+        logger.debug(f"Call cost: ${cost_usd:.4f}, Daily total: ${self._daily_spend_usd:.3f}")
+
+        # Save updated usage
+        try:
+            self._usage_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(self._usage_file, 'w') as f:
+                json.dump({
+                    'date': self._today,
+                    'spend_usd': self._daily_spend_usd,
+                    'last_updated': datetime.datetime.now().isoformat()
+                }, f, indent=2)
+        except Exception as e:
+            logger.warning(f"Could not save usage tracking: {e}")
+
+        # Check budget
+        if self._daily_spend_usd > self.daily_budget_usd:
+            logger.warning(f"Daily budget exceeded: ${self._daily_spend_usd:.2f} > ${self.daily_budget_usd:.2f}")
+            # Don't raise exception - just log warning. PM can adjust budget or accept overage.
 
     def _extract_json(self, text: str) -> dict:
         """Extract JSON from LLM response, handling markdown code blocks."""

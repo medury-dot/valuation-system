@@ -842,11 +842,19 @@ If this event does NOT suggest any new driver beyond the current list, return an
 
         affected_sectors = event.get('affected_sectors', [])
         if isinstance(affected_sectors, list):
-            for s in affected_sectors:
-                if s and (s.lower() in self.csv_group_name.lower() or
-                          self.csv_group_name.lower() in s.lower() or
-                          s.lower() in self.valuation_group.lower() or
-                          (self.valuation_subgroup and s.lower() in self.valuation_subgroup.lower())):
+            # Flatten nested lists from LLM (sometimes returns [["sector1", "sector2"]])
+            flat_sectors = []
+            for item in affected_sectors:
+                if isinstance(item, list):
+                    flat_sectors.extend(item)
+                else:
+                    flat_sectors.append(item)
+            for s in flat_sectors:
+                if s and isinstance(s, str) and (
+                        s.lower() in self.csv_group_name.lower() or
+                        self.csv_group_name.lower() in s.lower() or
+                        s.lower() in self.valuation_group.lower() or
+                        (self.valuation_subgroup and s.lower() in self.valuation_subgroup.lower())):
                     return True
         return False
 

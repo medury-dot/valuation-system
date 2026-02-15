@@ -44,6 +44,7 @@ from valuation_system.utils.resilience import (
     check_dependencies, check_internet, safe_task_run
 )
 from valuation_system.utils.llm_client import LLMClient
+from valuation_system.utils.structured_logger import StructuredLogger
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +71,10 @@ class OrchestratorAgent:
         self.degradation = GracefulDegradation()
         self.llm = LLMClient()
 
+        # MySQL client initialized later - will update slog after mysql is available
+        self.mysql = None
+        self.slog = None  # Will be set after MySQL init
+
         # Check what's available
         self.deps = check_dependencies()
 
@@ -85,6 +90,9 @@ class OrchestratorAgent:
                 self.mysql = get_mysql_client()
             except Exception as e:
                 logger.error(f"MySQL unavailable: {e}")
+
+        # Initialize StructuredLogger (with or without MySQL)
+        self.slog = StructuredLogger('OrchestratorAgent', logger, self.mysql)
 
         # Initialize Google Sheets client (may fail if no internet or credentials)
         self.gsheet = None
@@ -170,6 +178,9 @@ class OrchestratorAgent:
         start_time = datetime.now()
         result = {'cycle': 'hourly', 'started_at': start_time.isoformat()}
 
+        # Structured logging: cycle start
+        self.slog.log_cycle_start('hourly')
+
         try:
             # 0. Replay any queued operations from previous failures
             self._replay_queued_ops()
@@ -234,6 +245,20 @@ class OrchestratorAgent:
         elapsed = (datetime.now() - start_time).total_seconds()
         result['elapsed_seconds'] = round(elapsed, 1)
         logger.info(f"Hourly cycle completed in {elapsed:.1f}s: {result.get('status')}")
+
+        # Structured logging: cycle complete
+        self.slog.log_cycle_complete(
+            cycle_type='hourly',
+            elapsed_ms=elapsed * 1000,
+            metrics={
+                'articles_scanned': result.get('articles_scanned', 0),
+                'significant_events': result.get('significant_events', 0),
+                'critical_events': result.get('critical_events', 0),
+                'pm_edits_detected': result.get('pm_edits_detected', 0),
+                'driver_changes_total': sum(result.get('driver_changes', {}).values())
+            },
+            status=result.get('status', 'UNKNOWN')
+        )
 
         return result
 
@@ -1016,6 +1041,9 @@ class OrchestratorAgent:
         start_time = datetime.now()
         result = {'cycle': 'daily_valuation', 'started_at': start_time.isoformat()}
 
+        # Structured logging: cycle start
+        self.slog.log_cycle_start('daily_valuation')
+
         try:
             # Check if macro data is stale and update if needed
             macro_update_result = self._check_and_update_macro_data()
@@ -1102,6 +1130,21 @@ class OrchestratorAgent:
         elapsed = (datetime.now() - start_time).total_seconds()
         result['elapsed_seconds'] = round(elapsed, 1)
         logger.info(f"Daily valuation completed in {elapsed:.1f}s")
+
+        # Structured logging: cycle complete
+        self.slog.log_cycle_complete(
+            cycle_type='daily_valuation',
+            elapsed_ms=elapsed * 1000,
+            metrics={
+                'companies_valued': len(result.get('valuations', {})),
+                'alerts_created': result.get('alerts', 0),
+                'macro_drivers_synced': result.get('macro_sync', {}).get('synced', 0),
+                'price_trend_alerts': result.get('price_trends', {}).get('alerts_created', 0),
+                'qualitative_drivers_filled': result.get('qualitative_drivers', {}).get('drivers_filled', 0),
+                'social_posts_generated': result.get('social_content', {}).get('posts_generated', 0)
+            },
+            status=result.get('status', 'UNKNOWN')
+        )
 
         return result
 

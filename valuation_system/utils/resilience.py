@@ -67,11 +67,24 @@ class RunStateManager:
                 return None
         return None
 
-    def get_missed_days(self, task_name: str, expected_frequency_hours: int = 24) -> list:
+    def get_missed_days(self, task_name: str, expected_frequency_hours: int = 24,
+                        include_weekends: bool = None) -> list:
         """
         Calculate missed execution dates since last successful run.
         Returns list of dates that need catchup.
+
+        Args:
+            task_name: Name of the task to check
+            expected_frequency_hours: Expected run frequency (default: 24h)
+            include_weekends: Whether to include Sat/Sun in catchup (default: from .env NEWS_INCLUDE_WEEKENDS)
         """
+        # Load weekend setting from .env if not specified
+        if include_weekends is None:
+            import os
+            from dotenv import load_dotenv
+            load_dotenv(os.path.join(os.path.dirname(__file__), '..', 'config', '.env'))
+            include_weekends = os.getenv('NEWS_INCLUDE_WEEKENDS', 'true').lower() == 'true'
+
         last_run = self.get_last_run(task_name)
         if not last_run:
             # Never run before - just return today
@@ -82,13 +95,14 @@ class RunStateManager:
         today = date.today()
 
         while check_date <= today:
-            # Skip weekends for market-related tasks
-            if check_date.weekday() < 5:  # Monday=0, Friday=4
+            # Include weekends based on setting (default: include)
+            if include_weekends or check_date.weekday() < 5:  # Monday=0, Friday=4
                 missed.append(check_date)
             check_date += timedelta(days=1)
 
         if missed:
-            logger.info(f"Task '{task_name}': {len(missed)} missed days "
+            weekend_note = "including weekends" if include_weekends else "weekdays only"
+            logger.info(f"Task '{task_name}': {len(missed)} missed days ({weekend_note}) "
                         f"since last run on {last_run.date()}")
 
         return missed

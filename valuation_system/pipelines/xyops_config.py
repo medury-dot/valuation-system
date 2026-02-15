@@ -229,16 +229,25 @@ PIPELINES = {
     },
 
     'weekly_review': {
-        'description': 'Sunday review: full GSheet sync, trend detection, opportunity scoring',
+        'description': 'Sunday review: peer stats refresh, GSheet sync, trend detection, opportunity scoring',
         'schedule': '0 10 * * 0',  # Sunday 10:00 IST
         'timezone': 'Asia/Kolkata',
-        'timeout_minutes': 60,
+        'timeout_minutes': 75,
         'retries': 2,
         'retry_backoff_minutes': 10,
         'alert_on_failure': True,
         'alert_email': os.getenv('ALERT_EMAIL', 'medury@gmail.com'),
         'dependencies': [],
         'steps': [
+            {
+                'name': 'refresh_peer_stats',
+                'description': 'Pre-compute peer statistics for all 66 valuation subgroups (quality score cache)',
+                'module': 'valuation_system.utils.populate_peer_stats',
+                'function': 'populate_peer_stats',
+                'kwargs': {'force_refresh': True},
+                'timeout_minutes': 10,
+                'note': 'Refreshes cached median ROCE, growth, D/E, pledge for quality score calculations',
+            },
             {
                 'name': 'full_gsheet_sync',
                 'description': 'Sync all 7 GSheet tabs (Macro, Group, Subgroup, Companies, Discovered)',
@@ -264,7 +273,7 @@ PIPELINES = {
                 'timeout_minutes': 10,
             },
         ],
-        'metrics': ['tabs_synced', 'trends_detected', 'opportunity_scores'],
+        'metrics': ['peer_stats_refreshed', 'tabs_synced', 'trends_detected', 'opportunity_scores'],
     },
 
     'social_posts': {

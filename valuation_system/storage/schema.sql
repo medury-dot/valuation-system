@@ -159,6 +159,7 @@ CREATE TABLE IF NOT EXISTS vs_event_timeline (
     -- Source & document links
     source VARCHAR(100),
     source_url TEXT,
+    search_query VARCHAR(200) COMMENT 'Search term/keyword that captured this news (for dedup debugging)',
     chromadb_doc_id VARCHAR(100),
     s3_document_path TEXT,
     grok_synopsis TEXT,
@@ -329,7 +330,23 @@ CREATE TABLE IF NOT EXISTS vs_peer_groups (
     INDEX idx_tier (company_id, tier)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- 17. DISCOVERED DRIVERS (Agent-suggested new drivers, pending PM approval)
+-- 17. SUBGROUP PEER STATS (Cached peer statistics for quality score calculations)
+-- Pre-computed medians by valuation_subgroup to avoid on-the-fly peer loading
+-- Refreshed async after each valuation + weekly batch job
+CREATE TABLE IF NOT EXISTS vs_subgroup_peer_stats (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    valuation_subgroup VARCHAR(100) NOT NULL,
+    peer_count INT DEFAULT 0 COMMENT 'Number of active companies in this subgroup',
+    median_roce DECIMAL(6,4) COMMENT 'Median ROCE across peers (0.15 = 15%)',
+    median_revenue_cagr DECIMAL(6,4) COMMENT 'Median 5yr revenue CAGR',
+    median_de_ratio DECIMAL(6,4) COMMENT 'Median debt/equity ratio',
+    median_promoter_pledge DECIMAL(6,4) COMMENT 'Median promoter pledge %',
+    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY idx_subgroup (valuation_subgroup),
+    INDEX idx_updated (last_updated)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 19. DISCOVERED DRIVERS (Agent-suggested new drivers, pending PM approval)
 CREATE TABLE IF NOT EXISTS vs_discovered_drivers (
     id INT AUTO_INCREMENT PRIMARY KEY,
     discovered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -350,7 +367,7 @@ CREATE TABLE IF NOT EXISTS vs_discovered_drivers (
     INDEX idx_group (valuation_group, valuation_subgroup)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- 18. MATERIALITY ALERTS (Opportunity/risk signals from driver analysis)
+-- 20. MATERIALITY ALERTS (Opportunity/risk signals from driver analysis)
 CREATE TABLE IF NOT EXISTS vs_materiality_alerts (
     id INT AUTO_INCREMENT PRIMARY KEY,
     alert_date DATE,
@@ -516,6 +533,51 @@ CREATE TABLE IF NOT EXISTS vs_segment_financials (
     UNIQUE KEY uq_seg_quarter (company_id, segment_id, quarter_idx),
     INDEX idx_quarter (quarter_idx)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- =============================================================================
+-- AGENT ACTIVITY LOG (Operational monitoring)
+-- =============================================================================
+-- Tracks agent execution cycles with structured metrics
+-- Replaces GSheet Tab 10 - designed for high-frequency logging (hourly + daily cycles)
+-- View via Django admin or direct SQL queries
+CREATE TABLE IF NOT EXISTS vs_agent_activity_log (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+    agent_name VARCHAR(50) NOT NULL COMMENT 'NewsScannerAgent, OrchestratorAgent, etc.',
+    cycle_type VARCHAR(50) COMMENT 'hourly, daily, weekly, news_scan, etc.',
+    action VARCHAR(100) NOT NULL COMMENT 'cycle_start, cycle_complete, source_scanned, etc.',
+
+    -- Structured metrics (JSON for flexibility)
+    metrics JSON COMMENT 'Agent-specific metrics: articles_scanned, companies_valued, etc.',
+
+    elapsed_ms INT COMMENT 'Execution time in milliseconds',
+    status ENUM('SUCCESS','FAILED','SKIPPED','IN_PROGRESS') DEFAULT 'SUCCESS',
+    error_message TEXT COMMENT 'Error details if status=FAILED',
+
+    -- Fast lookups
+    INDEX idx_timestamp (timestamp),
+    INDEX idx_agent_status (agent_name, status),
+    INDEX idx_cycle (cycle_type, timestamp)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+COMMENT='Agent execution activity log - high-frequency operational data';
+
+-- 20. NEWS WATCHLIST (Controls which companies to scan for news)
+-- Managed via Django admin with bulk actions
+CREATE TABLE IF NOT EXISTS vs_news_watchlist (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    company_id INT NOT NULL COMMENT 'mssdb.kbapp_marketscrip.marketscrip_id',
+    is_enabled BOOLEAN DEFAULT TRUE,
+    priority ENUM('HIGH', 'MEDIUM', 'LOW') DEFAULT 'MEDIUM',
+    scan_sources JSON COMMENT 'Optional override: specific sources for this company',
+    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    added_by VARCHAR(100) DEFAULT 'django_admin',
+    notes TEXT COMMENT 'Why this company is in the watchlist',
+
+    UNIQUE INDEX idx_company_id (company_id),
+    INDEX idx_enabled (is_enabled),
+    INDEX idx_priority (priority)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+COMMENT='News scanning watchlist - controls which companies to monitor for news';
 
 -- =============================================================================
 -- SEED DATA: Initial model version

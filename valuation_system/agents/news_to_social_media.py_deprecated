@@ -1,0 +1,190 @@
+#!/usr/bin/env python3
+"""
+Generate social media posts from material news events.
+Writes to 'storm posting' GSheet for PM approval before posting.
+"""
+import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+
+import gspread
+from google.oauth2.service_account import Credentials
+from openai import OpenAI
+from datetime import date, datetime
+from dotenv import load_dotenv
+
+# Load config
+load_dotenv(os.path.join(os.path.dirname(__file__), '..', 'config', '.env'))
+
+# Paths
+PROMPT_DIR = os.path.join(os.path.dirname(__file__), '..', 'config', 'prompts')
+TWITTER_PROMPT = os.path.join(PROMPT_DIR, 'twitter_news_prompt.txt')
+LINKEDIN_PROMPT = os.path.join(PROMPT_DIR, 'linkedin_news_prompt.txt')
+
+# Credentials
+JSON_FILE = os.getenv('GSHEET_AUTH_PATH') or os.getenv('JSONFILELOC')
+OPENAI_KEY = os.getenv('OPENAI_API_KEY_SOCIAL') or os.getenv('OPENAI_API_KEY')
+
+
+def get_material_events():
+    """Query material news events from database."""
+    from valuation_system.storage.mysql_client import ValuationMySQLClient
+
+    mysql = ValuationMySQLClient()
+    events = mysql.query("""
+        SELECT
+            id, headline, grok_synopsis, severity, scope,
+            valuation_impact_pct, affected_companies, affected_sectors,
+            event_timestamp
+        FROM vs_event_timeline
+        WHERE DATE(event_timestamp) = %s
+          AND severity IN ('CRITICAL', 'HIGH')
+          AND ABS(valuation_impact_pct) >= 3.0
+        ORDER BY ABS(valuation_impact_pct) DESC
+        LIMIT 5
+    """, (date.today(),))
+
+    return events
+
+
+def load_prompt(filepath):
+    """Load prompt from file."""
+    with open(filepath, 'r') as f:
+        return f.read().strip()
+
+
+def generate_post(prompt_prefix, event_data, platform="twitter"):
+    """Generate social media post using OpenAI."""
+    client = OpenAI(api_key=OPENAI_KEY)
+
+    # Prepare event summary for the prompt
+    event_summary = {
+        'headline': event_data['headline'],
+        'synopsis': event_data['grok_synopsis'],
+        'severity': event_data['severity'],
+        'impact': f"{event_data['valuation_impact_pct']}%",
+        'companies': event_data.get('affected_companies', 'N/A'),
+        'sectors': event_data.get('affected_sectors', 'N/A'),
+    }
+
+    user_prompt = f"""Create a {platform} post about this news event:
+
+Event Details:
+{event_summary}
+
+Guidelines:
+- Make it engaging and informative
+- Include specific numbers from the event
+- Provide context on why this matters
+- {'Keep under 280 chars' if platform == 'twitter' else 'Use 150-300 words'}
+"""
+
+    messages = [
+        {"role": "system", "content": prompt_prefix},
+        {"role": "user", "content": user_prompt}
+    ]
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=messages,
+            max_tokens=500,
+            temperature=0.7
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        print(f"❌ Error generating {platform} post: {e}")
+        return None
+
+
+def write_to_gsheet(posts_data):
+    """Write draft posts to 'storm posting' GSheet."""
+    scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+    creds = Credentials.from_service_account_file(JSON_FILE, scopes=scopes)
+    gc = gspread.authorize(creds)
+
+    spreadsheet = gc.open('storm posting')
+    worksheet = spreadsheet.worksheet('posts')
+
+    # Append new rows
+    for post in posts_data:
+        row = [
+            post['date'],           # Date
+            post['time'],           # Time IST
+            post['type'],           # type
+            post['topic'],          # topic
+            post['sub_topic'],      # sub topic
+            post['scenario'],       # scenario
+            post['format'],         # format
+            post['notes'],          # notes
+            post['hashtags'],       # hashtags
+            post['thread_count'],   # thread_count
+            post['template'],       # template
+            post['twitter'],        # Scheduled tweet
+            post['linkedin'],       # Scheduled LinkedIn Post
+            '',                     # Approval (empty - PM reviews)
+            '',                     # posted_x_at
+            '',                     # posted_linkedin_at
+        ]
+        worksheet.append_row(row)
+
+    print(f"✅ Added {len(posts_data)} draft posts to GSheet")
+
+
+def main():
+    """Main execution."""
+    print("📰 Fetching material news events...")
+    events = get_material_events()
+
+    if not events:
+        print("ℹ️  No material events found for today")
+        return
+
+    print(f"✅ Found {len(events)} material events\n")
+
+    # Load prompts
+    twitter_prompt = load_prompt(TWITTER_PROMPT)
+    linkedin_prompt = load_prompt(LINKEDIN_PROMPT)
+
+    posts_data = []
+
+    for i, event in enumerate(events[:3], 1):  # Max 3 posts per day
+        print(f"\n📝 Generating post {i}/{min(len(events), 3)}:")
+        print(f"   {event['headline'][:80]}...")
+
+        # Generate posts
+        twitter_post = generate_post(twitter_prompt, event, "twitter")
+        linkedin_post = generate_post(linkedin_prompt, event, "linkedin")
+
+        if twitter_post and linkedin_post:
+            post_data = {
+                'date': date.today().isoformat(),
+                'time': '08:00',  # Default posting time
+                'type': 'news',
+                'topic': event.get('affected_companies', 'Market News'),
+                'sub_topic': event.get('affected_sectors', ''),
+                'scenario': event['headline'][:100],
+                'format': 'news_update',
+                'notes': f"Auto-generated from news event #{event['id']}",
+                'hashtags': '#IndianStocks #StockMarket #Investing',
+                'thread_count': '1',
+                'template': '',
+                'twitter': twitter_post,
+                'linkedin': linkedin_post,
+            }
+            posts_data.append(post_data)
+
+            print(f"   ✅ Twitter: {twitter_post[:60]}...")
+            print(f"   ✅ LinkedIn: {linkedin_post[:60]}...")
+
+    if posts_data:
+        print(f"\n📱 Writing {len(posts_data)} posts to GSheet...")
+        write_to_gsheet(posts_data)
+        print("\n✅ Done! Review drafts in 'storm posting' GSheet")
+        print("   Set Approval=YES in the sheet to publish")
+    else:
+        print("\n⚠️  No posts generated")
+
+
+if __name__ == '__main__':
+    main()
