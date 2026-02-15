@@ -92,17 +92,27 @@ class LLMClient:
             if provider == 'ollama':
                 try:
                     import requests
-                    response = requests.get(
-                        'http://localhost:11434/api/tags',
-                        timeout=1
-                    )
-                    if response.status_code == 200:
-                        available.append(provider)
-                        logger.info("✓ Ollama detected and available (local inference enabled)")
-                    else:
-                        logger.info("✗ Ollama server responded but returned error, skipping")
+                    # Increase timeout to 3s and retry once (Ollama can be slow on first request)
+                    for attempt in range(2):
+                        try:
+                            response = requests.get(
+                                'http://localhost:11434/api/tags',
+                                timeout=3
+                            )
+                            if response.status_code == 200:
+                                available.append(provider)
+                                models = response.json().get('models', [])
+                                logger.info(f"✓ Ollama detected and available with {len(models)} model(s)")
+                                break
+                            else:
+                                logger.debug(f"Ollama server responded with status {response.status_code}")
+                        except (requests.ConnectionError, requests.Timeout) as e:
+                            if attempt == 0:
+                                logger.debug(f"Ollama check retry {attempt+1}/2: {e}")
+                            else:
+                                logger.info(f"✗ Ollama not accessible after 2 attempts (cloud LLMs only)")
                 except Exception as e:
-                    logger.info(f"✗ Ollama not running (will use cloud LLMs only): {e}")
+                    logger.debug(f"Ollama availability check failed: {e}")
             else:
                 # Cloud providers (Grok, OpenAI) - assume available if configured
                 available.append(provider)

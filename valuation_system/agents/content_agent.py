@@ -7,11 +7,12 @@ for PM approval. The social_poster.py module publishes approved posts.
 Voice: Ram Kalyan Medury's personal style loaded from config/prompts/ text files.
 
 Post Types:
-- Sector insights (data-driven observations)
-- Company highlights (earnings, events)
-- Driver changes (contrarian or surprising)
-- Macro linkages (connecting dots)
-- Contrarian views (challenging consensus)
+- Sector insights (data-driven sector/industry observations)
+- Driver changes (contrarian or surprising trends)
+- Macro linkages (connecting economic dots)
+- Contrarian views (challenging consensus narratives)
+
+NOTE: Avoids company-specific posts (no individual stock earnings/events).
 """
 
 import os
@@ -74,16 +75,19 @@ For EACH post, generate TWO versions:
 1. TWITTER: A tweet under 280 characters. Pithy, one insight, one data point.
 2. LINKEDIN: A 150-500 word flowing paragraph post. Personal anecdote -> data -> analysis -> closing.
 
-Also classify each post into a category: sector_insight | company_highlight | driver_change | macro_linkage | contrarian_view
+Also classify each post into a category: sector_insight | macro_linkage | driver_change | contrarian_view
 
-Rules:
+CRITICAL RULES:
 - Lead with the insight, not the data
 - Use specific numbers when possible
 - NO stock recommendations or price targets
+- AVOID company-specific posts (no "Company X Q3 results" or "Stock Y earnings")
+- Focus on SECTOR trends, MACRO themes, MARKET patterns
+- If mentioning a company, use it only as an example of a broader trend
 - Be thought-provoking, contrarian when appropriate
 - Each post should be self-contained
 
-Return as JSON: {{"posts": [{{"twitter": "...", "linkedin": "...", "category": "...", "headline": "short description of what this post is about"}}]}}"""
+Return as JSON: {{"posts": [{{"twitter": "...", "linkedin": "...", "category": "sector_insight|macro_linkage|driver_change|contrarian_view", "headline": "short description of what this post is about"}}]}}"""
 
     def __init__(self, mysql_client, gsheet_client: GSheetClient = None,
                  llm_client: LLMClient = None):

@@ -20,6 +20,7 @@ import os
 import sys
 import logging
 import time
+import json
 from datetime import datetime, timedelta, timezone
 
 import requests
@@ -38,6 +39,11 @@ if os.path.exists(_rootswings_env):
     load_dotenv(_rootswings_env, override=False)
 
 GRAPH_API_BASE = 'https://graph.microsoft.com/v1.0'
+
+# State file to track last processed message timestamp (avoids refetching same messages)
+STATE_FILE = os.path.join(
+    os.path.dirname(__file__), '..', 'data', 'state', 'teams_last_scan.json'
+)
 
 
 class TeamsChannelReader:
@@ -81,12 +87,45 @@ class TeamsChannelReader:
             logger.warning(f"Teams availability check failed: {e}")
             return False
 
+    def _get_last_scan_time(self) -> datetime:
+        """Get the last successful scan timestamp from state file."""
+        if not os.path.exists(STATE_FILE):
+            # First run: default to 24 hours ago
+            return datetime.now(timezone.utc) - timedelta(hours=24)
+
+        try:
+            with open(STATE_FILE, 'r') as f:
+                state = json.load(f)
+                last_scan_str = state.get('last_scan_timestamp')
+                if last_scan_str:
+                    return datetime.fromisoformat(last_scan_str)
+        except (json.JSONDecodeError, ValueError, OSError) as e:
+            logger.debug(f"Failed to read Teams state file: {e}")
+
+        # Fallback to 24h ago
+        return datetime.now(timezone.utc) - timedelta(hours=24)
+
+    def _save_last_scan_time(self, timestamp: datetime):
+        """Save the last successful scan timestamp to state file."""
+        try:
+            os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
+            state = {
+                'last_scan_timestamp': timestamp.isoformat(),
+                'last_scan_date_human': timestamp.strftime('%Y-%m-%d %H:%M:%S %Z'),
+            }
+            with open(STATE_FILE, 'w') as f:
+                json.dump(state, f, indent=2)
+            logger.debug(f"Saved Teams last scan time: {timestamp.isoformat()}")
+        except OSError as e:
+            logger.warning(f"Failed to save Teams state file: {e}")
+
     def read_recent_messages(self, hours: int = 24, max_messages: int = 50) -> list:
         """
         Read recent messages from the configured Teams channel.
+        Uses incremental fetching — only processes messages after last scan time.
 
         Args:
-            hours: Look back this many hours (default 24)
+            hours: Maximum look-back window (default 24), but will use last scan time if more recent
             max_messages: Maximum messages to return (default 50)
 
         Returns:
@@ -103,7 +142,14 @@ class TeamsChannelReader:
             return []
 
         articles = []
-        since = datetime.now(timezone.utc) - timedelta(hours=hours)
+
+        # INCREMENTAL: Use last scan time, or fallback to hours parameter
+        last_scan = self._get_last_scan_time()
+        max_lookback = datetime.now(timezone.utc) - timedelta(hours=hours)
+        since = max(last_scan, max_lookback)  # Don't go back further than hours param
+
+        logger.info(f"Teams incremental scan: since {since.strftime('%Y-%m-%d %H:%M:%S UTC')} "
+                    f"(last scan: {last_scan.strftime('%Y-%m-%d %H:%M:%S UTC')})")
 
         try:
             # Graph API: List channel messages
@@ -136,7 +182,12 @@ class TeamsChannelReader:
             data = response.json()
             messages = data.get('value', [])
 
-            logger.info(f"Teams API returned {len(messages)} messages from channel")
+            logger.info(f"Teams API returned {len(messages)} raw messages from channel")
+
+            # Track which messages are NEW (created after last scan)
+            # Only fetch replies for NEW messages to avoid redundant API calls
+            new_message_ids = set()
+            latest_timestamp = since  # Track latest message time for state update
 
             for msg in messages:
                 created_str = msg.get('createdDateTime', '')
@@ -152,6 +203,15 @@ class TeamsChannelReader:
                 # Filter by time window
                 if created_dt < since:
                     continue
+
+                # Track latest timestamp for state update
+                if created_dt > latest_timestamp:
+                    latest_timestamp = created_dt
+
+                # Mark as new message
+                msg_id = msg.get('id', '')
+                if msg_id:
+                    new_message_ids.add(msg_id)
 
                 # Extract message body
                 body = msg.get('body', {})
@@ -194,73 +254,85 @@ class TeamsChannelReader:
 
                 logger.debug(f"Teams message: [{author_name}] {headline[:80]}")
 
-            # Also check replies in threads (top-level messages may have important replies)
-            # Only check replies for messages that have replies
+            # Fetch replies in threads — ONLY for NEW messages (not already processed)
+            # This avoids redundant API calls for messages we saw in previous scans
+            logger.info(f"Processing {len(new_message_ids)} NEW messages (will fetch their replies)")
+
             for msg in messages:
-                if not msg.get('id'):
+                msg_id = msg.get('id')
+                if not msg_id:
+                    continue
+
+                # SKIP if this is an OLD message (already processed in previous scan)
+                if msg_id not in new_message_ids:
                     continue
 
                 reply_count = 0
-                # Check if message has replies indicator
-                if msg.get('replies@odata.count', 0) > 0 or True:
-                    # Fetch replies for this message
-                    try:
-                        replies_url = (f"{GRAPH_API_BASE}/teams/{self.team_id}"
-                                       f"/channels/{self.channel_id}"
-                                       f"/messages/{msg['id']}/replies")
-                        replies_params = {'$top': '10', '$orderby': 'createdDateTime desc'}
-                        replies_resp = requests.get(
-                            replies_url, headers=headers, params=replies_params, timeout=15
-                        )
+                # Fetch replies for this NEW message
+                try:
+                    replies_url = (f"{GRAPH_API_BASE}/teams/{self.team_id}"
+                                   f"/channels/{self.channel_id}"
+                                   f"/messages/{msg['id']}/replies")
+                    replies_params = {'$top': '10', '$orderby': 'createdDateTime desc'}
+                    replies_resp = requests.get(
+                        replies_url, headers=headers, params=replies_params, timeout=15
+                    )
 
-                        if replies_resp.status_code == 200:
-                            replies = replies_resp.json().get('value', [])
-                            for reply in replies:
-                                r_created = reply.get('createdDateTime', '')
-                                try:
-                                    r_dt = datetime.fromisoformat(r_created.replace('Z', '+00:00'))
-                                except (ValueError, TypeError):
-                                    continue
+                    if replies_resp.status_code == 200:
+                        replies = replies_resp.json().get('value', [])
+                        for reply in replies:
+                            r_created = reply.get('createdDateTime', '')
+                            try:
+                                r_dt = datetime.fromisoformat(r_created.replace('Z', '+00:00'))
+                            except (ValueError, TypeError):
+                                continue
 
-                                if r_dt < since:
-                                    continue
+                            if r_dt < since:
+                                continue
 
-                                r_body = reply.get('body', {})
-                                r_content = r_body.get('content', '')
+                            r_body = reply.get('body', {})
+                            r_content = r_body.get('content', '')
 
-                                if r_body.get('contentType') == 'html' and r_content:
-                                    from bs4 import BeautifulSoup
-                                    soup = BeautifulSoup(r_content, 'html.parser')
-                                    r_content = soup.get_text(separator=' ', strip=True)
+                            if r_body.get('contentType') == 'html' and r_content:
+                                from bs4 import BeautifulSoup
+                                soup = BeautifulSoup(r_content, 'html.parser')
+                                r_content = soup.get_text(separator=' ', strip=True)
 
-                                if not r_content or len(r_content.strip()) < 10:
-                                    continue
+                            if not r_content or len(r_content.strip()) < 10:
+                                continue
 
-                                r_author = ''
-                                r_from = reply.get('from', {})
-                                if r_from:
-                                    r_author = r_from.get('user', {}).get('displayName', '')
+                            r_author = ''
+                            r_from = reply.get('from', {})
+                            if r_from:
+                                r_author = r_from.get('user', {}).get('displayName', '')
 
-                                r_headline = r_content.strip().split('\n')[0][:150]
+                            r_headline = r_content.strip().split('\n')[0][:150]
 
-                                articles.append({
-                                    'headline': r_headline,
-                                    'content': r_content[:2000],
-                                    'source': 'teams_channel',
-                                    'url': f"https://teams.microsoft.com/l/message/{self.channel_id}/{reply.get('id', '')}",
-                                    'published': r_created,
-                                    'author': r_author,
-                                    'teams_message_id': reply.get('id', ''),
-                                })
-                                reply_count += 1
+                            articles.append({
+                                'headline': r_headline,
+                                'content': r_content[:2000],
+                                'source': 'teams_channel',
+                                'url': f"https://teams.microsoft.com/l/message/{self.channel_id}/{reply.get('id', '')}",
+                                'published': r_created,
+                                'author': r_author,
+                                'teams_message_id': reply.get('id', ''),
+                            })
+                            reply_count += 1
 
-                        # Rate limit: don't hammer the API for reply fetches
-                        time.sleep(0.5)
+                    # Rate limit: don't hammer the API for reply fetches
+                    time.sleep(0.5)
 
-                    except Exception as e:
-                        logger.debug(f"Failed to fetch replies for message {msg['id'][:8]}: {e}")
+                except Exception as e:
+                    logger.debug(f"Failed to fetch replies for message {msg['id'][:8]}: {e}")
 
-            logger.info(f"Teams channel scan: {len(articles)} messages/replies in last {hours}h")
+            logger.info(f"Teams channel scan: {len(articles)} NEW messages/replies "
+                        f"(since {since.strftime('%Y-%m-%d %H:%M:%S')})")
+
+            # Save state: update last scan time to latest message timestamp
+            # This ensures next run only fetches messages after this point
+            if articles and latest_timestamp > since:
+                self._save_last_scan_time(latest_timestamp)
+                logger.info(f"Updated Teams last scan time to {latest_timestamp.strftime('%Y-%m-%d %H:%M:%S UTC')}")
 
         except requests.RequestException as e:
             logger.error(f"Teams API request failed: {e}", exc_info=True)
