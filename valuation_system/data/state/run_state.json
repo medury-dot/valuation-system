@@ -1,18 +1,44 @@
 {
   "hourly_cycle": {
-    "last_status": "RUNNING",
+    "last_status": "SUCCESS",
     "started_at": "2026-02-15T11:32:29.094794",
-    "last_success": "2026-02-15T11:24:33.009380",
+    "last_success": "2026-02-15T11:49:12.157483",
     "consecutive_failures": 0,
     "last_details": {
       "cycle": "hourly",
-      "started_at": "2026-02-15T11:24:32.979184",
+      "started_at": "2026-02-15T11:32:29.095280",
       "catchup": {
         "needed": true,
+        "news_missed_days": 1,
+        "news_catchup": {
+          "catchup_needed": true,
+          "days_caught_up": 1,
+          "articles_found": 68,
+          "significant_events": 4
+        },
         "valuation_missed_days": 9
       },
-      "news_scan": "NO_SCANNER",
-      "driver_changes": {}
+      "articles_scanned": 1,
+      "significant_events": 0,
+      "driver_changes": {
+        "specialty_chemicals": 0,
+        "automobiles": 0,
+        "services_hospitality": 0,
+        "realty_residential": 0,
+        "infra_logistics": 0,
+        "nbfc": 0,
+        "pharma": 0,
+        "financials_banking_psu": 0,
+        "financials_banking_private": 0,
+        "financials_nbfc_vehicle": 0,
+        "financials_nbfc_housing": 0,
+        "financials_nbfc_diversified": 0,
+        "financials_asset_mgmt": 0,
+        "financials_insurance": 0,
+        "financials_other": 0,
+        "industrials_defense": 0
+      },
+      "pm_edits_detected": 3
     }
   },
   "daily_valuation": {

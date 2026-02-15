@@ -21,6 +21,7 @@ import sys
 import logging
 import time
 import json
+import re
 from datetime import datetime, timedelta, timezone
 
 import requests
@@ -119,6 +120,36 @@ class TeamsChannelReader:
         except OSError as e:
             logger.warning(f"Failed to save Teams state file: {e}")
 
+    def _extract_urls(self, text: str) -> list:
+        """Extract URLs from text using regex."""
+        url_pattern = r'https?://[^\s<>"{}|\\^`\[\]]+'
+        return re.findall(url_pattern, text)
+
+    def _fetch_link_content(self, url: str) -> str:
+        """Fetch content from a URL (news article, etc.). Returns text or empty string."""
+        try:
+            response = requests.get(url, timeout=10, headers={
+                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
+                              'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            })
+            if response.status_code == 200:
+                from bs4 import BeautifulSoup
+                soup = BeautifulSoup(response.text, 'html.parser')
+
+                # Remove script and style elements
+                for script in soup(["script", "style"]):
+                    script.decompose()
+
+                # Get text
+                text = soup.get_text(separator=' ', strip=True)
+                return text[:5000]  # Limit to 5000 chars
+            else:
+                logger.debug(f"Failed to fetch {url}: HTTP {response.status_code}")
+                return ''
+        except Exception as e:
+            logger.debug(f"Failed to fetch link content from {url}: {e}")
+            return ''
+
     def read_recent_messages(self, hours: int = 24, max_messages: int = 50) -> list:
         """
         Read recent messages from the configured Teams channel.
@@ -216,16 +247,37 @@ class TeamsChannelReader:
                 # Extract message body
                 body = msg.get('body', {})
                 content_type = body.get('contentType', 'text')
-                content = body.get('content', '')
+                raw_content = body.get('content', '')
+
+                # Extract URLs from raw HTML/text BEFORE stripping tags
+                urls = self._extract_urls(raw_content)
 
                 # Strip HTML tags if HTML content
-                if content_type == 'html' and content:
+                content = raw_content
+                if content_type == 'html' and raw_content:
                     from bs4 import BeautifulSoup
-                    soup = BeautifulSoup(content, 'html.parser')
+                    soup = BeautifulSoup(raw_content, 'html.parser')
                     content = soup.get_text(separator=' ', strip=True)
 
                 if not content or len(content.strip()) < 10:
                     continue
+
+                # FILTER: Only include messages with >20 words OR that have links
+                word_count = len(content.split())
+                if word_count < 20 and not urls:
+                    logger.debug(f"Skipping short message ({word_count} words, no links): {content[:50]}")
+                    continue
+
+                # If message has links, fetch the first link's content
+                linked_content = ''
+                primary_url = ''
+                if urls:
+                    primary_url = urls[0]  # Use first URL as primary source
+                    logger.debug(f"Fetching linked content from {primary_url}")
+                    linked_content = self._fetch_link_content(primary_url)
+                    if linked_content:
+                        # Append linked content to message content
+                        content = f"{content}\n\n[Linked article content:]\n{linked_content}"
 
                 # Extract author
                 author_name = ''
@@ -241,92 +293,27 @@ class TeamsChannelReader:
                     headline = headline[:147] + '...'
 
                 # Build article dict (same format as other news sources)
+                # Use linked URL if available, otherwise Teams message link
+                article_url = primary_url if primary_url else f"https://teams.microsoft.com/l/message/{self.channel_id}/{msg.get('id', '')}"
+
                 article = {
                     'headline': headline,
-                    'content': content[:2000],
+                    'content': content[:5000],  # Increased limit to accommodate linked content
                     'source': 'teams_channel',
-                    'url': f"https://teams.microsoft.com/l/message/{self.channel_id}/{msg.get('id', '')}",
+                    'url': article_url,
                     'published': created_str,
                     'author': author_name,
                     'teams_message_id': msg.get('id', ''),
                 }
                 articles.append(article)
 
-                logger.debug(f"Teams message: [{author_name}] {headline[:80]}")
+                logger.debug(f"Teams message: [{author_name}] {headline[:80]} "
+                            f"({word_count} words{', +link' if primary_url else ''})")
 
-            # Fetch replies in threads — ONLY for NEW messages (not already processed)
-            # This avoids redundant API calls for messages we saw in previous scans
-            logger.info(f"Processing {len(new_message_ids)} NEW messages (will fetch their replies)")
-
-            for msg in messages:
-                msg_id = msg.get('id')
-                if not msg_id:
-                    continue
-
-                # SKIP if this is an OLD message (already processed in previous scan)
-                if msg_id not in new_message_ids:
-                    continue
-
-                reply_count = 0
-                # Fetch replies for this NEW message
-                try:
-                    replies_url = (f"{GRAPH_API_BASE}/teams/{self.team_id}"
-                                   f"/channels/{self.channel_id}"
-                                   f"/messages/{msg['id']}/replies")
-                    replies_params = {'$top': '10', '$orderby': 'createdDateTime desc'}
-                    replies_resp = requests.get(
-                        replies_url, headers=headers, params=replies_params, timeout=15
-                    )
-
-                    if replies_resp.status_code == 200:
-                        replies = replies_resp.json().get('value', [])
-                        for reply in replies:
-                            r_created = reply.get('createdDateTime', '')
-                            try:
-                                r_dt = datetime.fromisoformat(r_created.replace('Z', '+00:00'))
-                            except (ValueError, TypeError):
-                                continue
-
-                            if r_dt < since:
-                                continue
-
-                            r_body = reply.get('body', {})
-                            r_content = r_body.get('content', '')
-
-                            if r_body.get('contentType') == 'html' and r_content:
-                                from bs4 import BeautifulSoup
-                                soup = BeautifulSoup(r_content, 'html.parser')
-                                r_content = soup.get_text(separator=' ', strip=True)
-
-                            if not r_content or len(r_content.strip()) < 10:
-                                continue
-
-                            r_author = ''
-                            r_from = reply.get('from', {})
-                            if r_from:
-                                r_author = r_from.get('user', {}).get('displayName', '')
-
-                            r_headline = r_content.strip().split('\n')[0][:150]
-
-                            articles.append({
-                                'headline': r_headline,
-                                'content': r_content[:2000],
-                                'source': 'teams_channel',
-                                'url': f"https://teams.microsoft.com/l/message/{self.channel_id}/{reply.get('id', '')}",
-                                'published': r_created,
-                                'author': r_author,
-                                'teams_message_id': reply.get('id', ''),
-                            })
-                            reply_count += 1
-
-                    # Rate limit: don't hammer the API for reply fetches
-                    time.sleep(0.5)
-
-                except Exception as e:
-                    logger.debug(f"Failed to fetch replies for message {msg['id'][:8]}: {e}")
-
-            logger.info(f"Teams channel scan: {len(articles)} NEW messages/replies "
-                        f"(since {since.strftime('%Y-%m-%d %H:%M:%S')})")
+            # Summary: no reply fetching (user requested to skip replies)
+            logger.info(f"Teams channel scan: {len(articles)} NEW messages "
+                        f"(since {since.strftime('%Y-%m-%d %H:%M:%S')}), "
+                        f"{sum(1 for a in articles if 'Linked article' in a['content'])} with fetched links")
 
             # Save state: update last scan time to latest message timestamp
             # This ensures next run only fetches messages after this point
